@@ -35,7 +35,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: a small core with clear places where features plug in; each feature chosen below
   becomes its own step of the plan. Several of SE's sample-efficiency ideas are small on their own
   (D14, D19, D24), so they fit this approach well.
-- **Decision**:
+- **Decision**: Lean. Start with a small core that works end to end, then add selected openevolve and ShinkaEvolve components, each as its own step.
 
 ### D2. Languages of the evolved programs [now]
 - **v1**: Python only; programs are `exec`'d.
@@ -44,7 +44,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: Python only · any language, which forces the evaluator to receive a file path (D5),
   the sandbox image to hold compilers, and the parser to know each language's comments.
 - **Lean**: Python only.
-- **Decision**:
+- **Decision**: Python only.
 
 ### D3. Compatibility with openevolve or ShinkaEvolve [later]
 - **v1**: the examples are adapted so that their scores equal OE's.
@@ -53,7 +53,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · same scores on adapted examples (as now) · run OE or SE evaluators unchanged.
 - **Lean**: same scores as OE on adapted examples, so runs stay comparable; note SE's raw scale
   when comparing with its published numbers.
-- **Decision**:
+- **Decision**: Runs must stay comparable to openevolve's, on function minimization and circle packing. The initial programs are openevolve's, unchanged (EVOLVE-BLOCK markers included). Evaluators take a namespace (D5) but must score every program exactly as openevolve's evaluators do, cascade included (D9). Reference: the openevolve checkout `da3d701`, whose function-minimization evaluator recomputes the value from (x, y) instead of trusting the program (Part D, v1 item 4).
 
 ---
 
@@ -66,7 +66,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: docstring · a field of a problem config file · a separate `description.md` in the problem folder.
 - **Lean**: a separate file: descriptions grow long (circle packing's lists geometric insights), and it
   keeps the initial program a plain program.
-- **Decision**:
+- **Decision**: Lean, adapted: the description is a field of the run's YAML configuration file, as in openevolve (this also settles that runs are configured with YAML; see D43, D44).
 
 ### D5. What the evaluator receives [now]
 - **v1**: `evaluate(namespace)`, the names the program defined, after the framework ran it.
@@ -78,7 +78,7 @@ the my-alphaevolve list in its Part D.
   function, called by the framework (SE's helper, but built into the framework).
 - **Lean**: namespace, if D2 is Python only: evaluators stay short and cannot get loading wrong.
   The entry-function variant is the one to pick if D8 moves the evaluator out of the program's process.
-- **Decision**:
+- **Decision**: `evaluate(namespace)`.
 
 ### D6. What the evaluator returns [now]
 - **v1**: one finite number.
@@ -91,7 +91,7 @@ the my-alphaevolve list in its Part D.
   instead of returning a score of 0 (SE's `correct`).
 - **Lean**: the result object, still accepting a bare number, with an explicit "invalid, because …"
   outcome. No averaging fallback: the main score is explicit. No private metrics until a problem needs them.
-- **Decision**:
+- **Decision**: A result object holding: `score` (a number; what a failed program gets is settled in D7), `correct` (true or false), `metrics` (named numbers about the run), `status` and `error` (whether the evaluation failed, and why), `feedback` (text for the LLM). Also the evaluation's duration, and the cascade stage reached if D9 adopts stages.
 
 ### D7. Failed programs [now]
 - **v1**: score `-inf`, stored, never a parent, saved as `-Infinity`.
@@ -133,7 +133,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · `feedback` text from the evaluator (D6) · that, plus the tail of the
   program's stderr captured automatically.
 - **Lean**: evaluator feedback plus a captured error for failures, truncated to a size limit.
-- **Decision**:
+- **Decision**: Yes: when a program is used as a parent, the prompt shows its evaluation feedback and, if it failed, its error message, both taken from its result object (D6), truncated to a size limit.
 
 ---
 
