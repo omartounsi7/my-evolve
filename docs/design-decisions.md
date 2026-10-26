@@ -377,7 +377,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: one · several with fixed weights (OE) · several chosen by a bandit (SE).
 - **Lean**: one model, behind an `LLM` interface that a pool can implement later; if several
   models come, SE's bandit rather than fixed weights, since it learns which model is worth its price.
-- **Decision**: Like openevolve: a weighted ensemble, one model drawn per call with fixed weights, using the run's own random generator (D39). The models are listed in the `llm` section of the problem file (D43). ShinkaEvolve's bandit remains a possible later experiment; the model recorded with every program (D60) gives it the data it needs.
+- **Decision**: Like openevolve: a weighted ensemble, one model drawn per call with fixed weights, using the run's own random generator (D39). The models are listed in the `llm` section of the problem file (D43).
 
 ### D32. Client and providers [later]
 - **v1**: synchronous `openai` client; any OpenAI-compatible server.
