@@ -834,3 +834,77 @@ Each one is a self-contained step that can be added late. [later] for all.
 | Weights & Biases logging | no | no | yes | no |
 | Hydra presets (D43) | no | no | yes | no |
 | Skills that teach a coding agent to set up and run tasks | no | no | yes | no |
+
+---
+
+## Appendix A. The prompt
+
+The text of the two messages, as decided in D25 to D27, D12, D15 and D71. Words in braces are filled in
+for each problem or iteration. Templates are Python constants (D29), so this is their content, not their
+final code.
+
+### System message (the same for a whole run)
+
+````text
+You are an expert software engineer tasked with improving a program. You will see
+a program to improve, the parent, and other programs tried before, with their
+results. Write a new version of the parent that solves the problem below better
+than it does, using what the previous attempts show.
+
+# Problem
+{description from the problem file, including the contract of the entry functions}
+
+# Rules
+- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`.
+  Leave everything else, the markers included, exactly as it is. Return the whole file.
+- You may import Python's standard library and: {allowed packages}. Nothing else is installed.
+- Higher scores are better.
+
+# Reply format
+Your reply must contain these two parts. You may write anything else around them.
+<DESCRIPTION>
+How this program solves the problem: its approach and main ideas. Describe the
+program on its own; do not mention any other program.
+</DESCRIPTION>
+```python
+the complete program
+```
+````
+
+### User message (new for each iteration)
+
+````text
+# Previous attempts
+
+## Attempt 1: score {score}
+Description: {description}
+Feedback: {feedback}
+```python
+{code}
+```
+
+## Attempt 2: {status, e.g. invalid}
+Description: {description}
+Feedback: {feedback}
+Error: {error, e.g. Circles 3 and 7 overlap (distance 0.112, radii sum 0.130)}
+```python
+{code}
+```
+
+# Program to improve (the parent): score {score}; best score so far in this run: {best score}
+Description: {description}
+Feedback: {feedback}
+```python
+{code}
+```
+
+Write the improved program.
+````
+
+Notes:
+- A failed attempt shows its status in place of a score, and its error; a working one has no error line.
+  An empty field (no description, no feedback) is left out with its label.
+- The parent comes last, just before the request: it is what the LLM must work on, and models attend most
+  to the end of a prompt.
+- Feedback and errors are truncated to a size limit (D10, D30).
+- The order of the previous attempts is still to be decided (D26).
