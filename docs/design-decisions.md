@@ -644,7 +644,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: Linux only · Linux and macOS · all three, with Windows docs.
 - **Lean**: depends on where you will run it; this machine is Linux. Keeping the code portable costs little;
   Windows-specific docs and tests cost more.
-- **Decision**:
+- **Decision**: Linux and windows compatible.
 
 ---
 
