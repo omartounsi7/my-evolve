@@ -206,7 +206,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: built in steps behind one `Database` interface, each runnable and comparable: flat,
   then islands (SE-style), then a MAP-Elites grid per island as an optional step. SE shows that
   islands plus a good parent rule go a long way without a grid.
-- **Decision**:
+- **Decision**: OpenEvolve's system. Islands, each with its own MAP-Elites grid, plus a global archive.
 
 ### D17. MAP-Elites features [later, if D16 uses a grid]
 - **v1** (`aeaf384`): complexity = code length, diversity = OE's quick estimate against the first 20 programs.
