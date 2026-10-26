@@ -327,7 +327,7 @@ the my-alphaevolve list in its Part D.
   children with their errors. And their order.
 - **Lean**: a few programs (2 to 4, configurable) from the archive and the parent's island, worst
   to best as SE does; the parent's lineage as a short list of names and scores (D15).
-- **Decision**:
+- **Decision**: Partly decided: inspirations include both working programs (positive) and failed ones (negative), each shown with its feedback and, for a failed one, its error (D10). Which programs, how many, and in what order: to be decided.
 
 ### D27. What the prompt says about scores [later]
 - **v1**: the parent's score.
