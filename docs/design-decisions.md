@@ -762,8 +762,7 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **v1**: an `LLM` base class with one method, `generate`, and an `OpenAICompatibleLLM` implementation.
 - **OE**: `LLMInterface`, implemented per provider, and `LLMEnsemble` on top.
 - **SE**: `LLMClient` and `AsyncLLMClient`, over one module per provider.
-- **Decision**: An abstract class with one method that turns the prompt's messages into a reply, with
-  its token counts (D35). What implements it is set by D31 and D32.
+- **Decision**: An abstract class with one method that turns the prompt's messages into a reply, with its token counts (D35) and the name of the model that wrote it (D60). Implemented by `OpenAICompatibleLLM` (one model, D32) and by `Ensemble` (several `OpenAICompatibleLLM`s drawn by weight, which also drops failing models, D31, D34).
 
 ### D67. The `PromptBuilder` class [now]
 - **v1**: `PromptSampler`: one template, filled with the description, the parent and the allowed packages.
