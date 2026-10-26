@@ -471,7 +471,7 @@ the my-alphaevolve list in its Part D.
   several of these · cluster backends.
 - **Lean**: a backend interface; Docker per evaluation as the default; a local subprocess backend
   marked unsafe, for tests and trusted problems. No cluster backend.
-- **Decision**:
+- **Decision**: A `Sandbox` interface (D64) with two implementations sharing the same namespace stand-in and protocol: Docker, the default, with a fresh container for each cascade stage (about 1 s each) and after a call over its time limit; and a local subprocess with no isolation, for the tests and for problems you trust, used only when asked for explicitly (`--unsafe-local-sandbox`) and announced at start-up. No cluster backend.
 
 ### D41. Limits [later]
 - **v1**: no network, read-only, 1 GB, 1 CPU, 64 processes, 30 s, fixed in the code except the timeout.
