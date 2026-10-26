@@ -314,7 +314,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: one message · system message for the fixed rules (role, reply format, allowed
   packages), user message for the problem and the programs · multi-turn for repairs.
 - **Lean**: system + user, multi-turn only for repairs.
-- **Decision**:
+- **Decision**: System message plus user message. The system message holds everything that stays the same for a whole run: the instruction, the problem description, the rules (evolve blocks, allowed packages, higher is better) and the reply format; providers cache a repeated prompt start, so it is paid for fully only once, and the model reads it as standing instructions. The user message holds what changes each iteration: the example programs, then the parent, then the request. One call per iteration, no multi-turn conversation (no repair, D14). The templates are in Appendix A.
 
 ### D26. Programs shown besides the parent [now]
 - **v1**: none.
@@ -327,7 +327,7 @@ the my-alphaevolve list in its Part D.
   children with their errors. And their order.
 - **Lean**: a few programs (2 to 4, configurable) from the archive and the parent's island, worst
   to best as SE does; the parent's lineage as a short list of names and scores (D15).
-- **Decision**: Partly decided: inspirations include both working programs (positive) and failed ones (negative), each shown with its feedback and, for a failed one, its error (D10). Which programs, how many, and in what order: to be decided.
+- **Decision**: Partly decided: besides the parent, the prompt shows a number of other programs, called example programs ("inspirations" in openevolve and ShinkaEvolve), set in the problem file, 2 or 3 by default. They are working programs and failed ones alike, presented without any "positive" or "negative" label: the prompt calls them previous attempts, and the LLM judges from each one's score or status, description, feedback and, for a failed one, its error (D10) whether to follow it. Which programs, the mix of working and failed ones, and their order: to be decided.
 
 ### D27. What the prompt says about scores [later]
 - **v1**: the parent's score.
@@ -335,7 +335,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: score and public metrics for the parent and every program shown; private metrics withheld.
 - **Options**: parent score · plus best score so far · plus metrics · plus feedback (D10) · plus hints.
 - **Lean**: score, best score so far, metrics and feedback; no canned hints.
-- **Decision**:
+- **Decision**: That higher scores are better; for the parent and every working example program, its score; for the parent, also the best score reached so far in the run; for a failed example program, its status instead of a score. Metrics are not shown (feedback carries what the evaluator wants the LLM to know, D10); no canned hints. The time limit and the sandbox's memory and CPU are not mentioned.
 
 ### D28. Advice drawn from the whole run [later] *(new with SE)*
 - **v1**, **OE**: none: each prompt knows only the programs it shows.
