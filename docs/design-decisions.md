@@ -223,7 +223,7 @@ the my-alphaevolve list in its Part D.
 - **OE**: running min/max at insertion; bins drift and old placements are never recomputed.
 - **Options**: rebuild at each sample · running min/max (OE) · fixed ranges declared by the problem.
 - **Lean**: rebuild at each sample: always consistent, and cheap for thousands of programs.
-- **Decision**: A fixed grid, known when the run starts and never changed: the problem file gives each feature a range and a number of bins; a value outside the range goes to the nearest end bin. The code feature is normalized against the initial program: log2(nodes / nodes of the initial program), so the range is the same for every problem. Grids should not be too big, since runs only last hundreds of iterations. To revisit if CVT MAP-Elites is adopted (D16).
+- **Decision**: A fixed grid, known when the run starts and never changed: the problem file gives each feature a range and a number of bins, all modifiable; a value outside the range goes to the nearest end bin. The code feature is normalized against the initial program: log2(nodes / nodes of the initial program), default range −1 to +3 (half to eight times the initial size), the same for every problem. Circle packing defaults: radii spread 0 to 1, correlation −1 to +1. Grids stay small, since runs last hundreds of iterations, not thousands. Default bins: 10 for a 1D grid, 5 × 5 for 2D, 3 × 3 × 3 for 3D. To revisit if CVT MAP-Elites is adopted (D16).
 
 ### D19. Choosing a parent [now]
 - **v1**: 70% a random one of the 10 best working programs, 30% a random working program.
