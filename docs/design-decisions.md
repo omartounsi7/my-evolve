@@ -171,7 +171,7 @@ the my-alphaevolve list in its Part D.
   diff that does not apply · markers broken.
   And: is a rejected child stored (with its reason) or only counted?
 - **Lean**: all of them; rejected children stored with status `rejected` and their reason, not evaluated.
-- **Decision**:
+- **Decision**: Two checks before evaluation, both on the host and without running the program: it must compile (`ast.parse`), and it must not be the same program as its parent (same syntax tree, so comments and spacing are ignored). Whether a program runs is checked by the evaluation itself: loading it is the first thing the container does, and a program that fails to load is marked failed before any cascade stage. A rejected child is stored with status `rejected` and its reason, and is not evaluated (D7). No diff checks while changes are full rewrites (D11).
 
 ### D14. Repairing a rejected change [later] *(new with SE)*
 - **v1**, **OE**: none; a reply that cannot be used is a lost iteration.
