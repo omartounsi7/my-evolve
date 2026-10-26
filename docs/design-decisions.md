@@ -327,7 +327,7 @@ the my-alphaevolve list in its Part D.
   children with their errors. And their order.
 - **Lean**: a few programs (2 to 4, configurable) from the archive and the parent's island, worst
   to best as SE does; the parent's lineage as a short list of names and scores (D15).
-- **Decision**: Besides the parent, the prompt shows a number of other programs, called example programs ("inspirations" in openevolve and ShinkaEvolve), set in the problem file, 2 by default. They are working programs and failed ones alike, presented without any "positive" or "negative" label: the prompt calls them previous attempts, and the LLM judges from each one's score or status, description, feedback and, for a failed one, its error (D10) whether to follow it. The programs are drawn randomly from the same island.
+- **Decision**: Besides the parent, the prompt shows a number of other programs, called example programs ("inspirations" in openevolve and ShinkaEvolve), set in the problem file, 2 by default. They are working programs and failed ones alike, presented without any "positive" or "negative" label: the prompt calls them previous attempts, and the LLM judges from each one's score or status, description, feedback and, for a failed one, its error (D10) whether to follow it. They are drawn at random from every program made on the parent's island (each program records its island, D60, D22): not only its grid's elites, which never include failed programs (D23), but also its failed programs and the working ones that lost their cell. The parent itself and programs with status `error` (D7) are never drawn. They are shown in the order they were drawn.
 
 ### D27. What the prompt says about scores [later]
 - **v1**: the parent's score.
@@ -911,7 +911,7 @@ Notes:
 - The parent comes last, just before the request: it is what the LLM must work on, and models attend most
   to the end of a prompt.
 - Feedback and errors are truncated to a size limit (D10, D30).
-- The order of the previous attempts is still to be decided (D26).
+- The previous attempts are shown in the order they were drawn, which is random (D26).
 
 ---
 
