@@ -300,7 +300,7 @@ the my-alphaevolve list in its Part D.
   embeddings with a similarity threshold, before evaluation · plus an LLM judge.
 - **Lean**: AST-identical rejection from the start; SE-style embedding rejection as a later
   optional step (Ollama serves embedding models too), without the LLM judge at first.
-- **Decision**: Only the parent check of D13 (a child AST-identical to its parent is rejected); no check against the rest of the database, no embeddings.
+- **Decision**: The check of D13: a child AST-identical to any program already in the database is rejected; no embeddings.
 
 ---
 
