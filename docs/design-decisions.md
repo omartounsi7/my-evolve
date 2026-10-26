@@ -708,7 +708,7 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
   - `description`: the LLM's self-contained description (D15).
   - `fingerprint`: the hash of its syntax tree (D13), `None` if it does not compile.
   - `code_complexity`: its node count inside the evolve blocks (D17); the output features are in `result.features`.
-  - `inspiration_ids`: the programs shown in its prompt (D26).
+  - `example_ids`: the programs shown in its prompt (D26).
   - `llm`: the model used and its token counts (D35); prompt and reply are stored separately (D48).
   - `created_at`: when it was made.
 
@@ -736,7 +736,7 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **Decision**: Every program of the run (D22), the islands, the set of fingerprints (D13) and the
   children counts (D19). It adds programs (placing `ok` ones on their island's grid), computes the archive
   on demand (D21), migrates (D23), and draws parents through a strategy interface with two
-  implementations, ShinkaEvolve's weighted rule and openevolve's rule (D19). Inspirations (D26) are drawn
+  implementations, ShinkaEvolve's weighted rule and openevolve's rule (D19). Example programs (D26) are drawn
   here too. Rebuilt on resume by replaying the saved programs in order (D49); only the main thread changes it (D36).
 
 ### D64. The `Sandbox` class [now]
