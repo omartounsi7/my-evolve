@@ -91,7 +91,7 @@ the my-alphaevolve list in its Part D.
   instead of returning a score of 0 (SE's `correct`).
 - **Lean**: the result object, still accepting a bare number, with an explicit "invalid, because …"
   outcome. No averaging fallback: the main score is explicit. No private metrics until a problem needs them.
-- **Decision**: A result object holding: `score` (a number; failed programs have none, D7), `metrics` (named numbers about the run), `status` and `error` (whether the program failed, how, and why; D7). No separate correctness flag: a program is "correct" when its `status` is `ok`, computed from the status so the two cannot disagree, `feedback` (text for the LLM), `features` (named numbers describing the program's output, for the MAP-Elites grid, D17; kept apart from `metrics` so they never affect the score). Also the evaluation's duration, and the cascade stage reached if D9 adopts stages.
+- **Decision**: A result object holding: `score` (a number; only `ok` programs have one, D7); `status` and `error` (whether the program failed, how, and why, D7); `metrics` (named numbers about the run); `features` (named numbers describing the program's output, for the MAP-Elites grid, D17; kept apart from `metrics` so they never affect the score); `feedback` (text for the LLM, D10); the evaluation's duration; the cascade stage reached (D9). There is no separate correctness flag: a program is correct when its `status` is `ok`, which is computed from the status, so the two can never disagree.
 
 ### D7. Failed programs [now]
 - **v1**: score `-inf`, stored, never a parent, saved as `-Infinity`.
