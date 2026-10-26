@@ -377,7 +377,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: one · several with fixed weights (OE) · several chosen by a bandit (SE).
 - **Lean**: one model, behind an `LLM` interface that a pool can implement later; if several
   models come, SE's bandit rather than fixed weights, since it learns which model is worth its price.
-- **Decision**:
+- **Decision**: Like OE, weighted ensemble, one model drawn per call with fixed weights. Behind an LLM interface.
 
 ### D32. Client and providers [later]
 - **v1**: synchronous `openai` client; any OpenAI-compatible server.
@@ -385,7 +385,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: each provider's own SDK, local OpenAI-compatible servers, and coding agents through a CLI.
 - **Options**: OpenAI-compatible only · plus the native Anthropic SDK · plus others.
 - **Lean**: OpenAI-compatible, synchronous (threads suffice, D36), behind the `LLM` interface.
-- **Decision**:
+- **Decision**: OpenAI-compatible, synchronous (threads suffice, D36), behind the `LLM` interface.
 
 ### D33. Generation settings [later]
 - **v1**: `max_tokens` only.
@@ -396,14 +396,14 @@ the my-alphaevolve list in its Part D.
 - **Options**: which to expose · whether unset means "not sent" · a fixed value or a list drawn per call.
 - **Lean**: `max_tokens`, plus optional temperature and reasoning effort, not sent when unset; a
   temperature may be a list drawn per call (cheap diversity).
-- **Decision**:
+- **Decision**: `max_tokens` only.
 
 ### D34. Retries, timeouts, LLM failures [later]
 - **v1**: the `openai` package's 2 retries, 300 s; 3 failed iterations in a row stop the run.
 - **OE**: its own 3 retries on top of the package's, 60 s; never stops for failures.
 - **SE**: exponential backoff up to 20 tries, 1,200 s, the SDKs' own retries off; a "stuck" detector.
 - **Lean**: keep v1's behaviour: one layer of retries, and a stop after N failures in a row.
-- **Decision**:
+- **Decision**: keep v1's behaviour: one layer of retries, and a stop after N failures in a row.
 
 ### D35. Cost accounting and budget [later] *(new with SE)*
 - **v1**: nothing recorded; iterations and `--max-reply-tokens` bound the cost.
@@ -414,7 +414,8 @@ the my-alphaevolve list in its Part D.
   online price catalog · a budget in tokens or dollars.
 - **Lean**: record tokens per call from the start (they cost nothing to store); prices per model in
   the config and a dollar budget as a later step; no online catalog.
-- **Decision**:
+- **Decision**: record tokens per call from the start (they cost nothing to store); prices per model in
+  the config; iterations and `--max-reply-tokens` bound the cost.
 
 ---
 
