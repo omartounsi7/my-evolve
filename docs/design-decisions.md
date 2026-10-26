@@ -91,7 +91,7 @@ the my-alphaevolve list in its Part D.
   instead of returning a score of 0 (SE's `correct`).
 - **Lean**: the result object, still accepting a bare number, with an explicit "invalid, because …"
   outcome. No averaging fallback: the main score is explicit. No private metrics until a problem needs them.
-- **Decision**: A result object holding: `score` (a number; only `ok` programs have one, D7); `status` and `error` (whether the program failed, how, and why, D7); `metrics` (named numbers about the run); `features` (named numbers describing the program's output, for the MAP-Elites grid, D17; kept apart from `metrics` so they never affect the score); `feedback` (text for the LLM, D10); the evaluation's duration; the cascade stage reached (D9). There is no separate correctness flag: a program is correct when its `status` is `ok`, which is computed from the status, so the two can never disagree. Implemented as the `Result` dataclass (D60 holds it in `Program.result`); a program's output features live in `result.features`.
+- **Decision**: A result object holding: `score` (a number; only `ok` programs have one, D7); `status` and `error` (whether the program failed, how, and why, D7); `metrics` (named numbers about the run); `features` (named numbers describing the program's output, for the MAP-Elites grid, D17; kept apart from `metrics` so they never affect the score); `feedback` (text for the LLM, D10); `output_data` (plain data the program returned that the evaluator chooses to keep, such as a packing's centres and radii, saved for the report's drawings, D48, D51); the evaluation's duration; the cascade stage reached (D9). There is no separate correctness flag: a program is correct when its `status` is `ok`, which is computed from the status, so the two can never disagree. Implemented as the `Result` dataclass (D60 holds it in `Program.result`); a program's output features live in `result.features`.
 
 ### D7. Failed programs [now]
 - **v1**: score `-inf`, stored, never a parent, saved as `-Infinity`.
@@ -523,7 +523,7 @@ the my-alphaevolve list in its Part D.
   the run's choices (model, iterations, workers, output, seed) · generic `--set` overrides (SE).
 - **Lean**: a problem file plus CLI flags: a problem folder is complete on its own, and a run is
   one command line. No presets.
-- **Decision**: A YAML problem file for the problem's own facts (description, evaluation settings, limits, packages, cascade thresholds, required entry functions, MAP-Elites features and grid, island and parent-selection settings, D17–D23; the `llm` section, with the models, their weights, addresses, key variables, prices and generation settings, laid out as in openevolve's config files, D31–D35, D46) plus CLI flags for the run's choices. The problem file is loaded into the `Problem` dataclass.
+- **Decision**: A YAML problem file for the problem's own facts (description, evaluation settings, limits, packages, cascade thresholds, required entry functions, MAP-Elites features and grid, island and parent-selection settings, D17–D23; the `llm` section, with the models, their weights, addresses, key variables, prices and generation settings, laid out as in openevolve's config files, D31–D35, D46; and k, the interval between best-program snapshots, D47) plus CLI flags for the run's choices. The problem file is loaded into the `Problem` dataclass.
 
 ### D44. Config file format and validation [later, if D43 uses a file]
 - **OE**, **SE**: YAML. OE ignores unknown keys; SE's CLI rejects them.
@@ -561,7 +561,14 @@ the my-alphaevolve list in its Part D.
 - **Options**: JSONL · per-program files and snapshots · SQLite · a folder per program alongside any of them.
 - **Lean**: JSONL: nothing evaluated is ever lost, and it is readable with any tool. SQLite is the
   strong alternative if you want to query runs or serve a viewer from them.
-- **Decision**:
+- **Decision**: v1's append-only files, in the run folder (`--output`, D45):
+  - `programs.jsonl`: one line per program (D48), appended the moment it is stored: children of every status, the initial program's island copies and the migrants.
+  - `llm_calls.jsonl`: one line per LLM call: the prompt, the full reply, the model and its token counts, linked to the program it produced, or marked as a skipped iteration when the call failed (D34).
+  - `history.csv`: one line per completed iteration: iteration number, child status and score, the best score so far and the best program's id; the data for the progress plot (D51).
+  - `best_program.py`: the best program so far, rewritten whenever it changes, with a header comment (score, iteration, id, description).
+  - `best/iteration_0010.py`, `best/iteration_0020.py`, …: the best program as it stood after every k iterations (k in the problem file, default 10), with the same header.
+  - `run.json` and `problem.yaml` (D50), and `log.txt` (D52).
+  With several workers, iterations finish in no fixed order: "after iteration 20" means after 20 iterations have completed. Nothing evaluated is ever lost: a line is written before the next iteration starts, and a line cut off by a crash is detected and dropped on resume, as in v1.
 
 ### D48. What is saved for each program [later]
 - **v1**: id, parent, generation, iteration, score, code.
@@ -573,7 +580,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: everything above plus status, error, timings and tokens; prompts and replies (failed
   attempts included) in a separate `llm_calls.jsonl` so `programs.jsonl` stays readable. Failures as
   `score: null` + status, never `-Infinity`.
-- **Decision**:
+- **Decision**: Each line of `programs.jsonl` is a `Program` (D60) with its `Result` (D6), as JSON: failed programs have `score: null` and their status, never `-Infinity`; the evaluator's `output_data` (the plain data a program returned that the evaluator chose to keep, such as a packing's centres and radii, D6) is saved with it, so outputs can be drawn later without running the program again (D51). Prompts and replies are not repeated in it: they are in `llm_calls.jsonl`, failed calls included (D47).
 
 ### D49. Continuing a run [now]
 - **v1**: same `--output`; the database is rebuilt by re-adding the saved programs; `--iterations`
@@ -587,7 +594,7 @@ the my-alphaevolve list in its Part D.
   program, migrations) to be saved too.
 - **Lean**: replay, with island and migration events in the log; the count is a total, as in SE,
   so that rerunning the same command after a crash does not extend the run.
-- **Decision**:
+- **Decision**: Run the same command with the same `--output` folder. The `Database` is rebuilt by replaying `programs.jsonl` in order (D63): grids, islands, migrants, fingerprints and children counts all come back as they were, since each migration is stored as its copies. `--iterations` is the total, not "that many more": completed iterations are counted from `history.csv` (skipped ones included, D34), so rerunning the same command after a crash finishes the original run instead of extending it, and a larger value extends it. Iterations in progress at a crash were never written and are simply done again. The random generator is reseeded as D39 says. The initial program is not evaluated again.
 
 ### D50. Run information and safety checks [later]
 - **v1**: nothing; a different problem in the same folder goes unnoticed.
@@ -595,7 +602,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: save the settings and a fingerprint of the problem files in `run.json`; on resume,
   refuse (or warn) if the problem changed, allow changing the model and iteration count.
 - **Lean**: save them; refuse on a changed problem.
-- **Decision**:
+- **Decision**: `run.json` records the start of each session (date, my-evolve's git commit, the command line, the seed, D39) and fingerprints (hashes) of the initial program, the evaluation file, the problem file and the evaluation image; a copy of the problem file is saved as `problem.yaml`. On resume, a changed initial program, evaluation file, image, or any problem-file section other than `llm` stops the run with a clear message: scores saved for one problem mean nothing for another. The `llm` section and the flags (`--iterations`, `--workers`, `--target-score`, `--patience`, `--verbose`) may change between sessions; each session's values are recorded.
 
 ### D51. Outputs for people [later]
 - **v1**: `best_program.py` with a header.
@@ -616,7 +623,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: `logging` with Rich tables on the console and a log file in the results folder.
 - **Options**: `print` · `logging` with a short console format and a detailed log file in the output folder.
 - **Lean**: `logging`: one line per iteration on the console, details in the file.
-- **Decision**:
+- **Decision**: The `logging` module. The console shows one line per iteration (iteration, island, model, the child's status and score, the best score so far), plus the start and the end summary (D51); `--verbose` adds the details (parents drawn, checks, migrations, timings). `log.txt` in the run folder always gets everything, with timestamps. Secrets never appear in either (D46).
 
 ---
 
@@ -627,7 +634,7 @@ the my-alphaevolve list in its Part D.
 - **OE**: iterations in progress are abandoned; nothing since the last checkpoint is saved.
 - **SE**: not handled: work in progress is abandoned; everything finished is already in SQLite.
 - **Lean**: keep v1's behaviour.
-- **Decision**:
+- **Decision**: v1's behaviour: nothing new starts; iterations in progress finish and are stored; the run then ends with its summary. The console says so, and that a second Ctrl+C stops at once. On Windows, the main thread waits in short steps so that Ctrl+C reaches it, as in v1 (D55).
 
 ### D54. Second Ctrl+C and SIGTERM [later]
 - **v1**: the second Ctrl+C still waits for running threads (Part D, v1 item 1); SIGTERM not handled.
@@ -636,7 +643,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: what each one does · how running containers and threads are stopped.
 - **Lean**: both exit within seconds: running containers are killed, threads not waited for,
   everything already finished is already on disk.
-- **Decision**:
+- **Decision**: A second Ctrl+C, or a termination signal (SIGTERM on Linux; there is none on Windows), stops the run within seconds: the sandbox kills the running containers (D42), the worker threads are not waited for, so the process does not hang on an LLM call (unlike v1, Part D, v1 item 1), and the session is recorded as interrupted. Iterations in progress are lost and done again on resume (D49); everything finished is already on disk (D47).
 
 ### D55. Platforms [now]
 - **v1**: Windows first (PowerShell docs, UTF-8 output, Ctrl+C wake-up), Linux and macOS too.
@@ -780,9 +787,7 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **v1**: `RunStorage`: appends to `programs.jsonl`, writes `best_program.py`, reads a run back.
 - **OE**: `save` and `load` methods of `ProgramDatabase`, plus checkpoint folders.
 - **SE**: the SQLite file itself, plus the generation folders written by the runner.
-- **Decision**: Owns the run folder: appends each program the moment it exists, writes the best program,
-  saves the run's information (D50), and reads everything back for a resume (D49). Format and contents
-  are set by D47 and D48.
+- **Decision**: Owns the run folder and its files (D47): appends each program to `programs.jsonl` the moment it is stored, each LLM call to `llm_calls.jsonl` and each completed iteration to `history.csv`; rewrites `best_program.py` and writes the snapshots in `best/`; writes `run.json` and `problem.yaml` (D50); and reads everything back for a resume (D49).
 
 ### D70. The loop [now]
 - **v1**: the function `run_my_alphaevolve`.
