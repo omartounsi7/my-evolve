@@ -107,7 +107,7 @@ the my-alphaevolve list in its Part D.
   - `failed`: during evaluation. The program raised an exception while loading or while one of its functions ran (`ImportError`, `IndexError` in `run_packing`, a wrong return type).
   - `timeout`: during evaluation. The program ran out of time and its container was killed.
   - `invalid`: after evaluation. The program returned an answer that the evaluator judged illegal (overlapping circles, a negative radius, a circle outside the square). openevolve scores such programs 0; here the evaluator says so, with the reason in its feedback.
-  - `error`: not the program's fault. The infrastructure failed (Docker did not start, the evaluator itself raised, the disk is full). Such programs do not count as children of their parent (D19), are not used for duplicate detection, and count toward the "errors in a row" stop (D38).
+  - `error`: not the program's fault. The infrastructure failed (Docker did not start, the evaluator itself raised, the disk is full). Such programs do not count as children of their parent (D19), are never shown as negative inspirations (D10), and count toward the "errors in a row" stop (D38).
 
   With the cascade (D9), a program that passes stage 1 and fails or times out in a later stage keeps its stage 1 result: its status is `ok`, with the stage reached recorded. A failed program has an `error` message and no score (`score: None`). Failed programs are stored and saved, for duplicate detection (D13, D24), for the children count of the parent rule (D19), for showing failed attempts in prompts if D26 chooses to, and for analysis and resuming. They are never chosen as parents.
 
