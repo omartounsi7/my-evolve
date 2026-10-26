@@ -743,10 +743,10 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **v1**: `DockerEvaluator`, plus the `container_worker` module that runs inside the container.
 - **OE**: none.
 - **SE**: `JobScheduler` and the `launch` modules (local processes, Slurm).
-- **Decision**: One Docker container per program evaluation (D40, with D41's limits): it loads the
+- **Decision**: A fresh Docker container for each cascade stage of a program, and after a call over its time limit (D40, with D41's limits): it loads the
   program in the container, gives the evaluator the namespace stand-in, and runs each call in the
   container, with plain data in and out and an optional time limit per call; a call over its limit kills
-  the container and the next call starts a fresh one (D8). Each cascade stage gets a freshly loaded
+  the container and the next call starts a fresh one (D8). So each cascade stage gets a freshly loaded
   program (D9). It always removes its containers, even on Ctrl+C (D42). A worker module runs inside the
   container, as in v1.
 
@@ -755,7 +755,7 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **OE**: `Evaluator`: cascade, artifacts, retries, LLM feedback.
 - **SE**: the evaluation script itself, helped by `run_shinka_eval`.
 - **Decision**: Loads the problem's evaluation file on the host, runs its cascade stages through a
-  `Sandbox` (D9), enforces the whole evaluation's time limit, and turns what happens into a `Result`
+  `Sandbox` (D9), enforces each stage's time limit, and turns what happens into a `Result`
   (D6, D7): status, score, metrics, features, feedback (D10), error, stage reached and duration.
 
 ### D66. The `LLM` class [now]
