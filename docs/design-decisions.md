@@ -181,7 +181,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: no repair · ask again with the error, up to N times · also draw a new parent after N failures.
 - **Lean**: ask again with the error once or twice: far cheaper than a new proposal, and the
   conversation already holds the context. Counts as one iteration.
-- **Decision**:
+- **Decision**: None.
 
 ### D15. Record of what changed [later]
 - **v1**: none.
