@@ -539,7 +539,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: two file paths · a problem folder · a script · a console command (`my-evolve run
   examples/circle_packing`) · `python -m my_evolve`.
 - **Lean**: a problem folder, as SE does; a console command and `python -m`.
-- **Decision**:
+- **Decision**: v1's form: `python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE [flags]`. Everything about the problem and the LLMs is in the problem file (D43); the flags are the run's choices: `--config` (the problem file, required); `--iterations` (the total, D49; default 100, as openevolve's circle-packing phases); `--output` (the run folder; default `runs/<problem>_<date and time>`; an existing run folder is continued, D49); `--workers` (D36, default 1); `--seed` (D39); `--target-score` and `--patience` (optional stops, D37); `--unsafe-local-sandbox` (D40); `--verbose` (more detail on the console, D52). Every value is checked, with clear errors, as in v1.
 
 ### D46. API key [later]
 - **v1**: read from the variable named by `--api-key-env`.
