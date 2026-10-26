@@ -103,9 +103,9 @@ the my-alphaevolve list in its Part D.
 - **Lean**: explicit status + error message; stored and saved; never parents (see D20 for the
   "nothing works" case); their error shown to the LLM when the prompt mentions recent failed attempts (D26).
 - **Decision**: Every program has a `status`. `ok` means it was evaluated and its answer is legal; only `ok` programs have a score. The five failure statuses, by when the program stopped and whose fault it was:
-  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (a syntax error, which includes a reply with no code, or the same program as one already in the database).
-  - `failed`: during evaluation. The program raised an exception while loading or while one of its functions ran (`ImportError`, `IndexError` in `run_packing`, a wrong return type).
-  - `timeout`: during evaluation. The program ran out of time and its container was killed.
+  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (a syntax error, which includes a reply with no code; a required entry function missing; or the same program as one already in the database).
+  - `failed`: during evaluation. The program raised an exception while loading or while one of its functions ran (`ImportError`, `IndexError` in `run_packing`, a wrong return type). An entry function missing only at run time (defined, then deleted) is `failed` too, never `invalid`.
+  - `timeout`: during evaluation. The whole evaluation exceeded its time limit (60 s for our two problems), or a call exceeded its own limit (D8) and the evaluator did not handle it; the container was killed. A slow call that the evaluator handles is up to the evaluator: function minimization's stage 2 skips a trial over 5 s and scores the others (status `ok`), its stage 1 reports `timeout`, since its only call gave no answer.
   - `invalid`: after evaluation. The program returned an answer that the evaluator judged illegal (overlapping circles, a negative radius, a circle outside the square). openevolve scores such programs 0; here the evaluator says so, with the reason in its feedback.
   - `error`: not the program's fault. The infrastructure failed (Docker did not start, the evaluator itself raised, the disk is full). Such programs do not count as children of their parent (D19), are never shown as negative inspirations (D10), and count toward the "errors in a row" stop (D38).
 
