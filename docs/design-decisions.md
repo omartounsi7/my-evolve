@@ -53,7 +53,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · same scores on adapted examples (as now) · run OE or SE evaluators unchanged.
 - **Lean**: same scores as OE on adapted examples, so runs stay comparable; note SE's raw scale
   when comparing with its published numbers.
-- **Decision**: Runs must stay comparable to openevolve's, on function minimization and circle packing. The initial programs are openevolve's, unchanged (EVOLVE-BLOCK markers included). Evaluators take a namespace (D5) but must score every program exactly as openevolve's evaluators do, cascade included (D9). Reference: the openevolve checkout `da3d701`, whose function-minimization evaluator recomputes the value from (x, y) instead of trusting the program (Part D, v1 item 4).
+- **Decision**: Runs must stay comparable to openevolve's, on function minimization and circle packing. The initial programs are openevolve's code, with the EVOLVE-BLOCK markers removed, since the whole file may change (D12). Evaluators take a namespace (D5) but must score every program exactly as openevolve's evaluators do, with the same cascades (D9). Reference: the openevolve checkout `da3d701`, whose function-minimization evaluator recomputes the value from (x, y) instead of trusting the program (Part D, v1 item 4).
 
 ---
 
@@ -102,7 +102,7 @@ the my-alphaevolve list in its Part D.
   And separately: are failures stored? shown to the LLM? ever parents?
 - **Lean**: explicit status + error message; stored and saved; never parents (see D20 for the
   "nothing works" case); their error shown to the LLM when the prompt mentions recent failed attempts (D26).
-- **Decision**:
+- **Decision**: Lean. A failed program has `status` set to the reason (`failed`, `invalid`, `timeout`, `rejected`), an `error` message, and no score (`score: None`, never `-Infinity`). Failed programs are stored and saved, for duplicate detection (D13, D24), for the children count of ShinkaEvolve's parent rule (D19), for showing failed attempts in prompts if D26 chooses to, and for analysis and resuming. They are never chosen as parents.
 
 ### D8. Where the evaluator runs relative to the program [later]
 - **v1**: in the same Python process, inside the container; the program can forge its result or
@@ -114,7 +114,7 @@ the my-alphaevolve list in its Part D.
   write to · the program runs in the container and returns the value of an entry function
   (e.g. `run_packing()`), which the evaluator scores on the host.
 - **Lean**: same process for now, with the risk documented; revisit if reward hacking shows up.
-- **Decision**:
+- **Decision**: Docker plus option 3. Each program runs in its own sandboxed container (v1's limits). The evaluator runs on the host, in the trusted process: the `namespace` it receives is a stand-in whose functions, when called, run the program's function inside the container and return its result. Results cross the boundary as plain data only (JSON, or numpy arrays without pickle), so the program can choose what its functions return but cannot touch how the score is computed.
 
 ### D9. Cascade evaluation and repeated runs [later]
 - **v1**: written inside the user's `evaluate`.
@@ -123,7 +123,7 @@ the my-alphaevolve list in its Part D.
   show the program cannot beat a threshold.
 - **Options**: inside `evaluate` · framework stages · a helper for repeated runs with early stopping.
 - **Lean**: inside `evaluate`: nothing for the framework to know.
-- **Decision**:
+- **Decision**: openevolve's cascade. The evaluation file defines `evaluate_stage1(namespace)`, `evaluate_stage2(namespace)`, … (a file with only `evaluate(namespace)` is a one-stage cascade), and the problem file lists the thresholds. A program goes to the next stage only if the previous stage's score reaches its threshold; metrics of later stages overwrite earlier ones; a later stage that fails keeps the earlier stages' result, as in openevolve. The result object records the stage reached. Cascades of our two problems, copied from openevolve: function minimization, stage 1 = one call of `run_search` (5 s limit), threshold 1.3, stage 2 = 10 calls; circle packing, stage 1 = one call of `run_packing`, threshold 0.5, stage 2 = the full evaluation (a second call).
 
 ### D10. Feedback from the evaluation to the LLM [now]
 - **v1**: none; the LLM sees only the parent's score.
@@ -133,7 +133,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · `feedback` text from the evaluator (D6) · that, plus the tail of the
   program's stderr captured automatically.
 - **Lean**: evaluator feedback plus a captured error for failures, truncated to a size limit.
-- **Decision**: Yes: when a program is used as a parent, the prompt shows its evaluation feedback and, if it failed, its error message, both taken from its result object (D6), truncated to a size limit.
+- **Decision**: When a program is used as a parent, the prompt shows its evaluation feedback and, if it failed, its error message, both taken from its result object (D6) and truncated to a size limit.
 
 ---
 
@@ -159,7 +159,7 @@ the my-alphaevolve list in its Part D.
   the child is rejected) · markers, and only the blocks are shown to the LLM.
 - **Lean**: markers optional: if the initial program has them, they are enforced as SE does and
   the prompt explains them; otherwise the whole file may change.
-- **Decision**:
+- **Decision**: The whole file may change: no EVOLVE-BLOCK markers (the initial programs have them removed, D3).
 
 ### D13. Checks before a child is evaluated [later]
 - **v1**: none; even a copy of the parent is evaluated.
@@ -237,7 +237,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: SE's weighted rule: it is the main sample-efficiency idea of its paper, it does not
   depend on the score's scale, and the children factor gives exploration without a separate
   "explore" branch. Keep v1's rule as a second strategy behind the same interface, to compare.
-- **Decision**:
+- **Decision**: ShinkaEvolve's weighted rule as the primary strategy: pick an island, then a parent among its archive members with weight sigmoid(λ × (score − median) / spread) × 1 / (1 + number of children). openevolve's rule (20% uniform from the island, 70% archive elite, 10% fitness-weighted) as a secondary strategy behind the same interface, chosen in the problem file. Failed programs are never candidates (D7).
 
 ### D20. When no program works [later] *(new with SE)*
 - **v1**: cannot happen: the initial program must work.
@@ -247,7 +247,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: refuse to start, and treat "nothing works" as impossible (v1) · a fix mode (SE).
 - **Lean**: refuse to start, as v1 does: the initial program must work, so a working parent always
   exists. Revisit if you want runs that start from a broken or LLM-written program.
-- **Decision**:
+- **Decision**: No fix mode: failed programs are never parents (D7), so the initial program must work and the run refuses to start otherwise, as in v1.
 
 ### D21. The elite archive [later] *(new with SE)*
 - **v1**: none stored; the 10 best are computed when needed.
@@ -498,14 +498,14 @@ the my-alphaevolve list in its Part D.
   the run's choices (model, iterations, workers, output, seed) · generic `--set` overrides (SE).
 - **Lean**: a problem file plus CLI flags: a problem folder is complete on its own, and a run is
   one command line. No presets.
-- **Decision**:
+- **Decision**: A YAML problem file for the problem's own facts (description, evaluation settings, limits, packages, cascade thresholds) plus CLI flags for the run's choices.
 
 ### D44. Config file format and validation [later, if D43 uses a file]
 - **OE**, **SE**: YAML. OE ignores unknown keys; SE's CLI rejects them.
 - **Options**: YAML (needs `pyyaml`) · TOML (`tomllib`, built into Python 3.11+) · JSON.
   Unknown keys: ignored · error.
 - **Lean**: TOML; unknown keys are an error; loaded into dataclasses by hand.
-- **Decision**:
+- **Decision**: YAML; unknown keys are an error; loaded into dataclasses.
 
 ### D45. Command line [later]
 - **v1**: `python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --model ...`.
