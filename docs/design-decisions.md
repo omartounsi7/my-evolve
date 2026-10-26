@@ -377,7 +377,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: one · several with fixed weights (OE) · several chosen by a bandit (SE).
 - **Lean**: one model, behind an `LLM` interface that a pool can implement later; if several
   models come, SE's bandit rather than fixed weights, since it learns which model is worth its price.
-- **Decision**: Like OE, weighted ensemble, one model drawn per call with fixed weights. Behind an LLM interface.
+- **Decision**: Like openevolve: a weighted ensemble, one model drawn per call with fixed weights, using the run's own random generator (D39). The models are listed in the `llm` section of the problem file (D43). ShinkaEvolve's bandit remains a possible later experiment; the model recorded with every program (D60) gives it the data it needs.
 
 ### D32. Client and providers [later]
 - **v1**: synchronous `openai` client; any OpenAI-compatible server.
@@ -385,7 +385,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: each provider's own SDK, local OpenAI-compatible servers, and coding agents through a CLI.
 - **Options**: OpenAI-compatible only · plus the native Anthropic SDK · plus others.
 - **Lean**: OpenAI-compatible, synchronous (threads suffice, D36), behind the `LLM` interface.
-- **Decision**: OpenAI-compatible, synchronous (threads suffice, D36), behind the `LLM` interface.
+- **Decision**: OpenAI-compatible, synchronous (threads suffice, D36), behind the `LLM` interface. Each model has its own server address, so models of several providers can be mixed through their OpenAI-compatible endpoints. OpenAI's reasoning models are supported: they refuse `max_tokens` and temperature, and need `max_completion_tokens` instead. Each model has a `reasoning` setting; unset, it is guessed from the name with openevolve's list of prefixes (`o1`, `o3`, `o4`, `gpt-5`, `gpt-oss`); set, it overrides the guess for names the list does not know. For a reasoning model the token limit is sent as `max_completion_tokens`, and a configured temperature is an error at start-up rather than a failure at every call.
 
 ### D33. Generation settings [later]
 - **v1**: `max_tokens` only.
@@ -396,14 +396,14 @@ the my-alphaevolve list in its Part D.
 - **Options**: which to expose · whether unset means "not sent" · a fixed value or a list drawn per call.
 - **Lean**: `max_tokens`, plus optional temperature and reasoning effort, not sent when unset; a
   temperature may be a list drawn per call (cheap diversity).
-- **Decision**: `max_tokens` only.
+- **Decision**: `max_tokens` (default 16,384, so a reasoning model's hidden thinking does not use up the whole reply), plus an optional `temperature` and an optional `reasoning_effort` (reasoning models only), each sent only when set (some models reject a temperature). All three can be set for the whole `llm` section or per model, as in openevolve. One name, `max_tokens`, replaces v1's `--max-reply-tokens`.
 
 ### D34. Retries, timeouts, LLM failures [later]
 - **v1**: the `openai` package's 2 retries, 300 s; 3 failed iterations in a row stop the run.
 - **OE**: its own 3 retries on top of the package's, 60 s; never stops for failures.
 - **SE**: exponential backoff up to 20 tries, 1,200 s, the SDKs' own retries off; a "stuck" detector.
 - **Lean**: keep v1's behaviour: one layer of retries, and a stop after N failures in a row.
-- **Decision**: keep v1's behaviour: one layer of retries, and a stop after N failures in a row.
+- **Decision**: One layer of retries (the `openai` package's own, 2 by default) and a per-model timeout (default 300 s, longer for slow local or reasoning models). Before the first iteration, a start-up check sends a one-line request to every model with its own settings; any failure (wrong name, key or address) stops the run at once. During the run, failures are counted per model: a model that fails 3 times in a row (the default, settable) is dropped for the rest of the run, with a warning, and the others' weights are renormalized; the run stops when no model is left. An iteration whose LLM call failed is skipped but still counts toward the iteration total, and is recorded in the run's log. These LLM failures have their own counter, separate from D38's counter of infrastructure errors.
 
 ### D35. Cost accounting and budget [later] *(new with SE)*
 - **v1**: nothing recorded; iterations and `--max-reply-tokens` bound the cost.
@@ -414,8 +414,7 @@ the my-alphaevolve list in its Part D.
   online price catalog · a budget in tokens or dollars.
 - **Lean**: record tokens per call from the start (they cost nothing to store); prices per model in
   the config and a dollar budget as a later step; no online catalog.
-- **Decision**: record tokens per call from the start (they cost nothing to store); prices per model in
-  the config; iterations and `--max-reply-tokens` bound the cost.
+- **Decision**: Record the tokens of every call from the start (they cost nothing to store), with each program (D60). Optional prices per model in the `llm` section (per million input and output tokens) are used only to report the cost of each program and the run's total; there is no budget: the iteration count and `max_tokens` bound the cost.
 
 ---
 
