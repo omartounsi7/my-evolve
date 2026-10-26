@@ -35,7 +35,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: a small core with clear places where features plug in; each feature chosen below
   becomes its own step of the plan. Several of SE's sample-efficiency ideas are small on their own
   (D14, D19, D24), so they fit this approach well.
-- **Decision**: Lean. Start with a small core that works end to end, then add selected openevolve and ShinkaEvolve components, each as its own step.
+- **Decision**: Start with a small core that works end to end, then add selected openevolve and ShinkaEvolve components, each as its own step.
 
 ### D2. Languages of the evolved programs [now]
 - **v1**: Python only; programs are `exec`'d.
@@ -66,7 +66,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: docstring · a field of a problem config file · a separate `description.md` in the problem folder.
 - **Lean**: a separate file: descriptions grow long (circle packing's lists geometric insights), and it
   keeps the initial program a plain program.
-- **Decision**: Lean, adapted: the description is a field of the run's YAML configuration file, as in openevolve (this also settles that runs are configured with YAML; see D43, D44).
+- **Decision**: The description is a field of the run's YAML configuration file, as in openevolve (this also settles that runs are configured with YAML; see D43, D44).
 
 ### D5. What the evaluator receives [now]
 - **v1**: `evaluate(namespace)`, the names the program defined, after the framework ran it.
@@ -102,7 +102,7 @@ the my-alphaevolve list in its Part D.
   And separately: are failures stored? shown to the LLM? ever parents?
 - **Lean**: explicit status + error message; stored and saved; never parents (see D20 for the
   "nothing works" case); their error shown to the LLM when the prompt mentions recent failed attempts (D26).
-- **Decision**: Lean. A failed program has `status` set to the reason (`failed`, `invalid`, `timeout`, `rejected`), an `error` message, and no score (`score: None`, never `-Infinity`). Failed programs are stored and saved, for duplicate detection (D13, D24), for the children count of ShinkaEvolve's parent rule (D19), for showing failed attempts in prompts if D26 chooses to, and for analysis and resuming. They are never chosen as parents.
+- **Decision**: A failed program has `status` set to the reason (`failed`, `invalid`, `timeout`, `rejected`), an `error` message, and no score (`score: None`). Failed programs are stored and saved, for duplicate detection (D13, D24), for the children count of ShinkaEvolve's parent rule (D19), for showing failed attempts in prompts if D26 chooses to, and for analysis and resuming. They are never chosen as parents.
 
 ### D8. Where the evaluator runs relative to the program [later]
 - **v1**: in the same Python process, inside the container; the program can forge its result or
@@ -114,7 +114,7 @@ the my-alphaevolve list in its Part D.
   write to · the program runs in the container and returns the value of an entry function
   (e.g. `run_packing()`), which the evaluator scores on the host.
 - **Lean**: same process for now, with the risk documented; revisit if reward hacking shows up.
-- **Decision**: Docker plus option 3. Each program runs in its own sandboxed container (v1's limits). The evaluator runs on the host, in the trusted process: the `namespace` it receives is a stand-in whose functions, when called, run the program's function inside the container and return its result. Results cross the boundary as plain data only (JSON, or numpy arrays without pickle), so the program can choose what its functions return but cannot touch how the score is computed.
+- **Decision**: Each program runs in its own sandboxed container (v1's limits). The evaluator runs on the host, in the trusted process: the `namespace` it receives is a stand-in whose functions, when called, run the program's function inside the container and return its result. Results cross the boundary as plain data only (JSON, or numpy arrays without pickle), so the program can choose what its functions return but cannot touch how the score is computed.
 
 ### D9. Cascade evaluation and repeated runs [later]
 - **v1**: written inside the user's `evaluate`.
@@ -123,7 +123,7 @@ the my-alphaevolve list in its Part D.
   show the program cannot beat a threshold.
 - **Options**: inside `evaluate` · framework stages · a helper for repeated runs with early stopping.
 - **Lean**: inside `evaluate`: nothing for the framework to know.
-- **Decision**: openevolve's cascade. The evaluation file defines `evaluate_stage1(namespace)`, `evaluate_stage2(namespace)`, … (a file with only `evaluate(namespace)` is a one-stage cascade), and the problem file lists the thresholds. A program goes to the next stage only if the previous stage's score reaches its threshold; metrics of later stages overwrite earlier ones; a later stage that fails keeps the earlier stages' result, as in openevolve. The result object records the stage reached. Cascades of our two problems, copied from openevolve: function minimization, stage 1 = one call of `run_search` (5 s limit), threshold 1.3, stage 2 = 10 calls; circle packing, stage 1 = one call of `run_packing`, threshold 0.5, stage 2 = the full evaluation (a second call).
+- **Decision**: openevolve's cascade. The evaluation file defines `evaluate_stage1(namespace)`, `evaluate_stage2(namespace)`, … (a file with only `evaluate(namespace)` is a one-stage cascade), and the problem file lists the thresholds. A program goes to the next stage only if the previous stage's score reaches its threshold; metrics of later stages overwrite earlier ones; a later stage that fails keeps the earlier stages' result, as in openevolve. The result object records the stage reached.
 
 ### D10. Feedback from the evaluation to the LLM [now]
 - **v1**: none; the LLM sees only the parent's score.
@@ -133,7 +133,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · `feedback` text from the evaluator (D6) · that, plus the tail of the
   program's stderr captured automatically.
 - **Lean**: evaluator feedback plus a captured error for failures, truncated to a size limit.
-- **Decision**: Every evaluator writes feedback text into the result object (D6) as it checks a program, in the style of openevolve's artifacts (e.g. "Circles 3 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); our two examples' evaluators do so for every check they make. No LLM writes it. The framework adds the error message and the end of the error output when a program crashes or times out. When a program is used as a parent, the prompt shows its feedback and, if it failed, its error, truncated to a size limit.
+- **Decision**: An evaluator writes feedback text into the result object (D6) as it checks a program, in the style of openevolve's artifacts (e.g. "Circles 3 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); our two examples' evaluators do so for every check they make. The framework adds the error message and the end of the error output when a program crashes or times out. When a program is used as a parent, the prompt shows its feedback and, if it failed, its error, truncated to a size limit.
 
 ---
 
