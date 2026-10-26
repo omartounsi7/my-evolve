@@ -428,7 +428,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: threads · processes · asyncio · one pool · separate limits for LLM calls and for evaluations.
 - **Lean**: threads, as in v1: the work is waiting on the LLM and on containers. One pool first;
   separate limits as a later step if evaluations and LLM calls turn out to need different numbers.
-- **Decision**:
+- **Decision**: Threads, as in v1, with at most `workers` iterations at once (a CLI flag, default 1). Each iteration has two parts run in a worker thread, with the main thread in between: the main thread picks the island, the parent and the example programs and builds the prompt (D19, D26, D67); a worker asks the LLM and parses the reply (D68); back in the main thread, the checks of D13 run, so the duplicate check always sees every program stored so far, even with several workers; a worker then evaluates the child (D65); the main thread stores it, places it on its island's grid and migrates when due (D23). Only the main thread touches the `Database` and the `Storage`. Separate limits for LLM calls and evaluations: not needed now, and easy to add later, since the two parts are already separate.
 
 ### D37. When a run stops [later]
 - **v1**: iteration count, Ctrl+C, 3 LLM failures in a row.
@@ -437,7 +437,7 @@ the my-alphaevolve list in its Part D.
 - **Options**, any combination: iterations · target score · no improvement for N iterations ·
   wall-clock time · token or dollar budget (D35).
 - **Lean**: iterations, target score, patience; a budget once D35 records costs.
-- **Decision**: Partly decided: an iteration skipped because its LLM call failed counts toward the iteration total (D34). The other stop conditions: to be decided.
+- **Decision**: The run stops when the iteration total is reached (failed and skipped iterations included, D34, D49); when a program reaches an optional target score (`--target-score`, as openevolve's); after an optional number of iterations without a better best score (`--patience`, off by default); when no LLM model is left (D34); after too many infrastructure errors in a row (D38); or on Ctrl+C (D53). No budget (D35). The reason is recorded in the run's log and summary.
 
 ### D38. Errors inside an iteration [later]
 - **v1**: only `LLMError` is handled; any other exception ends the run (Part D, v1 item 7).
@@ -481,7 +481,7 @@ the my-alphaevolve list in its Part D.
   friends · fixed or adaptive time limit.
 - **Lean**: v1's values, as problem settings, plus SE's thread caps set to the container's CPU
   count (numpy otherwise starts as many threads as the host has cores); a fixed time limit.
-- **Decision**:
+- **Decision**: v1's limits, as settings of the problem file: no network, read-only file system except a temporary `/tmp`, 1 GB of memory and no swap, 1 CPU, 64 processes, all capabilities dropped, user `nobody`. A time limit per cascade stage (60 s for our two problems, as in openevolve) and optional limits per call set by the evaluator (D8). The thread counts of numeric libraries (`OMP_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and similar) are set to the container's CPU count, since numpy otherwise starts one thread per core of the host. The evaluator on the host has no limit: it is your code, and trusted.
 
 ### D42. Containers that outlive the run [later]
 - **v1**: possible (Part D, v1 item 2).
@@ -489,7 +489,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: label containers with the run's id and remove them on exit and on the next start ·
   a time limit inside the container too · both.
 - **Lean**: both.
-- **Decision**:
+- **Decision**: Both. Every container is labelled with the run's id (`docker run --label`) and started with `--rm`; the sandbox removes its containers when a stage ends, when the run stops, and on Ctrl+C; at start-up, containers left by an earlier session of the same run are removed. Inside the container, the worker runs under a time limit of its own, slightly longer than the stage's, so a container stops even if the host process dies.
 
 ### D71. Packages programs may import [now] *(added after D70)*
 - **v1**: a `requirements.txt` next to the evaluation file, with exact versions; the packages are installed
