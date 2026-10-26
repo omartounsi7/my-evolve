@@ -548,7 +548,7 @@ the my-alphaevolve list in its Part D.
   model has credentials.
 - **Lean**: keep v1's way; never in a file; check at start-up that the variable is set when the
   server is not local.
-- **Decision**:
+- **Decision**: Each model names the environment variable holding its key, with openevolve's `${VAR}` syntax (`api_key: ${ANTHROPIC_API_KEY}`); a key written directly in the file is refused, so the file can be shared. A model on a local server needs no key.
 
 ---
 
