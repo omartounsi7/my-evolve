@@ -355,7 +355,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: Python constants · text files in the package · user-overridable per problem.
 - **Lean**: Python constants in one module; no random wording variations (SE's rewrite strategies
   are a different thing, covered by D11).
-- **Decision**:
+- **Decision**: Python constants in one module, filled with `str.format`; their text is Appendix A. No random wording variations.
 
 ### D30. Prompt size [later]
 - **v1**: unbounded (Ollama silently truncates long prompts).
@@ -769,17 +769,13 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 - **v1**: `PromptSampler`: one template, filled with the description, the parent and the allowed packages.
 - **OE**: `PromptSampler` with a `TemplateManager` over text files.
 - **SE**: `PromptSampler`, with one prompt module per change format.
-- **Decision**: Builds the system and user messages (D25) from the problem's description and contract
-  (D4), the evolve-block instructions (D12), the parent and the inspirations with their scores, feedback and
-  errors (D10, D26, D27), and the reply format asking for a description and the code (D15). Templates are
-  Python constants (D29).
+- **Decision**: Builds the system and user messages of Appendix A (D25): the instruction, the problem's description and contract (D4), the rules (evolve blocks, D12; allowed packages, D71; higher is better), the reply format (D15), then the example programs and the parent with their scores or statuses, descriptions, feedback and errors (D10, D26, D27), and the request. Templates are Python constants (D29).
 
 ### D68. Reply parsing [now]
 - **v1**: functions in `reply_parser.py`.
 - **OE**: functions in `utils/code_utils.py`.
 - **SE**: functions in `edit/` (`apply_full_patch`, `apply_diff_patch`).
-- **Decision**: Functions, not a class: they extract the description and the code from a reply, reusing
-  v1's code-block rules (dropping thinking sections, preferring valid Python, the longest block).
+- **Decision**: Functions, not a class: they extract the description (between `<DESCRIPTION>` and `</DESCRIPTION>`) and the code (a fenced Python block) from a reply, wherever they appear in it; anything else the LLM writes around them is ignored. The code is found with v1's rules (dropping thinking sections, preferring valid Python, then the longest block). A reply without code is rejected (D13); one without a description is accepted (D15).
 
 ### D69. The `Storage` class [now]
 - **v1**: `RunStorage`: appends to `programs.jsonl`, writes `best_program.py`, reads a run back.
