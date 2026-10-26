@@ -289,7 +289,7 @@ the my-alphaevolve list in its Part D.
   copy or move, which programs) · new islands on stagnation.
 - **Lean**: initial program in every island; island drawn uniformly; ring migration of each
   island's best every N iterations, as copies; no new islands for now.
-- **Decision**: 3 islands; the initial program copied into every island; children stay on their parent's island; the island for each iteration drawn uniformly; every 25 iterations, random non-best programs are copied to the other two islands; no new islands. Island settings are modifiable in the problem file: the number of islands, the migration interval N (in iterations), how many programs migrate, which programs (best, random, or random non-best), where they go, and whether they are copied or moved.
+- **Decision**: An island's population is its grid's elites (the best program of each occupied cell): every program stays in the database with the island it was made on (D22), but a program that loses its cell leaves the island's population. Defaults: 3 islands; the initial program copied into every island; children stay on their parent's island; the island for each iteration drawn uniformly; every 25 iterations, 10% of each island's elites (at least one), drawn at random from all its elites except its best, are copied to every other island, where a copy takes its cell only if the cell is empty or holds a worse elite; copies are not re-evaluated and do not count as iterations; no new islands. Modifiable in the problem file: the number of islands, the migration interval N (in iterations), the share of elites that migrate, which ones (best, random, or random non-best), where they go, and whether they are copied or moved.
 
 ### D24. Duplicates and near-duplicates [later]
 - **v1**: none.
