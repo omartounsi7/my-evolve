@@ -663,7 +663,126 @@ the my-alphaevolve list in its Part D.
 
 ---
 
-## 14. Smaller features: yes or no
+## 14. Classes and modules *(added after section 13)*
+
+How the decisions above become code. Each class has one job; the decisions it implements are named.
+Records are plain dataclasses; state derived from them lives in `Database`, never on the records.
+
+### D60. The `Program` class [now]
+- **v1**: a small class: `id`, `code`, `score`, `parent_id`, `generation`, `iteration`, with `to_dict` / `from_dict`.
+- **OE**: a dataclass with the evaluation flattened into it (`metrics` dict, `complexity`, `diversity`,
+  `changes_description`, `prompts`, artifacts, `embedding`) and a free-form `metadata` dict holding the
+  island, the diff summary, the parent's metrics, token usage and a migrant flag.
+- **SE**: a dataclass mapped onto a SQLite table, also flattened (`combined_score`, `public_metrics`,
+  `text_feedback`, `correct`, ...), with database state on it (`in_archive`, `children_count`,
+  `migration_history`) and a `metadata` dict.
+- **Decision**: A dataclass of facts fixed once the program exists, with no free-form `metadata` dict and
+  no database state on it:
+  - `id`: a UUID.
+  - `code`: the full file.
+  - `result`: its `Result` (D6), kept as one object.
+  - `parent_id`: `None` for the initial program; for a copy, the program it was copied from.
+  - `origin`: `initial`, `llm` (written by the LLM) or `copy` (the initial program placed on an island, or a
+    migrant); D13's checks and D19's children count apply to `llm` programs only.
+  - `island`: the island it was made on (D23).
+  - `iteration`: the iteration that produced it; a copy gets the iteration of its migration.
+  - `generation`: its distance from the initial program.
+  - `description`: the LLM's self-contained description (D15).
+  - `fingerprint`: the hash of its syntax tree (D13), `None` if it does not compile.
+  - `code_complexity`: its node count inside the evolve blocks (D17); the output features are in `result.features`.
+  - `inspiration_ids`: the programs shown in its prompt (D26).
+  - `llm`: the model used and its token counts (D35); prompt and reply are stored separately (D48).
+  - `created_at`: when it was made.
+
+  Grid cells, elite status, the archive and children counts are derived by `Database` (D63), never stored here.
+
+### D61. The `Grid` class [now]
+- **v1**: none on `main` (`aeaf384` rebuilt a grid from all programs at each sample).
+- **OE**: a dict per island from a cell key to a program id, inside `ProgramDatabase`.
+- **SE**: no grid.
+- **Decision**: One MAP-Elites grid with fixed dimensions from the problem file (features, ranges, bins,
+  D17, D18). It computes a program's cell from its `code_complexity` and `result.features`, holds the elite
+  of each cell, places a program (it takes the cell if the cell is empty or its score is strictly higher)
+  and lists its elites. Only `ok` programs are placed (D7).
+
+### D62. The `Island` class [now]
+- **OE**: sets of program ids, alongside the grids, inside `ProgramDatabase`.
+- **SE**: an `island_idx` column, managed by an `IslandManager` and migration strategy classes.
+- **Decision**: An island's number and its `Grid`; its population is its grid's elites (D23). It gives its
+  best elite and its elites for parent selection and migration.
+
+### D63. The `Database` class [now]
+- **v1**: `Database`: a flat dict of programs and the 70/30 parent choice.
+- **OE**: `ProgramDatabase`, 2,800 lines: islands, grids, archive, migration, sampling, saving, artifacts.
+- **SE**: `ProgramDatabase` over SQLite, with separate classes for parents, islands and inspirations.
+- **Decision**: Every program of the run (D22), the islands, the set of fingerprints (D13) and the
+  children counts (D19). It adds programs (placing `ok` ones on their island's grid), computes the archive
+  on demand (D21), migrates (D23), and draws parents through a strategy interface with two
+  implementations, ShinkaEvolve's weighted rule and openevolve's rule (D19). Inspirations (D26) are drawn
+  here too. Rebuilt on resume by replaying the saved programs in order (D49); only the main thread changes it (D36).
+
+### D64. The `Sandbox` class [now]
+- **v1**: `DockerEvaluator`, plus the `container_worker` module that runs inside the container.
+- **OE**: none.
+- **SE**: `JobScheduler` and the `launch` modules (local processes, Slurm).
+- **Decision**: One Docker container per program evaluation (D40, with D41's limits): it loads the
+  program in the container, gives the evaluator the namespace stand-in, and runs each call in the
+  container, with plain data in and out and an optional time limit per call; a call over its limit kills
+  the container and the next call starts a fresh one (D8). Each cascade stage gets a freshly loaded
+  program (D9). It always removes its containers, even on Ctrl+C (D42). A worker module runs inside the
+  container, as in v1.
+
+### D65. The `Evaluator` class [now]
+- **v1**: the `Evaluator` base class, implemented by `DockerEvaluator`.
+- **OE**: `Evaluator`: cascade, artifacts, retries, LLM feedback.
+- **SE**: the evaluation script itself, helped by `run_shinka_eval`.
+- **Decision**: Loads the problem's evaluation file on the host, runs its cascade stages through a
+  `Sandbox` (D9), enforces the whole evaluation's time limit, and turns what happens into a `Result`
+  (D6, D7): status, score, metrics, features, feedback (D10), error, stage reached and duration.
+
+### D66. The `LLM` class [now]
+- **v1**: an `LLM` base class with one method, `generate`, and an `OpenAICompatibleLLM` implementation.
+- **OE**: `LLMInterface`, implemented per provider, and `LLMEnsemble` on top.
+- **SE**: `LLMClient` and `AsyncLLMClient`, over one module per provider.
+- **Decision**: An abstract class with one method that turns the prompt's messages into a reply, with
+  its token counts (D35). What implements it is set by D31 and D32.
+
+### D67. The `PromptBuilder` class [now]
+- **v1**: `PromptSampler`: one template, filled with the description, the parent and the allowed packages.
+- **OE**: `PromptSampler` with a `TemplateManager` over text files.
+- **SE**: `PromptSampler`, with one prompt module per change format.
+- **Decision**: Builds the system and user messages (D25) from the problem's description and contract
+  (D4), the evolve-block instructions (D12), the parent and the inspirations with their scores, feedback and
+  errors (D10, D26, D27), and the reply format asking for a description and the code (D15). Templates are
+  Python constants (D29).
+
+### D68. Reply parsing [now]
+- **v1**: functions in `reply_parser.py`.
+- **OE**: functions in `utils/code_utils.py`.
+- **SE**: functions in `edit/` (`apply_full_patch`, `apply_diff_patch`).
+- **Decision**: Functions, not a class: they extract the description and the code from a reply, reusing
+  v1's code-block rules (dropping thinking sections, preferring valid Python, the longest block).
+
+### D69. The `Storage` class [now]
+- **v1**: `RunStorage`: appends to `programs.jsonl`, writes `best_program.py`, reads a run back.
+- **OE**: `save` and `load` methods of `ProgramDatabase`, plus checkpoint folders.
+- **SE**: the SQLite file itself, plus the generation folders written by the runner.
+- **Decision**: Owns the run folder: appends each program the moment it exists, writes the best program,
+  saves the run's information (D50), and reads everything back for a resume (D49). Format and contents
+  are set by D47 and D48.
+
+### D70. The loop [now]
+- **v1**: the function `run_my_alphaevolve`.
+- **OE**: the `OpenEvolve` controller and `ProcessParallelController`.
+- **SE**: `ShinkaEvolveRunner`.
+- **Decision**: A function, `run`, taking the `Problem`, an `LLM` and the run's settings. It picks an
+  island and a parent, builds the prompt, asks the LLM, parses the reply, runs the checks (D13), evaluates
+  the child, stores it, migrates when due, and stops when D37 says so, with several iterations at once in
+  threads (D36). Only its main thread touches the `Database` and the `Storage`; Ctrl+C is handled here (D53, D54).
+
+---
+
+## 15. Smaller features: yes or no
 
 Each one is a self-contained step that can be added late. [later] for all.
 
