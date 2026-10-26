@@ -103,7 +103,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: explicit status + error message; stored and saved; never parents (see D20 for the
   "nothing works" case); their error shown to the LLM when the prompt mentions recent failed attempts (D26).
 - **Decision**: Every program has a `status`. `ok` means it was evaluated and its answer is legal; only `ok` programs have a score. The five failure statuses, by when the program stopped and whose fault it was:
-  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (syntax error, same program as its parent or an earlier one, no code in the reply).
+  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (a syntax error, which includes a reply with no code, or the same program as its parent).
   - `failed`: during evaluation. The program raised an exception while loading or while one of its functions ran (`ImportError`, `IndexError` in `run_packing`, a wrong return type).
   - `timeout`: during evaluation. The program ran out of time and its container was killed.
   - `invalid`: after evaluation. The program returned an answer that the evaluator judged illegal (overlapping circles, a negative radius, a circle outside the square). openevolve scores such programs 0; here the evaluator says so, with the reason in its feedback.
