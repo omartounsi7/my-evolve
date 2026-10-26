@@ -491,6 +491,24 @@ the my-alphaevolve list in its Part D.
 - **Lean**: both.
 - **Decision**:
 
+### D71. Packages programs may import [now] *(added after D70)*
+- **v1**: a `requirements.txt` next to the evaluation file, with exact versions; the packages are installed
+  once, when the evaluation image is built, and every prompt names them; containers have no network, so
+  nothing else can be installed; pip options such as `--index-url` are refused.
+- **OE**: whatever is installed where openevolve runs; the LLM is never told.
+- **SE**: whatever is installed in the evaluation environment; the LLM is never told.
+- **Decision**: The problem file lists the packages programs may import, with exact versions
+  (`numpy==2.5.4`), besides Python's standard library. They are installed into the evaluation image when it
+  is built, which is the only moment with network access: the image is built from the Dockerfile and that
+  list, tagged with a hash of both, built on first use and rebuilt automatically when either changes; the
+  containers themselves have no network (D8), so nothing is ever installed because the LLM asks for it. Every
+  prompt names the allowed packages (D67), and a program importing anything else fails with `No module named`
+  (status `failed`, D7). Only package names and versions may be listed, no pip options. For comparability
+  (D3), the two problems list openevolve's packages: numpy and scipy for function minimization, numpy, scipy
+  and matplotlib for circle packing, at the versions v1 pinned. The evaluator runs on the host (D8), so the
+  packages the evaluation file itself imports (numpy for both problems) must also be installed in the host's
+  environment, as a development dependency.
+
 ---
 
 ## 9. Configuration and interface
