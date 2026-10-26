@@ -199,7 +199,7 @@ the my-alphaevolve list in its Part D.
   description asked of the LLM in tagged sections.
 - **Lean**: store a computed diff for every child, and ask for SE's name and description: they cost
   a few tokens and make lineages readable, in prompts (D26) and in the outputs (D51).
-- **Decision**: The LLM's reply includes, besides the code, a short description of how the child differs from its parent and why it should score better. A reply without a description is still accepted if its code is usable. This description is available to prompts (D26) and outputs (D51).
+- **Decision**: The LLM's reply includes, besides the code, a short description of how the program solves the task (its approach, its main ideas), written so that it stands on its own: it never refers to the parent or to any other program (no "compared to the previous version", no "now uses"), because when the program is later shown as a parent or an inspiration, the program it came from is usually not in the prompt. The prompt asks for it in these terms. A reply without a description is still accepted if its code is usable. This description is available to prompts (D26) and outputs (D51).
 
 ---
 
