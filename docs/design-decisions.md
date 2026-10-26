@@ -455,7 +455,7 @@ the my-alphaevolve list in its Part D.
   from the seed and the number of programs.
 - **Lean**: own generator, no default seed; derive the seed on resume. Every random draw (parent,
   island, change format, temperature) goes through that one generator.
-- **Decision**:
+- **Decision**: The run's own `random.Random`, through which every draw goes: island, parent, example programs, migrants, model (D31). `--seed` sets it; without it a seed is drawn at random, and either way it is saved with the run (D50), so a run can be repeated as far as the LLMs and the number of workers allow (with several workers, results arrive in no fixed order). On resume, the generator is seeded from the run's seed and the number of programs already stored, so the draws continue instead of repeating (Part D, v1 item 9). Randomness inside the programs themselves (function minimization's unseeded search) is theirs, as in openevolve.
 
 ---
 
