@@ -282,7 +282,9 @@ the my-alphaevolve list in its Part D.
   copy or move, which programs) · new islands on stagnation.
 - **Lean**: initial program in every island; island drawn uniformly; ring migration of each
   island's best every N iterations, as copies; no new islands for now.
-- **Decision**:
+- **Decision**: 3 islands. Initial program in every island. Children stay on their parent's island.
+  Island drawn uniformly. Random non-best programs migrate to the other two islands every N iterations
+  (N is set in the problem file), as copies. No new islands.
 
 ### D24. Duplicates and near-duplicates [later]
 - **v1**: none.
