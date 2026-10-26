@@ -268,7 +268,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: keep all · cap what selection sees, keep all on disk · delete.
 - **Lean**: keep all on disk; let selection ignore what it does not need (the archive and the
   parent rule already do).
-- **Decision**:
+- **Decision**: Keep all on disk.
 
 ### D23. Islands [later, if D16 uses islands]
 - **OE**: 5 islands; the initial program only in island 0, others filled by its descendants;
@@ -293,7 +293,7 @@ the my-alphaevolve list in its Part D.
   embeddings with a similarity threshold, before evaluation · plus an LLM judge.
 - **Lean**: AST-identical rejection from the start; SE-style embedding rejection as a later
   optional step (Ollama serves embedding models too), without the LLM judge at first.
-- **Decision**:
+- **Decision**: Reject exact or AST-identical code anywhere in the database (D13).
 
 ---
 
