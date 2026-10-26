@@ -237,7 +237,7 @@ the my-alphaevolve list in its Part D.
 - **Lean**: SE's weighted rule: it is the main sample-efficiency idea of its paper, it does not
   depend on the score's scale, and the children factor gives exploration without a separate
   "explore" branch. Keep v1's rule as a second strategy behind the same interface, to compare.
-- **Decision**: ShinkaEvolve's weighted rule as the primary strategy: pick an island, then a parent among its archive members with weight sigmoid(λ × (score − median) / spread) × 1 / (1 + number of children). openevolve's rule (20% uniform from the island, 70% archive elite, 10% fitness-weighted) as a secondary strategy behind the same interface, chosen in the problem file. Failed programs are never candidates (D7).
+- **Decision**: ShinkaEvolve's weighted rule as the primary strategy: pick an island, then a parent among the island's grid elites (the best program of each occupied cell) with weight sigmoid(λ × (score − median) / spread) × 1 / (1 + number of children). openevolve's rule (20% uniform from the island, 70% archive elite, 10% fitness-weighted) as a secondary strategy behind the same interface, chosen in the problem file. Failed programs are never candidates (D7).
 
 ### D20. When no program works [later] *(new with SE)*
 - **v1**: cannot happen: the initial program must work.
