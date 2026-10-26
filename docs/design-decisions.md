@@ -258,7 +258,7 @@ the my-alphaevolve list in its Part D.
   replacement · several criteria.
 - **Lean**: computed on demand, top k by score, k configurable: always correct, and nothing to
   keep consistent on resume. Crowding only if embeddings are adopted (D24).
-- **Decision**:
+- **Decision**: Computed on demand (top k by score, default k=10).
 
 ### D22. Forgetting programs [later]
 - **v1**: every program kept forever, in memory and on disk.
