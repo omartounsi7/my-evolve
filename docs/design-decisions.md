@@ -166,7 +166,7 @@ the my-alphaevolve list in its Part D.
   the child is rejected) · markers, and only the blocks are shown to the LLM.
 - **Lean**: markers optional: if the initial program has them, they are enforced as SE does and
   the prompt explains them; otherwise the whole file may change.
-- **Decision**: The whole file may change: no EVOLVE-BLOCK markers (the initial programs have them removed, D3).
+- **Decision**: Only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END` may change. The initial programs keep openevolve's markers (D3). The prompt tells the LLM explicitly that only the code inside the blocks may change and that the markers must stay where they are. A child that changes anything outside the blocks, or moves, removes, adds or alters a marker, is rejected before evaluation (D13). Unlike openevolve's `enforce_evolve_blocks`, which silently reverts edits made outside the blocks, the child is rejected, so the mistake is recorded and can be shown to the LLM as a negative inspiration (D7, D10).
 
 ### D13. Checks before a child is evaluated [later]
 - **v1**: none; even a copy of the parent is evaluated.
