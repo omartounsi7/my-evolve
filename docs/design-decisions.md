@@ -103,13 +103,13 @@ the my-alphaevolve list in its Part D.
 - **Lean**: explicit status + error message; stored and saved; never parents (see D20 for the
   "nothing works" case); their error shown to the LLM when the prompt mentions recent failed attempts (D26).
 - **Decision**: Every program has a `status`. `ok` means it was evaluated and its answer is legal; only `ok` programs have a score. The five failure statuses, by when the program stopped and whose fault it was:
-  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (a syntax error, which includes a reply with no code, or the same program as its parent).
+  - `rejected`: before evaluation, on the host. The child failed a check of D13 and was never run (a syntax error, which includes a reply with no code, or the same program as one already in the database).
   - `failed`: during evaluation. The program raised an exception while loading or while one of its functions ran (`ImportError`, `IndexError` in `run_packing`, a wrong return type).
   - `timeout`: during evaluation. The program ran out of time and its container was killed.
   - `invalid`: after evaluation. The program returned an answer that the evaluator judged illegal (overlapping circles, a negative radius, a circle outside the square). openevolve scores such programs 0; here the evaluator says so, with the reason in its feedback.
   - `error`: not the program's fault. The infrastructure failed (Docker did not start, the evaluator itself raised, the disk is full). Such programs do not count as children of their parent (D19), are never shown as negative inspirations (D10), and count toward the "errors in a row" stop (D38).
 
-  With the cascade (D9), a program that passes stage 1 and fails or times out in a later stage keeps its stage 1 result: its status is `ok`, with the stage reached recorded. A failed program has an `error` message and no score (`score: None`). Failed programs are stored and saved: they are shown in prompts as negative inspirations, with their error (D10, D26), they count in the children count of the parent rule (D19), and they serve analysis and resuming. They are never chosen as parents, and play no part in duplicate detection (D13).
+  With the cascade (D9), a program that passes stage 1 and fails or times out in a later stage keeps its stage 1 result: its status is `ok`, with the stage reached recorded. A failed program has an `error` message and no score (`score: None`). Failed programs are stored and saved: they are shown in prompts as negative inspirations, with their error (D10, D26), they count in the children count of the parent rule (D19), and they serve analysis and resuming. They are never chosen as parents. Those that have a syntax tree count in duplicate detection (D13), so the same failing program is not evaluated twice; `error` programs do not.
 
 ### D8. Where the evaluator runs relative to the program [later]
 - **v1**: in the same Python process, inside the container; the program can forge its result or
