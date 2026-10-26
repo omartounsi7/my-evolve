@@ -611,7 +611,11 @@ the my-alphaevolve list in its Part D.
   Pareto front), optional W&B.
 - **Options**: best program · a summary at the end · a score-over-time table or plot · a lineage view.
 - **Lean**: best program and end summary now; a small report script later.
-- **Decision**:
+- **Decision**: During the run: the console line of every iteration shows the best score so far (D52); `best_program.py` and the snapshots in `best/` (D47). At the end: a summary on the console and in `log.txt` (iterations done, why the run stopped, best score and where it was found, failures by status, tokens and cost per model, D35). After the run, a report script, `python scripts/report.py RUN_FOLDER`, rebuilds the database from `programs.jsonl` iteration by iteration and draws, with matplotlib, into `RUN_FOLDER/report/`:
+  - **Progress**: the best score so far against the iteration (from `history.csv`), with every child's score as a dot.
+  - **Islands and grids**: for every k iterations and the end, each island's grid side by side, each cell coloured by its elite's score: white when empty, light blue for a weak score, deep blue for a strong one, on one colour scale for the whole run (lowest to highest score ever reached), so images can be compared; the series is also saved as an animation. A 1D grid is a row of cells, a 2D grid a square, a 3D grid one square per value of its third feature.
+  - **Problem outputs**: when the evaluation file defines a `visualize` function, the best program's output at every snapshot, drawn from its saved `output_data` (D48). Circle packing defines one, drawing the circles in the unit square as openevolve's example does; function minimization does not.
+  matplotlib is needed on the host for the report only.
 
 ---
 
