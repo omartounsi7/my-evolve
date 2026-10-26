@@ -437,7 +437,7 @@ the my-alphaevolve list in its Part D.
 - **Options**, any combination: iterations · target score · no improvement for N iterations ·
   wall-clock time · token or dollar budget (D35).
 - **Lean**: iterations, target score, patience; a budget once D35 records costs.
-- **Decision**:
+- **Decision**: Partly decided: an iteration skipped because its LLM call failed counts toward the iteration total (D34). The other stop conditions: to be decided.
 
 ### D38. Errors inside an iteration [later]
 - **v1**: only `LLMError` is handled; any other exception ends the run (Part D, v1 item 7).
@@ -445,7 +445,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: every failure is recorded (with its stage and reason) and the run continues.
 - **Options**: crash · record and continue · record, and stop after N infrastructure errors in a row.
 - **Lean**: record and continue; N errors of any kind in a row stop the run.
-- **Decision**:
+- **Decision**: Partly decided: infrastructure errors (status `error`, D7) have their own "in a row" counter, separate from D34's per-model LLM counter, so neither kind of problem hides the other. The rest: to be decided.
 
 ### D39. Randomness [later]
 - **v1**: own `random.Random`, no default seed; re-seeded identically on resume (Part D, v1 item 9).
