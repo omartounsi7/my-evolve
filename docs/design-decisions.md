@@ -155,7 +155,7 @@ the my-alphaevolve list in its Part D.
   set probabilities (SE) · crossover as an extra format · rewrite strategies as an extra layer.
 - **Lean**: formats drawn per proposal with configurable probabilities, which also covers "one
   format only". Full rewrite first in the plan, diffs next; crossover and rewrite strategies as later steps.
-- **Decision**: Full rewrite.
+- **Decision**: Full rewrite: the LLM returns the whole file. Inside the evolve blocks it changes as much or as little as it decides, from a single line to everything (D12).
 
 ### D12. Which part of the program may change [now]
 - **v1**: the whole file.
