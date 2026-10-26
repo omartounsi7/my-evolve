@@ -903,3 +903,23 @@ Notes:
   to the end of a prompt.
 - Feedback and errors are truncated to a size limit (D10, D30).
 - The order of the previous attempts is still to be decided (D26).
+
+---
+
+## Appendix B. Models for the experiments
+
+Two batches, each an ensemble of two models with fixed weights (D31), set in the `llm` section of the
+problem file (D43).
+
+| Batch | Models | Weights | Reached through |
+|---|---|---|---|
+| 1 | `qwen3-coder:30b` (main), `qwen3:8b` | 0.8 / 0.2 | Local Ollama server, `http://localhost:11434/v1`; no key |
+| 2 | Claude Haiku 5.5 (`claude-haiku-5-5`, main), Claude Sonnet 5.5 (`claude-sonnet-5-5`) | 0.8 / 0.2 | Anthropic's OpenAI-compatible endpoint, `https://api.anthropic.com/v1/`; key in `${ANTHROPIC_API_KEY}` (D46) |
+
+Notes:
+- Batch 1: the two models (about 18 GB and 5 GB) fit together in the RTX 5090's 32 GB, so Ollama keeps
+  both loaded. Start the server with a context length that holds the whole prompt
+  (`OLLAMA_CONTEXT_LENGTH=32768`), since Ollama silently cuts longer prompts.
+- Batch 2: no `temperature`, since these Claude models reject it (D33), as openevolve's
+  function-minimization config already does. The weights mirror that config (Haiku 0.8, Sonnet 0.2).
+- The weights are proposals; any model and weight can be changed in the problem file.
