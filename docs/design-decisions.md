@@ -216,7 +216,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: code length · lines of code · cyclomatic complexity · a diversity measure (OE's
   estimate, edit distance, AST difference, embedding position) · metrics returned by the evaluator (D6).
 - **Lean**: default code length × diversity; let a problem name evaluator metrics instead.
-- **Decision**:
+- **Decision**: One built-in "code" feature, computed by the framework from the program's syntax tree, plus zero or more "output" features specific to the problem, computed by its evaluator from what the program returns and put in the result's `features` (D6). The problem file names the features to use; the default grid is one-dimensional, on the code feature alone. Circle packing candidates: variance of the radii (uniform circles or a mix of big and small), correlation between radius and distance to the centre (big circles in the middle or at the edges). Function minimization candidates: to be chosen. Failed programs have no features and never enter a grid (D7).
 
 ### D18. Binning features into cells [later, if D16 uses a grid]
 - **v1** (`aeaf384`): grid rebuilt from all programs at each sample, so bins always span the values seen.
