@@ -806,38 +806,38 @@ Records are plain dataclasses; state derived from them lives in `Database`, neve
 
 ## 15. Smaller features: yes or no
 
-Each one is a self-contained step that can be added late. [later] for all.
+Each one is a self-contained step that can be added late. [later] for all; decided in the last column.
 
-| Feature | v1 | OE | SE | Lean |
-|---|---|---|---|---|
-| Target score stop (D37) | no | yes | no | yes |
-| Early stopping on no improvement (D37) | no | yes | no | yes |
-| Token usage recorded and summed (D35) | no | yes | yes | yes |
-| Token or dollar budget stop (D35) | no | no | yes (dollars) | later |
-| Code-length limit (D13) | no | yes | no | yes |
-| Arguments passed to the evaluator from the config | no | yes | yes | no |
-| LLM-as-judge scores | no | yes | no | no |
-| Embedding-based novelty filter (D24) | no | yes | yes | later |
-| Random wording variations in prompts | no | yes | no | no |
-| Per-island system messages | no | yes | no | no |
-| "Changes description" mode for large codebases | no | yes | no | no |
-| Several LLM providers besides OpenAI-compatible | no | yes | yes | no |
-| Human-in-the-loop "manual mode" | no | yes | no | no |
-| Library API usable from a notebook | partly | yes | yes | yes, a single `run(...)` |
-| Evolution trace for RL training | no | yes | no | no (D48 covers analysis) |
-| Web visualizer | no | yes | yes | later, maybe |
-| Crossover of two programs (D11) | no | no | yes | later |
-| Several full-rewrite strategies drawn at random (D11) | no | no | yes | later |
-| LLM writes the initial program | no | no | yes | no |
-| Evolving the system prompt itself | no | no | yes | no |
-| New islands when the search stagnates (D23) | no | no | yes | no |
-| Public and private metrics (D6) | no | no | yes | no |
-| Repeated runs with statistical early stop in the evaluator (D9) | no | no | yes | no |
-| Plots saved per program by the evaluator | no | no | yes | no |
-| Slurm cluster backends (D40) | no | no | yes | no |
-| Weights & Biases logging | no | no | yes | no |
-| Hydra presets (D43) | no | no | yes | no |
-| Skills that teach a coding agent to set up and run tasks | no | no | yes | no |
+| Feature | v1 | OE | SE | Lean | Decision |
+|---|---|---|---|---|---|
+| Target score stop (D37) | no | yes | no | yes | yes, `--target-score` (D37) |
+| Early stopping on no improvement (D37) | no | yes | no | yes | yes, `--patience` (D37) |
+| Token usage recorded and summed (D35) | no | yes | yes | yes | yes (D35) |
+| Token or dollar budget stop (D35) | no | no | yes (dollars) | later | no (D35) |
+| Code-length limit (D13) | no | yes | no | yes | no: D13's four checks only |
+| Arguments passed to the evaluator from the config | no | yes | yes | no | no: constants live in the evaluation file |
+| LLM-as-judge scores | no | yes | no | no | no |
+| Embedding-based novelty filter (D24) | no | yes | yes | later | no (D24) |
+| Random wording variations in prompts | no | yes | no | no | no (D29) |
+| Per-island system messages | no | yes | no | no | no |
+| "Changes description" mode for large codebases | no | yes | no | no | no |
+| Several LLM providers besides OpenAI-compatible | no | yes | yes | no | no (D32) |
+| Human-in-the-loop "manual mode" | no | yes | no | no | no |
+| Library API usable from a notebook | partly | yes | yes | yes, a single `run(...)` | yes: the `run(...)` function (D70) |
+| Evolution trace for RL training | no | yes | no | no (D48 covers analysis) | no: `programs.jsonl` and `llm_calls.jsonl` hold the same data (D47) |
+| Web visualizer | no | yes | yes | later, maybe | no: the report script instead (D51) |
+| Crossover of two programs (D11) | no | no | yes | later | no for now; a possible later experiment |
+| Several full-rewrite strategies drawn at random (D11) | no | no | yes | later | no for now; a possible later experiment |
+| LLM writes the initial program | no | no | yes | no | no: the initial program must work (D20) |
+| Evolving the system prompt itself | no | no | yes | no | no |
+| New islands when the search stagnates (D23) | no | no | yes | no | no (D23) |
+| Public and private metrics (D6) | no | no | yes | no | no |
+| Repeated runs with statistical early stop in the evaluator (D9) | no | no | yes | no | no: openevolve's cascade (D9) |
+| Plots saved per program by the evaluator | no | no | yes | no | no: the report draws from `output_data` (D51) |
+| Slurm cluster backends (D40) | no | no | yes | no | no (D40) |
+| Weights & Biases logging | no | no | yes | no | no |
+| Hydra presets (D43) | no | no | yes | no | no (D43, D44) |
+| Skills that teach a coding agent to set up and run tasks | no | no | yes | no | no |
 
 ---
 
