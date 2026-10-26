@@ -327,7 +327,7 @@ the my-alphaevolve list in its Part D.
   children with their errors. And their order.
 - **Lean**: a few programs (2 to 4, configurable) from the archive and the parent's island, worst
   to best as SE does; the parent's lineage as a short list of names and scores (D15).
-- **Decision**: Partly decided: besides the parent, the prompt shows a number of other programs, called example programs ("inspirations" in openevolve and ShinkaEvolve), set in the problem file, 2 or 3 by default. They are working programs and failed ones alike, presented without any "positive" or "negative" label: the prompt calls them previous attempts, and the LLM judges from each one's score or status, description, feedback and, for a failed one, its error (D10) whether to follow it. Which programs, the mix of working and failed ones, and their order: to be decided.
+- **Decision**: Besides the parent, the prompt shows a number of other programs, called example programs ("inspirations" in openevolve and ShinkaEvolve), set in the problem file, 2 by default. They are working programs and failed ones alike, presented without any "positive" or "negative" label: the prompt calls them previous attempts, and the LLM judges from each one's score or status, description, feedback and, for a failed one, its error (D10) whether to follow it. The programs are drawn randomly from the same island.
 
 ### D27. What the prompt says about scores [later]
 - **v1**: the parent's score.
