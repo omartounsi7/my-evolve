@@ -655,7 +655,7 @@ the my-alphaevolve list in its Part D.
 - **OE**, **SE**: flat package folders, Python 3.10+.
 - **Options**: `src/my_evolve/` · Python 3.10, 3.11 (for `tomllib`) or 3.12.
 - **Lean**: `src/my_evolve/`, Python 3.11+.
-- **Decision**:
+- **Decision**: `src/my_evolve/`, Python 3.11+.
 
 ### D57. Tools [later]
 - **v1**: ruff (lint and format), mypy strict, `unittest`, a fake LLM HTTP server, Docker tests
@@ -664,12 +664,12 @@ the my-alphaevolve list in its Part D.
 - **SE**: ruff, `pytest`, live-provider tests marked and skipped without secrets.
 - **Options**: keep v1's tools · `pytest` instead of `unittest` (shorter tests, fixtures).
 - **Lean**: keep ruff and mypy strict; your choice between `unittest` and `pytest`.
-- **Decision**:
+- **Decision**: same as v1
 
 ### D58. Code style [later]
 - **v1**: explanatory plain-English docstrings and comments everywhere.
 - **Lean**: keep it; it serves the goal of understanding the code.
-- **Decision**:
+- **Decision**: lean
 
 ### D59. How we work through the plan [now]
 - **Options**: step size (one class or one behaviour per step) · who writes the code (I write and
@@ -677,7 +677,7 @@ the my-alphaevolve list in its Part D.
   example at the end of each milestone.
 - **Lean**: small steps, each runnable and tested, one commit each; I explain the design of a
   step before writing it.
-- **Decision**:
+- **Decision**: lean
 
 ---
 
