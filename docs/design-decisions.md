@@ -523,7 +523,7 @@ the my-alphaevolve list in its Part D.
   the run's choices (model, iterations, workers, output, seed) · generic `--set` overrides (SE).
 - **Lean**: a problem file plus CLI flags: a problem folder is complete on its own, and a run is
   one command line. No presets.
-- **Decision**: A YAML problem file for the problem's own facts (description, evaluation settings, limits, packages, cascade thresholds, required entry functions, MAP-Elites features and grid, island and parent-selection settings, D17–D23) plus CLI flags for the run's choices. The problem file is loaded into the `Problem` dataclass.
+- **Decision**: A YAML problem file for the problem's own facts (description, evaluation settings, limits, packages, cascade thresholds, required entry functions, MAP-Elites features and grid, island and parent-selection settings, D17–D23; the `llm` section, with the models, their weights, addresses, key variables, prices and generation settings, laid out as in openevolve's config files, D31–D35, D46) plus CLI flags for the run's choices. The problem file is loaded into the `Problem` dataclass.
 
 ### D44. Config file format and validation [later, if D43 uses a file]
 - **OE**, **SE**: YAML. OE ignores unknown keys; SE's CLI rejects them.
