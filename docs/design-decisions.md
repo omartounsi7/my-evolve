@@ -66,7 +66,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: docstring · a field of a problem config file · a separate `description.md` in the problem folder.
 - **Lean**: a separate file: descriptions grow long (circle packing's lists geometric insights), and it
   keeps the initial program a plain program.
-- **Decision**: The description is a field of the run's YAML configuration file, as in openevolve (this also settles that runs are configured with YAML; see D43, D44).
+- **Decision**: The description is a field of the problem file (YAML), as in openevolve (D43, D44).
 
 ### D5. What the evaluator receives [now]
 - **v1**: `evaluate(namespace)`, the names the program defined, after the framework ran it.
