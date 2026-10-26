@@ -363,7 +363,7 @@ the my-alphaevolve list in its Part D.
 - **SE**: logs shown in fix prompts can be truncated (`max_stdout_log_chars`); nothing else bounded.
 - **Options**: no limit · a character budget, dropping context programs first · a token count.
 - **Lean**: a character budget with a warning.
-- **Decision**:
+- **Decision**: Character budget with a warning in the logs.
 
 ---
 
