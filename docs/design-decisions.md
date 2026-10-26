@@ -346,7 +346,7 @@ the my-alphaevolve list in its Part D.
   into the description (D4) between runs.
 - **Lean**: none at first; a good later step once lineages and change descriptions (D15) are
   stored, since the summary is built from them.
-- **Decision**:
+- **Decision**: None.
 
 ### D29. Where templates live [later]
 - **v1**: one string in `prompt_sampler.py`.
