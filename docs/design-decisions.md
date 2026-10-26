@@ -53,7 +53,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · same scores on adapted examples (as now) · run OE or SE evaluators unchanged.
 - **Lean**: same scores as OE on adapted examples, so runs stay comparable; note SE's raw scale
   when comparing with its published numbers.
-- **Decision**: Runs must stay comparable to openevolve's, on function minimization and circle packing. The initial programs are openevolve's code, with the EVOLVE-BLOCK markers removed, since the whole file may change (D12). Evaluators take a namespace (D5) but must score every program exactly as openevolve's evaluators do, with the same cascades (D9). Reference: the openevolve checkout `da3d701`, whose function-minimization evaluator recomputes the value from (x, y) instead of trusting the program (Part D, v1 item 4).
+- **Decision**: Runs must stay comparable to openevolve's, on function minimization and circle packing. The initial programs are openevolve's code, with the EVOLVE-BLOCK markers removed, since the whole file may change (D12). Evaluators take a namespace (D5) but must score every program exactly as openevolve's evaluators do, with the same cascades (D9). Reference: the openevolve checkout `da3d701`, whose function-minimization evaluator recomputes the value from (x, y) instead of trusting the program (Part D, v1 item 4). Comparable means: every program that works gets the same score as in openevolve, so best-score curves can be compared. Programs that fail or are invalid differ: openevolve scores them 0 and lets them into its grid, here they have no score and stay out (D7), so average scores and failure counts are not comparable.
 
 ---
 
