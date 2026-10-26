@@ -140,7 +140,7 @@ the my-alphaevolve list in its Part D.
 - **Options**: none · `feedback` text from the evaluator (D6) · that, plus the tail of the
   program's stderr captured automatically.
 - **Lean**: evaluator feedback plus a captured error for failures, truncated to a size limit.
-- **Decision**: An evaluator writes feedback text into the result object (D6) as it checks a program, in the style of openevolve's artifacts (e.g. "Circles 3 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); our two examples' evaluators do so for every check they make. The framework adds the error message and the end of the error output when a program crashes or times out. When a program is used as a parent, the prompt shows its feedback and, if it failed, its error, truncated to a size limit.
+- **Decision**: An evaluator writes feedback text into the result object (D6) as it checks a program, in the style of openevolve's artifacts (e.g. "Circles 3 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); our two examples' evaluators do so for every check they make. The framework adds the error message and the end of the error output when a program crashes or times out. When a program is used as an inspiration, the prompt shows its feedback and, if it failed, its error, truncated to a size limit: inspirations are both working programs (positive) and failed ones (negative), D26.
 
 ---
 
