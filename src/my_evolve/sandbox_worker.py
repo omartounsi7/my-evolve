@@ -52,6 +52,9 @@ def private_streams() -> tuple[TextIO, TextIO]:
     protocol_out = io.TextIOWrapper(os.fdopen(os.dup(1), "wb"), encoding="utf-8")
     sys.stdout.flush()
     os.dup2(2, 1)
+    # print() writes to sys.stdout, which is block-buffered when it is not a terminal:
+    # the last prints before a crash would be lost. Standard error is line-buffered.
+    sys.stdout = sys.stderr
     empty_input = os.open(os.devnull, os.O_RDONLY)
     os.dup2(empty_input, 0)
     os.close(empty_input)
@@ -124,6 +127,19 @@ def answer(message: dict[str, Any], namespace: dict[str, Any]) -> dict[str, Any]
         }
 
 
+def reply(protocol_out: TextIO, message: dict[str, Any]) -> None:
+    """Send a message, after flushing what the program printed so far.
+
+    The host may read the error output as soon as it has the answer.
+    """
+    try:
+        sys.stderr.flush()
+    except (OSError, ValueError):
+        # The program closed or broke its error output; the answer still goes out.
+        pass
+    send(protocol_out, message)
+
+
 def main() -> None:
     """Load the program sent by the host, then answer its messages until the input ends."""
     protocol_in, protocol_out = private_streams()
@@ -134,7 +150,7 @@ def main() -> None:
     try:
         namespace = load_program(message["code"])
     except BaseException as error:  # the program may raise anything
-        send(
+        reply(
             protocol_out,
             {
                 "type": "load_failed",
@@ -144,10 +160,10 @@ def main() -> None:
         )
         return
     names = {name: kind_of(value) for name, value in namespace.items() if not name.startswith("__")}
-    send(protocol_out, {"type": "loaded", "names": names})
+    reply(protocol_out, {"type": "loaded", "names": names})
 
     while (message := receive(protocol_in)) is not None:
-        send(protocol_out, answer(message, namespace))
+        reply(protocol_out, answer(message, namespace))
 
 
 if __name__ == "__main__":
