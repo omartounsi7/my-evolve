@@ -350,6 +350,7 @@ class SandboxSession:
         self.kill()
         self.stderr_file.close()
         shutil.rmtree(self.folder, ignore_errors=True)
+        self.sandbox.forget(self)
 
     def error_tail(self, max_chars: int = ERROR_TAIL_CHARS) -> str:
         """Return the end of what the program wrote to its error output (D10)."""
@@ -426,18 +427,44 @@ class ProgramNamespace:
 class Sandbox(ABC):
     """Where programs run; each cascade stage gets a session of its own (D40, D64)."""
 
+    def __init__(self) -> None:
+        # The sessions started and not closed yet, from every worker thread.
+        self.live_sessions: set[SandboxSession] = set()
+        self.live_sessions_lock: threading.Lock = threading.Lock()
+
     def start(self, code: str, stage_limit: float) -> SandboxSession:
         """Start a session with the program loaded, for one stage of stage_limit seconds.
 
         Raises SandboxError, ProgramFailure or StageTimeout as restart() does.
         """
         session = SandboxSession(self, code, stage_limit)
+        with self.live_sessions_lock:
+            self.live_sessions.add(session)
         try:
             session.restart()
         except BaseException:
             session.close()
             raise
         return session
+
+    def forget(self, session: SandboxSession) -> None:
+        """Take a closed session off the live sessions."""
+        with self.live_sessions_lock:
+            self.live_sessions.discard(session)
+
+    def kill_all(self) -> None:
+        """Kill every live session's worker, then remove what is left (D54).
+
+        For a run that stops at once: the evaluations in progress are lost.
+        """
+        with self.live_sessions_lock:
+            sessions = list(self.live_sessions)
+        for session in sessions:
+            try:
+                session.kill()
+            except (OSError, ValueError, SandboxError):
+                pass
+        self.remove_leftovers()
 
     def new_session_name(self) -> str:
         """Return a name for a new worker, unique in the run."""
@@ -495,6 +522,7 @@ class LocalSandbox(Sandbox):
     """
 
     def __init__(self, cpus: float = 1.0) -> None:
+        super().__init__()
         # Numeric libraries use this many threads (D41).
         self.threads: int = max(1, int(cpus))
 
@@ -542,7 +570,8 @@ class LocalSandbox(Sandbox):
             process.kill()
 
     def remove_leftovers(self) -> None:
-        """Nothing to do: local workers carry no label to be found by.
+        """Nothing to do: local workers carry no label to be found by (kill_all
+        stops the running ones).
 
         A worker whose host died ends by itself once its current call returns, since
         its input is then closed; only a call that never returns would keep it alive.
@@ -617,6 +646,7 @@ class DockerSandbox(Sandbox):
 
     def __init__(self, image: str, settings: SandboxSettings, run_id: str) -> None:
         """Prepare to start containers from image; nothing is checked or started yet."""
+        super().__init__()
         # The image's tag, from ensure_image.
         self.image: str = image
         # The memory, CPU and process limits (D41).

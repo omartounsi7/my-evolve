@@ -16,6 +16,7 @@ import hashlib
 import logging
 import queue
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -49,6 +50,10 @@ WAKE_UP_SECONDS = 0.2
 # The longest part of an error shown in an iteration's console line.
 CONSOLE_ERROR_CHARS = 100
 
+# Why a run stopped, after a first Ctrl+C, and after a second one or a SIGTERM.
+USER_STOP = "stopped by the user (Ctrl+C)"
+INTERRUPTED = "interrupted"
+
 # History statuses of iterations without a child (D47).
 SKIPPED = "skipped"
 ERROR = "error"
@@ -56,6 +61,10 @@ ERROR = "error"
 
 class RunError(Exception):
     """A run that cannot start or go on, such as an initial program that does not work."""
+
+
+class RunInterrupted(Exception):
+    """The run was stopped at once, by a second Ctrl+C or a SIGTERM (D54)."""
 
 
 @dataclass
@@ -548,14 +557,74 @@ def should_stop(context: Context) -> str | None:
 # ----------------------------------------------------------------------------------
 
 
-def run_iterations(context: Context) -> str:
-    """Run iterations until the total is reached or the run must stop; return why it stopped."""
+class StopRequests:
+    """Turns Ctrl+C and SIGTERM into what the loop does about them (D53, D54).
+
+    Before the iterations start, and for a second Ctrl+C or a SIGTERM, they raise
+    KeyboardInterrupt: the run stops at once. During the iterations, a first Ctrl+C
+    only sets requested, which the loop acts on between two of its steps, so that it
+    never interrupts the bookkeeping.
+    """
+
+    def __init__(self) -> None:
+        # Whether a first Ctrl+C means "finish what is in progress".
+        self.graceful: bool = False
+        # Whether a first Ctrl+C has come.
+        self.requested: bool = False
+        self.previous: dict[int, Any] = {}
+
+    def install(self) -> None:
+        """Handle Ctrl+C, and SIGTERM on Linux and macOS; only the main thread can."""
+        if threading.current_thread() is not threading.main_thread():
+            return
+        self.previous[signal.SIGINT] = signal.signal(signal.SIGINT, self.on_interrupt)
+        if sys.platform != "win32":
+            self.previous[signal.SIGTERM] = signal.signal(signal.SIGTERM, self.on_terminate)
+
+    def ignore(self) -> None:
+        """Ignore Ctrl+C and SIGTERM while the run records its end."""
+        for number in self.previous:
+            signal.signal(number, signal.SIG_IGN)
+
+    def restore(self) -> None:
+        """Put back the handlers there were before install()."""
+        for number, handler in self.previous.items():
+            signal.signal(number, handler)
+        self.previous.clear()
+
+    def on_interrupt(self, signal_number: int, frame: Any) -> None:
+        """Ctrl+C: the first one during the iterations asks to finish; any other stops at once."""
+        if self.graceful and not self.requested:
+            self.requested = True
+            return
+        raise KeyboardInterrupt
+
+    def on_terminate(self, signal_number: int, frame: Any) -> None:
+        """SIGTERM: stop at once, as a second Ctrl+C does (D54)."""
+        raise KeyboardInterrupt
+
+
+def run_iterations(context: Context, stops: StopRequests | None = None) -> str:
+    """Run iterations until the total is reached or the run must stop; return why it stopped.
+
+    After a first Ctrl+C (stops.requested), no new iteration starts, and those in
+    progress finish and are saved (D53).
+    """
     settings = context.settings
     pool = WorkerPool(settings.workers)
     in_flight: dict[int, IterationState] = {}
     reason: str | None = None
+    announced = False
     try:
         while True:
+            if stops is not None and stops.requested and not announced:
+                announced = True
+                reason = reason or USER_STOP
+                logger.warning(
+                    "Ctrl+C: no new iteration starts; the %d in progress finish and are saved. "
+                    "Press Ctrl+C again to stop at once.",
+                    len(in_flight),
+                )
             # Keep every worker busy: parents are drawn when an iteration starts, so
             # each one can build on everything stored so far.
             while (
@@ -639,22 +708,40 @@ def run(settings: RunSettings) -> Database:
     """Evolve the problem's program from start to finish, and return the database (D70).
 
     Raises the problem file's, the sandbox's, the evaluator's or the models' errors,
-    or RunError, if the run cannot start.
+    or RunError, if the run cannot start; RunInterrupted if it was stopped at once by
+    a second Ctrl+C or a SIGTERM, after removing its containers and recording it (D54).
     """
     problem = Problem.load(settings.problem_file)
     storage = Storage(settings.output)
     setup_logging(storage.folder, settings.verbose)
+    stops = StopRequests()
+    stops.install()
     context: Context | None = None
     reason = "stopped by an error"
     try:
         context = prepare(settings, problem, storage)
-        reason = run_iterations(context)
+        stops.graceful = True
+        reason = run_iterations(context, stops)
         return context.database
+    except KeyboardInterrupt:
+        reason = INTERRUPTED
+        logger.warning(
+            "Stopped at once: the iterations in progress are lost; they are done again when "
+            "the run is continued."
+        )
+        raise RunInterrupted("the run was stopped at once") from None
     finally:
-        if context is not None:
-            context.sandbox.remove_leftovers()
-            context.session.ended_at = now_text()
-            context.session.end = reason
-            storage.write_run_info(context.run_info)
-            summary(context, reason)
-        stop_logging()
+        stops.ignore()
+        try:
+            if context is not None:
+                if reason == INTERRUPTED:
+                    context.sandbox.kill_all()
+                else:
+                    context.sandbox.remove_leftovers()
+                context.session.ended_at = now_text()
+                context.session.end = reason
+                storage.write_run_info(context.run_info)
+                summary(context, reason)
+        finally:
+            stop_logging()
+            stops.restore()

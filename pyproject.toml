@@ -39,7 +39,7 @@ where = ["src"]
 [tool.mypy]
 # The folders mypy checks when run with no arguments
 # Each example is checked on its own (see the README): their files share names.
-files = ["src", "tests"]
+files = ["src", "scripts", "tests"]
 # Programs the tests run, written as an LLM might: not checked
 exclude = ["tests/parity/programs/"]
 # Where mypy finds the my_evolve package when checking a single file
