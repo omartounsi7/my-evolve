@@ -226,10 +226,11 @@ class TestFunctionMinimization(ParityTestCase):
         self.assertIn("call 2: IndexError", str(result.feedback))
 
     def test_initial_program_gets_a_real_score(self) -> None:
-        # It searches at random, so its score changes from one evaluation to the next.
+        # It searches at random, so its score changes from one evaluation to the next:
+        # usually about 1.3, but below 0.5 in about one evaluation out of 70.
         result = self.evaluate("initial_program")
         self.assertEqual(result.status, Status.OK, result.error)
-        self.assertGreater(result.score or 0.0, 0.5)
+        self.assertGreater(result.score or 0.0, 0.0)
 
 
 @unittest.skipUnless(docker_is_available(), "Docker is not available")
