@@ -25,6 +25,7 @@ dev = [
     "mypy>=1.10",    # type checker: finds type mistakes without running the code
     "ruff>=0.6",     # linter and formatter: finds common bugs and keeps the style uniform
     "types-PyYAML",  # type information for pyyaml, which mypy needs
+    "scipy==1.18.1",  # imported by test programs run in the local sandbox
 ]
 
 [tool.setuptools.package-data]
@@ -39,6 +40,8 @@ where = ["src"]
 # The folders mypy checks when run with no arguments
 # Each example is checked on its own (see the README): their files share names.
 files = ["src", "tests"]
+# Programs the tests run, written as an LLM might: not checked
+exclude = ["tests/parity/programs/"]
 # Where mypy finds the my_evolve package when checking a single file
 mypy_path = "src"
 # Turn on every check, including "every function must have type hints"
@@ -51,8 +54,9 @@ native_parser = false
 line-length = 100
 # The oldest Python version the code must keep working on
 target-version = "py311"
-# OpenEvolve's initial programs stay exactly as OpenEvolve wrote them (D3)
-extend-exclude = ["examples/*/initial_program.py"]
+# OpenEvolve's initial programs stay exactly as OpenEvolve wrote them (D3); the tests'
+# parity programs are written as an LLM might write them
+extend-exclude = ["examples/*/initial_program.py", "tests/parity/programs"]
 
 [tool.ruff.lint]
 # Rule families to enforce:

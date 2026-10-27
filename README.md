@@ -15,7 +15,7 @@ in [docs/implementation-plan.md](docs/implementation-plan.md).
 | Path | Contents |
 |---|---|
 | `src/my_evolve/` | The package |
-| `examples/` | Ready-made problems, one folder each: function minimization and circle packing |
+| `examples/` | Ready-made problems, one folder each: circle packing and function minimization ([examples/README.md](examples/README.md)) |
 | `scripts/` | Files you launch directly |
 | `tests/` | Automatic checks |
 | `docs/` | The design and the plan |
@@ -48,8 +48,13 @@ with `.venv\Scripts\python.exe`.
 # Run the tests (those that need Docker are skipped without it)
 .venv/bin/python -m unittest discover tests
 
-# Check the types
+# The same, with the slow tests too (about a minute more)
+MY_EVOLVE_SLOW_TESTS=1 .venv/bin/python -m unittest discover tests
+
+# Check the types, then each example's evaluation file on its own (their names are the same)
 .venv/bin/python -m mypy
+.venv/bin/python -m mypy examples/circle_packing/evaluation.py
+.venv/bin/python -m mypy examples/function_minimization/evaluation.py
 
 # Check for common mistakes and style problems
 .venv/bin/python -m ruff check
