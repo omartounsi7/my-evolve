@@ -355,6 +355,16 @@ class Storage:
             self.run_info_path, json.dumps(info.to_dict(), indent=2, ensure_ascii=False) + "\n"
         )
 
+    def rewrite_programs(self, programs: list[Program]) -> None:
+        """Replace programs.jsonl by one holding exactly these programs, whole or not at all."""
+        lines = [json.dumps(p.to_dict(), ensure_ascii=False, allow_nan=False) for p in programs]
+        self.write_whole(self.programs_path, "".join(line + "\n" for line in lines))
+
+    def rewrite_llm_calls(self, records: list[LLMCallRecord]) -> None:
+        """Replace llm_calls.jsonl by one holding exactly these records, whole or not at all."""
+        lines = [json.dumps(r.to_dict(), ensure_ascii=False, allow_nan=False) for r in records]
+        self.write_whole(self.llm_calls_path, "".join(line + "\n" for line in lines))
+
     # Reading back --------------------------------------------------------------------
 
     def load_programs(self) -> list[Program]:

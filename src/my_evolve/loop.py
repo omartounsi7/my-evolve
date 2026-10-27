@@ -35,10 +35,10 @@ from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLM, Ensemble, LLMError, LLMReply, NoModelLeft
 from my_evolve.logs import setup_logging, stop_logging
 from my_evolve.problem import Problem
-from my_evolve.program import LLMUsage, Program, Result, Status
+from my_evolve.program import LLMUsage, Origin, Program, Result, Status
 from my_evolve.prompt import Prompt, PromptBuilder, format_score
 from my_evolve.reply_parser import ParsedReply, parse_reply
-from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox
+from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, docker_image_tag
 from my_evolve.storage import HistoryRow, LLMCallRecord, RunInfo, SessionRecord, Storage
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,14 @@ CONSOLE_ERROR_CHARS = 100
 # Why a run stopped, after a first Ctrl+C, and after a second one or a SIGTERM.
 USER_STOP = "stopped by the user (Ctrl+C)"
 INTERRUPTED = "interrupted"
+
+# The fingerprints of run.json, and what they stand for in messages (D50).
+FINGERPRINTS = {
+    "initial_program": "the initial program",
+    "evaluation_file": "the evaluation file",
+    "problem": "the problem file (its settings other than the llm section)",
+    "image": "the sandbox's image (or the choice of the local sandbox)",
+}
 
 # History statuses of iterations without a child (D47).
 SKIPPED = "skipped"
@@ -187,9 +195,12 @@ class Context:
     ensemble: Ensemble
     prompt_builder: PromptBuilder
     initial_code: str
-    # Iterations started and completed so far.
+    # Iterations started and completed so far, counting those of earlier sessions;
+    # an iteration lost by a crash counts in neither.
     started: int = 0
     completed: int = 0
+    # The number of the next iteration started.
+    next_number: int = 1
     # Infrastructure errors in a row (D38).
     errors_in_a_row: int = 0
     # Fingerprints of the children being evaluated, and their iterations (P2).
@@ -263,41 +274,142 @@ def evaluate_initial(code: str, problem: Problem, evaluator: Evaluator) -> Progr
     return Program.initial(code, result, checks.fingerprint, checks.code_complexity)
 
 
-def make_sandbox(settings: RunSettings, problem: Problem, run_id: str) -> tuple[Sandbox, str]:
-    """Return the run's sandbox and the image it uses ("local" for the local sandbox)."""
+def run_generator(seed: int, programs_stored: int) -> random.Random:
+    """Return the run's random generator, which makes every draw (D39).
+
+    A new run seeds it with the seed alone; a continued run with the seed and the
+    number of programs already stored, so that its draws go on instead of repeating
+    those of the run's start (Part D, v1 item 9).
+    """
+    if programs_stored == 0:
+        return random.Random(seed)
+    return random.Random(f"{seed}:{programs_stored}")
+
+
+def expected_image(settings: RunSettings, problem: Problem) -> str:
+    """Return the image programs will run in, without building it ("local" without Docker)."""
+    return "local" if settings.unsafe_local_sandbox else docker_image_tag(problem.packages)
+
+
+def current_fingerprints(settings: RunSettings, problem: Problem) -> dict[str, str]:
+    """Return the fingerprints that must stay the same for a run to be continued (D50)."""
+    return {
+        "initial_program": file_fingerprint(settings.initial_program),
+        "evaluation_file": file_fingerprint(settings.evaluation_file),
+        "problem": problem.fingerprint_without_llm(),
+        "image": expected_image(settings, problem),
+    }
+
+
+def check_fingerprints(saved: dict[str, str], current: dict[str, str], folder: Path) -> None:
+    """Raise RunError, saying what changed, unless the run folder's fingerprints are the same."""
+    changed = [
+        description
+        for name, description in FINGERPRINTS.items()
+        if saved.get(name) != current[name]
+    ]
+    if changed:
+        raise RunError(
+            f"{folder} holds a run that cannot be continued: {'; '.join(changed)} changed since "
+            "it started. Put back what changed, or give another --output to start a new run."
+        )
+
+
+def make_sandbox(settings: RunSettings, problem: Problem, run_id: str) -> Sandbox:
+    """Return the run's sandbox, after removing what an earlier session left (D40, D42)."""
     if settings.unsafe_local_sandbox:
         logger.warning(
             "Programs run WITHOUT ANY ISOLATION (--unsafe-local-sandbox): use it only for "
             "trusted code and tests."
         )
-        return LocalSandbox(problem.sandbox.cpus), "local"
+        return LocalSandbox(problem.sandbox.cpus)
     image = DockerSandbox.ensure_image(problem.packages)
     sandbox = DockerSandbox(image, problem.sandbox, run_id)
     sandbox.remove_leftovers()
-    return sandbox, image
+    return sandbox
+
+
+def drop_unfinished(
+    storage: Storage, programs: list[Program], history: list[HistoryRow]
+) -> list[Program]:
+    """Drop what was saved for an iteration a crash left without its history row (P3).
+
+    A child is saved before its history row: a crash between the two leaves, at the
+    end of programs.jsonl, a child whose iteration is not done. It is dropped, with its
+    LLM call, as a cut-off line is, and the iteration is done again.
+    """
+    done = {row.iteration for row in history}
+    kept = list(programs)
+    while kept and kept[-1].origin is Origin.LLM and kept[-1].iteration not in done:
+        dropped = kept.pop()
+        logger.warning(
+            "Dropped the child of iteration %d, saved without its history row: the run "
+            "stopped while saving it.",
+            dropped.iteration,
+        )
+    if len(kept) != len(programs):
+        storage.rewrite_programs(kept)
+    calls = storage.load_llm_calls()
+    kept_calls = list(calls)
+    while kept_calls and kept_calls[-1].iteration not in done:
+        kept_calls.pop()
+    if len(kept_calls) != len(calls):
+        storage.rewrite_llm_calls(kept_calls)
+    return kept
 
 
 def prepare(settings: RunSettings, problem: Problem, storage: Storage) -> Context:
-    """Set everything up for a new run, and evaluate and store the initial program (D70).
+    """Set everything up for a new run or for continuing one (D49, D50, D70).
 
-    Raises RunError, and the sandbox's, evaluator's or models' errors, if the run
-    cannot start.
+    A new run evaluates and stores the initial program. A continued run checks that
+    nothing but the llm section and the flags changed, rebuilds the database from the
+    saved programs, and goes on from the iterations completed. Raises RunError, and
+    the sandbox's, evaluator's or models' errors, if the run cannot start.
     """
-    if not storage.is_new():
-        raise RunError(f"{storage.folder} already holds a run; give another --output")
     initial_code = settings.initial_program.read_text(encoding="utf-8-sig")
-    seed = settings.seed if settings.seed is not None else random.SystemRandom().randrange(2**32)
-    run_id = uuid.uuid4().hex
-    rng = random.Random(seed)
-    logger.info("Run %s in %s, seed %d.", run_id[:8], storage.folder, seed)
+    fingerprints = current_fingerprints(settings, problem)
+    resuming = not storage.is_new()
+    history: list[HistoryRow] = []
+    programs: list[Program] = []
+    if resuming:
+        saved_info = storage.read_run_info()
+        if saved_info is None:
+            raise RunError(
+                f"{storage.folder} holds programs but no run.json: it cannot be continued"
+            )
+        run_info = saved_info
+        check_fingerprints(run_info.fingerprints, fingerprints, storage.folder)
+        if settings.seed is not None and settings.seed != run_info.seed:
+            logger.warning(
+                "--seed %d is ignored: a continued run keeps its seed, %d.",
+                settings.seed,
+                run_info.seed,
+            )
+        history = storage.load_history()
+        programs = drop_unfinished(storage, storage.load_programs(), history)
+        if not programs or programs[0].origin is not Origin.INITIAL:
+            raise RunError(
+                f"{storage.folder}: the saved programs do not start with the initial program"
+            )
+        logger.info(
+            "Continuing the run %s in %s: %d iterations completed, %d programs saved.",
+            run_info.run_id[:8],
+            storage.folder,
+            len(history),
+            len(programs),
+        )
+    else:
+        seed = (
+            settings.seed if settings.seed is not None else random.SystemRandom().randrange(2**32)
+        )
+        run_info = RunInfo(run_id=uuid.uuid4().hex, seed=seed, fingerprints=fingerprints)
+        logger.info("Run %s in %s, seed %d.", run_info.run_id[:8], storage.folder, seed)
+    rng = run_generator(run_info.seed, len(programs))
 
-    sandbox, image = make_sandbox(settings, problem, run_id)
+    sandbox = make_sandbox(settings, problem, run_info.run_id)
     evaluator = Evaluator(settings.evaluation_file, problem, sandbox)
     ensemble = Ensemble.from_settings(problem.llm, rng)
     prompt_builder = PromptBuilder(problem)
-
-    initial = evaluate_initial(initial_code, problem, evaluator)
-    database = Database(problem, initial, rng)
     session = SessionRecord(
         started_at=now_text(),
         ended_at=None,
@@ -307,29 +419,44 @@ def prepare(settings: RunSettings, problem: Problem, storage: Storage) -> Contex
         flags=plain_flags(settings),
         system_message=prompt_builder.system_message,
     )
-    run_info = RunInfo(
-        run_id=run_id,
-        seed=seed,
-        fingerprints={
-            "initial_program": file_fingerprint(settings.initial_program),
-            "evaluation_file": file_fingerprint(settings.evaluation_file),
-            "problem": problem.fingerprint_without_llm(),
-            "image": image,
-        },
-        sessions=[session],
-    )
-    storage.write_run_info(run_info)
-    storage.save_problem(settings.problem_file)
-    database.add(initial)
-    storage.append_program(initial)
-    for copy in database.seed_islands(initial):
-        storage.append_program(copy)
-    storage.write_best(initial)
-    storage.write_snapshot(initial, 0)
+
+    if resuming:
+        database = Database(problem, programs[0], rng)
+        database.replay(programs)
+        run_info.sessions.append(session)
+        storage.write_run_info(run_info)
+        storage.save_problem(settings.problem_file)
+        # A crash right after the initial program was stored may have left islands
+        # without their copy of it.
+        for copy in database.seed_islands(programs[0], only_empty=True):
+            storage.append_program(copy)
+        storage.write_best(database.best())
+    else:
+        initial = evaluate_initial(initial_code, problem, evaluator)
+        database = Database(problem, initial, rng)
+        run_info.sessions.append(session)
+        storage.write_run_info(run_info)
+        storage.save_problem(settings.problem_file)
+        database.add(initial)
+        storage.append_program(initial)
+        for copy in database.seed_islands(initial):
+            storage.append_program(copy)
+        storage.write_best(initial)
+        storage.write_snapshot(initial, 0)
 
     logger.info("Checking the models...")
     ensemble.check_all()
 
+    completed = len(history)
+    # Iteration numbers are never reused, even those of iterations a crash lost.
+    numbers = [row.iteration for row in history]
+    numbers += [program.iteration for program in programs if program.origin is Origin.LLM]
+    if resuming and completed >= settings.iterations:
+        logger.info(
+            "The run already has %d completed iterations (--iterations %d): nothing more to do.",
+            completed,
+            settings.iterations,
+        )
     return Context(
         settings=settings,
         problem=problem,
@@ -342,6 +469,9 @@ def prepare(settings: RunSettings, problem: Problem, storage: Storage) -> Contex
         ensemble=ensemble,
         prompt_builder=prompt_builder,
         initial_code=initial_code,
+        started=completed,
+        completed=completed,
+        next_number=max(numbers, default=0) + 1,
     )
 
 
@@ -527,8 +657,11 @@ def log_iteration(
         outcome += f" ({first_line(error)})"
     best = context.database.best().result.score
     logger.info(
-        "Iteration %d/%d: island %d, %s: %s; best %s",
+        # The iteration's number, then the completed iterations and their total: after a
+        # crash lost some iterations, numbers run ahead of the completed count.
+        "Iteration %d [%d/%d]: island %d, %s: %s; best %s",
         state.number,
+        context.completed,
         context.settings.iterations,
         state.island.index,
         state.model.name,
@@ -633,11 +766,12 @@ def run_iterations(context: Context, stops: StopRequests | None = None) -> str:
                 and context.started < settings.iterations
             ):
                 try:
-                    state = start_iteration(context, context.started + 1)
+                    state = start_iteration(context, context.next_number)
                 except NoModelLeft:
                     reason = "no LLM model left"
                     break
                 context.started += 1
+                context.next_number += 1
                 in_flight[state.number] = state
                 pool.submit(
                     "proposal", state.number, propose, state.model, state.prompt, state.parent.code

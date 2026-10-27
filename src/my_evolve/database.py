@@ -172,11 +172,15 @@ class Database:
                 if completed is not None:
                     self.best_changed_at = completed
 
-    def seed_islands(self, initial_program: Program) -> list[Program]:
-        """Put one copy of the initial program on every island, and return the copies (D23)."""
+    def seed_islands(self, initial_program: Program, only_empty: bool = False) -> list[Program]:
+        """Put one copy of the initial program on every island, and return the copies (D23).
+
+        only_empty: only on the islands that hold no program yet.
+        """
         copies = [
             initial_program.copy_to(island.index, iteration=0, mode=Origin.COPY)
             for island in self.islands
+            if not (only_empty and island.program_ids)
         ]
         for copy in copies:
             self.add(copy)

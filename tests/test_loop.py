@@ -184,9 +184,9 @@ class TestOneRun(LoopTestCase):
 
     def test_console_shows_one_line_per_iteration(self) -> None:
         self.run_with([reply_with("2"), reply_with("-1")], iterations=2)
-        self.assertIn("Iteration 1/2: island 0, test-model: ok 2; best 2", self.console)
+        self.assertIn("Iteration 1 [1/2]: island 0, test-model: ok 2; best 2", self.console)
         self.assertIn(
-            "Iteration 2/2: island 0, test-model: invalid (the value -1 is negative); best 2",
+            "Iteration 2 [2/2]: island 0, test-model: invalid (the value -1 is negative); best 2",
             self.console,
         )
         self.assertIn("Children by status: invalid 1, ok 1.", self.console)
@@ -281,11 +281,6 @@ class TestRefusals(LoopTestCase):
         )
         with self.assertRaisesRegex(RunError, "evolve blocks are broken"):
             self.run_with([], iterations=1)
-
-    def test_folder_holding_a_run_is_refused_for_now(self) -> None:
-        self.run_with([reply_with("2")], iterations=1)
-        with self.assertRaisesRegex(RunError, "already holds a run"):
-            self.run_with([reply_with("2")], iterations=1)
 
 
 class TestWorkers(LoopTestCase):

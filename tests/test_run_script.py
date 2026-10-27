@@ -115,7 +115,7 @@ class TestRunScript(ScriptTestCase):
             server, "--iterations", "2", "--output", "run", "--seed", "4"
         )
         self.assertEqual(code, 0, output)
-        self.assertIn("Iteration 2/2", output)
+        self.assertIn("Iteration 2 [2/2]", output)
         self.assertIn("Run finished: 2 iterations completed.", output)
         self.assertEqual(len(Storage(self.folder / "run").load_history()), 2)
 
