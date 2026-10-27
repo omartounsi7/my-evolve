@@ -1,0 +1,56 @@
+# Describes this project to Python's packaging tools (pip, uv, ...)
+
+[build-system]
+# The tool that turns the src folder into an installable package
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my-evolve"
+version = "0.1.0"
+description = "An AlphaEvolve re-implementation, with ideas from OpenEvolve and ShinkaEvolve"
+readme = "README.md"
+requires-python = ">=3.11"
+# Third-party packages the code needs to run
+dependencies = [
+    "openai>=1.0",  # talks to LLM servers that offer the OpenAI-compatible interface
+    "pyyaml>=6",    # reads the problem files
+    "numpy",        # imported by the evaluation files, which run on this machine
+    "matplotlib",   # draws the report of a run
+]
+
+[project.optional-dependencies]
+# Tools needed only while developing; installed with: pip install -e ".[dev]"
+dev = [
+    "mypy>=1.10",    # type checker: finds type mistakes without running the code
+    "ruff>=0.6",     # linter and formatter: finds common bugs and keeps the style uniform
+    "types-PyYAML",  # type information for pyyaml, which mypy needs
+]
+
+[tool.setuptools.packages.find]
+# Tells setuptools that the package lives inside the src folder
+where = ["src"]
+
+[tool.mypy]
+# The folders mypy checks when run with no arguments
+# Each example is checked on its own (see the README): their files share names.
+files = ["src", "tests"]
+# Where mypy finds the my_evolve package when checking a single file
+mypy_path = "src"
+# Turn on every check, including "every function must have type hints"
+strict = true
+# Use mypy's pure-Python parser: Windows Application Control blocks the faster native one
+native_parser = false
+
+[tool.ruff]
+# Maximum line length, for both the linter and the formatter
+line-length = 100
+# The oldest Python version the code must keep working on
+target-version = "py311"
+
+[tool.ruff.lint]
+# Rule families to enforce:
+#   E, W = style errors and warnings    F = real mistakes (unused or undefined names)
+#   I    = import order                 B = common bug patterns
+#   UP   = outdated syntax              N = naming conventions
+select = ["E", "W", "F", "I", "B", "UP", "N"]
