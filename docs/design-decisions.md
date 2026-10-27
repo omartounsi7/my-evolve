@@ -694,11 +694,9 @@ the my-alphaevolve list in its Part D.
 
 ## 14. Classes and modules *(added after section 13)*
 
-How the decisions above become code: every module, class, attribute and method, with the algorithm of
-every function in pseudocode. The pseudocode is Python-like and leaves out logging and type details; it
-fixes *what* each function does, so that the plan can build it step by step. Records (`Problem`,
-`Result`, `Program`, ...) are plain dataclasses; state derived from them lives in `Database`, never on
-the records.
+How the decisions above become code: every module, class, attribute and method, and the algorithm of
+every function as numbered steps in plain language. Records (`Problem`, `Result`, `Program`, ...) are
+plain dataclasses; state derived from them lives in `Database`, never on the records.
 
 Decisions D60 to D70 keep their numbers; the entries added with this section are numbered from D72, so
 the numbers below are not in order. Every entry is [now].
@@ -712,41 +710,33 @@ the numbers below are not in order. Every entry is [now].
 | `checks.py` | Evolve blocks, fingerprints, code complexity, the checks before evaluation | D74 |
 | `reply_parser.py` | Extracting the description and the code from a reply | D68 |
 | `prompt.py` | The templates of Appendix A and `PromptBuilder` | D67 |
-| `llm.py` | `LLMReply`, `LLMError`, `LLM`, `OpenAICompatibleLLM`, `Ensemble` | D66 |
+| `llm.py` | `LLMReply`, `LLMError`, `NoModelLeft`, `LLM`, `OpenAICompatibleLLM`, `Ensemble` | D66 |
 | `grid.py` | `Grid` | D61 |
 | `database.py` | `Island`, the parent selectors, `Database` | D62, D75, D63 |
 | `evaluation_api.py` | What evaluation files import: `StageResult`, `InvalidProgram`, `ProgramFailure`, `CallTimeout`, `StageTimeout`, `call_with_timeout` | D76 |
 | `sandbox_protocol.py` | Plain-data encoding and the messages between host and container | D77 |
 | `sandbox_worker.py` | The program run inside the container | D77 |
-| `sandbox.py` | `Sandbox`, `SandboxSession`, `ProgramNamespace`, `RemoteFunction`, the Docker and local implementations | D64 |
+| `sandbox.py` | `Sandbox`, `SandboxSession`, `ProgramNamespace`, `RemoteFunction`, the Docker and local sandboxes | D64 |
 | `evaluator.py` | `Evaluator` | D65 |
-| `storage.py` | `Storage`, `RunInfo` | D69 |
+| `storage.py` | `Storage`, `RunInfo`, `HistoryRow` | D69 |
 | `logs.py` | Logging set-up | D78 |
 | `loop.py` | `RunSettings`, `run` and its helpers | D70 |
+| `report.py` | The report's drawings | D79 |
 | `evaluation.Dockerfile` | The evaluation image | D71 |
 | `scripts/run.py`, `scripts/report.py` | The command line and the report | D79 |
 
-`my_evolve/__init__.py` stays empty, so that the container can import `sandbox_worker` and
+`my_evolve/__init__.py` stays empty, so that the container can use `sandbox_worker` and
 `sandbox_protocol` without the host's dependencies (`openai`, `yaml`).
 
 ### 14.2 One iteration, end to end
 
-```
-main thread                                    worker thread
------------                                    -------------
-island  = rng.randrange(number of islands)
-parent  = database.sample_parent(island)
-examples = database.sample_examples(island, parent)
-model   = ensemble.draw()
-prompt  = prompt_builder.build(parent, examples, best score)
-                                     -- proposal -->  reply = model.complete(prompt)
-                                                      parsed = parse_reply(reply.text, parent.code)
-outcome = check_child(parsed.code, ...)   <-- reply --
-if rejected: child = rejected Program
-else:                                -- evaluation -> result = evaluator.evaluate(parsed.code)
-child = Program(code, result, ...)        <-- result --
-database.add(child); storage.append_program(child); history, best, snapshot, migration
-```
+| Step | Thread | What happens |
+|---|---|---|
+| 1 | main | Draw an island, a parent among its elites, example programs from the island, and a model; build the prompt. |
+| 2 | worker | Ask the model; extract the description and the code from its reply. |
+| 3 | main | Run the four checks; a rejected child is stored and the iteration ends. |
+| 4 | worker | Evaluate the child through the cascade, each stage in a fresh sandbox session. |
+| 5 | main | Store the child; update the grid, the best program, the history; write a snapshot or migrate when due. |
 
 ---
 
@@ -756,154 +746,100 @@ database.add(child); storage.append_program(child); history, best, snapshot, mig
   `dacite`; ShinkaEvolve has `EvolutionConfig`, `DatabaseConfig` and job configs.
 - **Decision**: The problem file (D43, D44) loaded into nested dataclasses, every value checked.
 
-  Layout of a problem file (circle packing; every section but `name`, `description`, `entry_functions`
-  and `llm` has the defaults shown):
+  **Sections of the problem file**, with their defaults:
 
-  ```yaml
-  name: circle_packing
-  description: |
-    Pack 26 circles into the unit square, maximizing the sum of their radii ...
-    run_packing() returns (centers, radii, sum_of_radii) ...
-  entry_functions: [run_packing]
-  packages: [numpy==2.5.4, scipy==1.18.1, matplotlib==3.11.2]
+  | Section | Keys (default) |
+  |---|---|
+  | top level | `name` (required), `description` (required; includes the entry functions' contract, D4), `entry_functions` (required, e.g. `[run_packing]`), `packages` (list of `name==version`, empty), `snapshot_every` (10, D47), `max_errors_in_a_row` (3, D38) |
+  | `evaluation` | `stage_time_limit` (60 s, D41), `thresholds` (list: stage k+1 runs if stage k's score reaches the k-th value, D9) |
+  | `sandbox` | `memory` (`1g`), `cpus` (1), `max_processes` (64), D41 |
+  | `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from −1 to +3; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
+  | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
+  | `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
+  | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |
+  | `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
 
-  evaluation:
-    stage_time_limit: 60          # seconds, for each cascade stage (D41)
-    thresholds: [0.5]             # stage k+1 runs if stage k's score >= thresholds[k-1] (D9)
-  sandbox: {memory: 1g, cpus: 1, max_processes: 64}            # D41
-  grid:                                                        # D17, D18
-    features:
-      - {name: code_complexity, low: -1, high: 3, bins: 5}
-      - {name: radii_spread, low: 0, high: 1, bins: 5}
-  islands:                                                     # D23
-    count: 3
-    migration_interval: 25
-    migration_share: 0.1
-    migrants: random_non_best     # best | random | random_non_best
-    destinations: all_others      # all_others | ring
-    mode: copy                    # copy | move
-  parents: {strategy: weighted, lambda: 1.0, archive_size: 10} # D19, D21
-  prompt: {example_programs: 2, max_chars: 60000, max_feedback_chars: 2000}  # D26, D30, D10
-  snapshot_every: 10              # k of D47
-  max_errors_in_a_row: 3          # D38
-
-  llm:                            # D31-D35, D46; section-level values apply to every model
-    api_base: http://localhost:11434/v1
-    max_tokens: 16384
-    timeout: 300
-    retries: 2
-    max_failures_in_a_row: 3
-    models:
-      - {name: "qwen3-coder:30b", weight: 0.8}
-      - {name: "qwen3:8b", weight: 0.2}
-  ```
-
-  **Dataclasses** (one per section; defaults as above):
+  **Dataclasses**:
 
   | Class | Attributes |
   |---|---|
   | `FeatureSpec` | `name`, `low`, `high`, `bins`: one grid dimension; `code_complexity` is the built-in feature, any other name is an output feature the evaluator must provide |
-  | `EvaluationSettings` | `stage_time_limit` (seconds), `thresholds` (list of numbers) |
-  | `SandboxSettings` | `memory` (Docker size, e.g. `"1g"`), `cpus`, `max_processes` |
+  | `EvaluationSettings` | `stage_time_limit`, `thresholds` |
+  | `SandboxSettings` | `memory`, `cpus`, `max_processes` |
   | `IslandSettings` | `count`, `migration_interval`, `migration_share`, `migrants`, `destinations`, `mode` |
-  | `ParentSettings` | `strategy`, `lam` (λ, `lambda` in the file), `archive_size` |
+  | `ParentSettings` | `strategy`, `lam` (λ), `archive_size` |
   | `PromptSettings` | `example_programs`, `max_chars`, `max_feedback_chars` |
-  | `ModelSettings` | `name`, `weight`, `api_base`, `api_key_env` (the variable named by `${VAR}`, or `None`), `temperature`, `max_tokens`, `reasoning_effort`, `reasoning` (`True`, `False` or `None` for "guess from the name"), `timeout`, `retries`, `price_input`, `price_output` (per million tokens) |
+  | `ModelSettings` | `name`, `weight`, `api_base`, `api_key_env` (the variable named by `${VAR}`, or none), `temperature`, `max_tokens`, `reasoning_effort`, `reasoning` (yes, no, or guessed from the name), `timeout`, `retries`, `price_input`, `price_output` (per million tokens) |
   | `LLMSettings` | `models` (list of `ModelSettings`), `max_failures_in_a_row` |
-  | `Problem` | `name`, `description`, `entry_functions`, `packages`, `evaluation`, `sandbox`, `grid_features` (list of `FeatureSpec`), `islands`, `parents`, `prompt`, `snapshot_every`, `max_errors_in_a_row`, `llm` |
+  | `Problem` | `name`, `description`, `entry_functions`, `packages`, `evaluation`, `sandbox`, `grid_features`, `islands`, `parents`, `prompt`, `snapshot_every`, `max_errors_in_a_row`, `llm` |
 
   **Methods**:
-  - `Problem.load(path) -> Problem`: reads and checks the file.
-  - `Problem.from_dict(data) -> Problem`: builds and checks it from a parsed dict (used by `load` and the tests).
-  - `Problem.output_feature_names` (property): the names of the grid features other than `code_complexity`.
-  - `Problem.fingerprint_without_llm() -> str`: a hash of everything but the `llm` section, for D50.
+  - `Problem.load(path)`: reads the file and returns the `Problem`.
+  - `Problem.from_dict(data)`: builds and checks it from parsed data (used by `load` and by the tests).
+  - `output_feature_names`: the grid features other than `code_complexity`.
+  - `fingerprint_without_llm()`: a hash of every setting except the `llm` section, for D50.
 
-  ```
-  def load(path):
-      data = yaml.safe_load(read_text(path))          # plain data only, never Python objects
-      if data is not a dict: raise ProblemError(path, "must be a mapping")
-      return from_dict(data)
+  **`load(path)`**:
+  1. Read the file as YAML, plain data only (never Python objects).
+  2. If it is not a mapping, stop with an error naming the file.
+  3. Return `from_dict` of it.
 
-  def from_dict(data):
-      check_keys(data, allowed=TOP_LEVEL_KEYS, where="problem file")    # unknown keys are an error (D44)
-      require data["name"], data["description"], data["entry_functions"], data["llm"]
-      packages = [check_requirement(p) for p in data.get("packages", [])]
-          # "name==version" only; anything starting with "-" (a pip option) is refused (D71)
-      evaluation = build(EvaluationSettings, data.get("evaluation", {}))
-      sandbox    = build(SandboxSettings, data.get("sandbox", {}))
-      features   = data.get("grid", {}).get("features",
-                       [{"name": "code_complexity", "low": -1, "high": 3}])
-      default_bins = {1: 10, 2: 5, 3: 3}.get(len(features), 3)                      # D18
-      grid_features = [build(FeatureSpec, {"bins": default_bins, **f}) for f in features]
-      check: names unique; low < high; bins >= 1
-      islands = build(IslandSettings, data.get("islands", {}))
-      check: count >= 1, migration_interval >= 1, 0 < migration_share <= 1, and the choices are known
-      parents = build(ParentSettings, rename(data.get("parents", {}), "lambda" -> "lam"))
-      check: strategy in {weighted, openevolve}, lam > 0, archive_size >= 1
-      prompt = build(PromptSettings, data.get("prompt", {}))
-      llm = build_llm(data["llm"])
-      return Problem(...)
+  **`from_dict(data)`**:
+  1. Refuse any unknown key, at every level, with its location (D44).
+  2. Require `name`, `description`, `entry_functions` and `llm`.
+  3. Check each package is `name==version`; refuse anything starting with `-`, a pip option (D71).
+  4. Build each section's settings from its keys and the defaults above.
+  5. For the grid: if no features are given, use `code_complexity` alone; give each feature without `bins`
+     the default for the number of features; check names are unique, `low < high`, `bins ≥ 1`.
+  6. Check the island, parent and prompt settings are in range and their choices are known.
+  7. Build the LLM settings with `build_llm`.
+  8. Return the `Problem`.
 
-  def build_llm(section):
-      shared = section minus "models" and "max_failures_in_a_row"
-      check_keys(shared, allowed=MODEL_KEYS)
-      models = []
-      for entry in section["models"]:                  # at least one
-          check_keys(entry, allowed=MODEL_KEYS)
-          merged = {**MODEL_DEFAULTS, **shared, **entry}   # openevolve's rule: a model's own value wins
-          merged["api_key_env"] = parse_key(merged.pop("api_key", None))
-          if merged["reasoning"] is None: merged["reasoning"] = is_reasoning_model(merged["name"])
-          if merged["reasoning"] and merged["temperature"] is not None:
-              raise ProblemError(name, "reasoning models do not accept a temperature")     # D32
-          check: weight > 0, max_tokens >= 1, timeout > 0, retries >= 0
-          models.append(ModelSettings(**merged))
-      return LLMSettings(models, section.get("max_failures_in_a_row", 3))
+  **`build_llm(section)`**:
+  1. Take the section's values other than `models` and `max_failures_in_a_row`: they apply to every model.
+  2. Require at least one model. For each model, merge: the defaults, then the shared values, then the
+     model's own values (a model's own value wins, as in openevolve).
+  3. Turn its `api_key` into the name of an environment variable with `parse_key`.
+  4. If `reasoning` is not set, guess it from the name (`is_reasoning_model`, D66).
+  5. If it is a reasoning model with a temperature, stop with an error: these models refuse one (D32).
+  6. Check weight > 0, max_tokens ≥ 1, timeout > 0, retries ≥ 0.
+  7. Return the models and the failure limit.
 
-  def parse_key(value):                                 # D46
-      if value is None: return None                     # local server: no key
-      match = re.fullmatch(r"\$\{(\w+)\}", value)
-      if not match: raise ProblemError("api_key", "write ${VARIABLE}, never the key itself")
-      return match.group(1)                             # read from the environment only when used
+  **`parse_key(value)`** (D46):
+  1. No value: no key (a local server).
+  2. A value of the form `${NAME}`: the key will be read from the variable `NAME` when the model is built.
+  3. Anything else: stop with an error saying to write `${VARIABLE}`, never the key itself.
 
-  def fingerprint_without_llm():
-      return sha256(canonical_json(asdict(self) minus "llm"))
-  ```
+  **`fingerprint_without_llm()`**: hash the settings, minus the `llm` section, written in a fixed order.
 
 ### D73. The `Result` class and `Status` (`program.py`) [now]
 - **In the references**: v1 has a bare float; openevolve a metrics dict or `EvaluationResult(metrics,
   artifacts)`; ShinkaEvolve `metrics.json` plus `correct.json`.
-- **Decision**: D6 and D7 as code.
+- **Decision**: D6 and D7 as classes.
 
-  `Status`: a string enum with the six values `ok`, `rejected`, `failed`, `timeout`, `invalid`, `error`.
+  `Status`: an enumeration of `ok`, `rejected`, `failed`, `timeout`, `invalid`, `error` (D7).
 
   `Result` attributes:
 
-  | Attribute | Type | For |
-  |---|---|---|
-  | `status` | `Status` | how the evaluation ended (D7) |
-  | `score` | number or `None` | the score; `None` unless `status` is `ok` |
-  | `metrics` | dict of names to numbers | numbers about the run, saved and logged, not shown to the LLM (D27) |
-  | `features` | dict of names to numbers | the output features for the grid (D17), from stage 1 only |
-  | `feedback` | text | what the evaluator wants the LLM to know (D10) |
-  | `error` | text or `None` | why the program failed, or the error of a later stage it did not pass (D9) |
-  | `output_data` | plain data or `None` | what the evaluator keeps for the report's drawings (D48, D51) |
-  | `stage_reached` | integer | the last cascade stage completed; 0 if none |
-  | `duration` | seconds | wall-clock time of the evaluation |
+  | Attribute | For |
+  |---|---|
+  | `status` | how the evaluation ended (D7) |
+  | `score` | the score; none unless `status` is `ok` |
+  | `metrics` | named numbers about the run, saved and logged, not shown to the LLM (D27) |
+  | `features` | the output features for the grid (D17), from stage 1 only |
+  | `feedback` | what the evaluator wants the LLM to know (D10) |
+  | `error` | why the program failed, or the error of a later stage it did not pass (D9); none otherwise |
+  | `output_data` | plain data the evaluator keeps for the report's drawings (D48, D51); may be none |
+  | `stage_reached` | the last cascade stage completed; 0 if none |
+  | `duration` | wall-clock time of the evaluation, in seconds |
 
   Methods:
-  - `is_ok` (property): `status == ok`; the only meaning of "correct" (D6).
-  - `Result.rejected(reason) -> Result`: a `rejected` result, with the reason as its error.
-  - `Result.failure(status, error, feedback="", duration=0) -> Result`: any other non-`ok` result.
-  - `to_dict() -> dict` and `Result.from_dict(data) -> Result`: plain JSON values; the status as its name;
-    `score` stays `None` (`null` in JSON), never `-Infinity`.
-
-  ```
-  def from_dict(data):
-      return Result(status=Status(data["status"]), score=data["score"], metrics=data["metrics"],
-                    features=data["features"], feedback=data["feedback"], error=data["error"],
-                    output_data=data["output_data"], stage_reached=data["stage_reached"],
-                    duration=data["duration"])
-  ```
+  - `is_ok`: true when the status is `ok`; the only meaning of "correct" (D6).
+  - `Result.rejected(reason)`: a `rejected` result, with the reason as its error.
+  - `Result.failure(status, error, feedback, duration)`: any other result without a score.
+  - `to_dict()`: every attribute as plain JSON values, the status as its name, a missing score as `null`
+    (never `-Infinity`).
+  - `Result.from_dict(data)`: the reverse.
 
 ### D60. The `Program` class (`program.py`) [now]
 - **v1**: a small class: `id`, `code`, `score`, `parent_id`, `generation`, `iteration`, with `to_dict` / `from_dict`.
@@ -914,323 +850,211 @@ database.add(child); storage.append_program(child); history, best, snapshot, mig
 - **Decision**: A dataclass of facts fixed once the program exists, with no free-form `metadata` dict and
   no database state on it.
 
-  `LLMUsage` attributes: `model` (name), `input_tokens`, `output_tokens`, `duration` (seconds): the call
-  that wrote the program (D35).
+  `LLMUsage` attributes: `model`, `input_tokens`, `output_tokens`, `duration`: the call that wrote the
+  program (D35).
 
   `Program` attributes:
 
-  | Attribute | Type | For |
-  |---|---|---|
-  | `id` | text (UUID) | identifies the program everywhere |
-  | `code` | text | the full file |
-  | `result` | `Result` | its evaluation (D73) |
-  | `origin` | `initial`, `llm`, `copy` or `move` | how it came to exist: the initial program; written by the LLM; a copy placed by the framework (the initial program on each island, or a copied migrant); a moved migrant. D13's checks and D19's children count apply to `llm` programs only |
-  | `parent_id` | text or `None` | the parent; for a copy or a move, the program copied; `None` for the initial program |
-  | `island` | integer or `None` | the island it was made on (D23); `None` for the initial program itself, which lives on the islands through its copies |
-  | `iteration` | integer | the iteration that produced it (0 for the initial program and its copies; a migrant gets the iteration of its migration) |
-  | `generation` | integer | its distance from the initial program; a copy keeps the generation of the program it copies |
-  | `description` | text or `None` | the LLM's self-contained description (D15) |
-  | `fingerprint` | text or `None` | the hash of its syntax tree (D13); `None` if it does not compile |
-  | `code_complexity` | integer or `None` | its node count inside the evolve blocks (D17); `None` if it does not compile |
-  | `example_ids` | list of ids | the example programs shown in its prompt (D26) |
-  | `llm` | `LLMUsage` or `None` | the call that wrote it; `None` for the initial program and copies |
-  | `created_at` | text (ISO date and time) | when it was made |
+  | Attribute | For |
+  |---|---|
+  | `id` | a UUID, identifying the program everywhere |
+  | `code` | the full file |
+  | `result` | its `Result` (D73) |
+  | `origin` | `initial` (the initial program), `llm` (written by the LLM), `copy` (placed by the framework: the initial program on each island, or a copied migrant) or `move` (a moved migrant). D13's checks and D19's children count apply to `llm` programs only |
+  | `parent_id` | the parent; for a copy or a move, the program copied; none for the initial program |
+  | `island` | the island it was made on (D23); none for the initial program itself, which lives on the islands through its copies |
+  | `iteration` | the iteration that produced it: 0 for the initial program and its copies; a migrant gets the iteration of its migration |
+  | `generation` | its distance from the initial program; a copy keeps the generation of the program it copies |
+  | `description` | the LLM's self-contained description (D15); may be none |
+  | `fingerprint` | the hash of its syntax tree (D13); none if it does not compile |
+  | `code_complexity` | its node count inside the evolve blocks (D17); none if it does not compile |
+  | `example_ids` | the example programs shown in its prompt (D26) |
+  | `llm` | its `LLMUsage`; none for the initial program and copies |
+  | `created_at` | when it was made |
 
   Methods:
-  - `to_dict() -> dict`: every attribute as plain JSON values, `result` and `llm` as nested dicts; one line of `programs.jsonl` (D48).
-  - `Program.from_dict(data) -> Program`: the reverse, keeping the id.
-  - `Program.new_child(...) -> Program`: builds an `llm` child from its parent (new id, `generation = parent.generation + 1`, `created_at = now`).
-  - `copy_to(island, iteration, mode) -> Program`: the copy of a migrant or of the initial program (new id, origin `copy` or `move`, everything else carried over except `island`, `iteration`, `llm`, `example_ids`, `created_at`).
-
-  ```
-  def to_dict(self):
-      data = asdict(self)                                   # dataclasses.asdict
-      data["result"] = self.result.to_dict()
-      data["origin"] = self.origin.value
-      return data
-
-  def from_dict(data):
-      check required keys; raise StorageError naming the missing key otherwise
-      return Program(id=data["id"], code=data["code"], result=Result.from_dict(data["result"]),
-                     origin=Origin(data["origin"]), parent_id=data["parent_id"], island=data["island"],
-                     iteration=data["iteration"], generation=data["generation"],
-                     description=data["description"], fingerprint=data["fingerprint"],
-                     code_complexity=data["code_complexity"], example_ids=data["example_ids"],
-                     llm=LLMUsage(**data["llm"]) if data["llm"] else None, created_at=data["created_at"])
-
-  def copy_to(self, island, iteration, mode):
-      return replace(self, id=new_uuid(), origin=mode, parent_id=self.id, island=island,
-                     iteration=iteration, llm=None, example_ids=[], created_at=now())
-  ```
+  - `to_dict()`: every attribute as plain JSON values, with `result` and `llm` nested; one line of
+    `programs.jsonl` (D48).
+  - `Program.from_dict(data)`: the reverse, keeping the id; a missing key is an error that names it.
+  - `Program.new_child(parent, ...)`: an `llm` child: a new id, the parent's id, `generation` = the
+    parent's + 1, the time of creation, and the given code, result, island, iteration, description,
+    fingerprint, code complexity, example ids and LLM usage.
+  - `copy_to(island, iteration, mode)`: a copy or a move of this program: a new id, origin `copy` or
+    `move`, this program as parent, the given island and iteration, no LLM usage and no example ids;
+    code, result, generation, description, fingerprint and code complexity are carried over.
 
 ### D74. The check functions (`checks.py`) [now]
 - **In the references**: v1 has none; openevolve has `enforce_evolve_blocks` (reverts) and code-length
   checks; ShinkaEvolve has `validate_evolve_markers` and its patch errors.
-- **Decision**: Plain functions (D13), used by the loop's main thread and for the initial program.
+- **Decision**: Plain functions (D13), used by the loop's main thread and for the initial program. A
+  marker line is one whose text, without surrounding spaces, is exactly `# EVOLVE-BLOCK-START` or
+  `# EVOLVE-BLOCK-END`.
 
-  - `split_evolve_blocks(code) -> (outside, blocks)`: the code outside the blocks (one more segment than
-    blocks, marker lines included) and the blocks' contents; raises `MarkerError` if markers are missing,
-    nested or unmatched.
-  - `same_outside_code(child_code, initial_code) -> str or None`: `None` if the child kept the blocks where
-    the initial program has them, otherwise what differs.
-  - `defined_functions(tree) -> set of names`: top-level `def`s.
-  - `fingerprint(tree) -> str`: the hash of a syntax tree.
-  - `block_line_ranges(code) -> list of (first, last)`: the line numbers inside each block.
-  - `count_block_nodes(tree, code) -> int`: the code feature (D17).
-  - `check_child(code, initial_code, entry_functions, known_fingerprints) -> CheckOutcome`: the four
-    checks; `CheckOutcome` has `rejection` (reason or `None`), `fingerprint`, `code_complexity`.
+  **`split_evolve_blocks(code)`**: returns the code outside the blocks (one segment more than there are
+  blocks, marker lines included) and the blocks' contents.
+  1. Go through the lines, keeping a current segment and whether we are inside a block.
+  2. A START line: if already inside, error "a start inside a block"; otherwise close the outside segment
+     (with the START line) and begin a block.
+  3. An END line: if not inside, error "an end without a start"; otherwise close the block and begin an
+     outside segment with the END line.
+  4. Any other line: add it to the current segment.
+  5. At the end: if still inside, error "a start without an end"; if there was no block, error "no evolve
+     block"; otherwise close the last outside segment and return both lists.
 
-  ```
-  START, END = "# EVOLVE-BLOCK-START", "# EVOLVE-BLOCK-END"
+  **`same_outside_code(child_code, initial_code)`**: none if the child kept the blocks where the initial
+  program has them, otherwise what differs.
+  1. Split both programs; if the child's markers are broken, return "the markers were changed" with why.
+  2. If the numbers of blocks differ, return the expected and the found numbers.
+  3. For each pair of outside segments, compare them after dropping blank lines and the spaces at the ends
+     of lines (spaces at the start still count); return the first segment that differs.
+  4. Otherwise return none.
 
-  def split_evolve_blocks(code):
-      outside, blocks, current, inside = [], [], [], False
-      for line in code.splitlines():
-          marker = line.strip()
-          if marker == START:
-              if inside: raise MarkerError("an EVOLVE-BLOCK-START inside a block")
-              outside.append(current + [line]); current, inside = [], True
-          elif marker == END:
-              if not inside: raise MarkerError("an EVOLVE-BLOCK-END without a start")
-              blocks.append(current); current, inside = [line], False
-          else:
-              current.append(line)
-      if inside: raise MarkerError("an EVOLVE-BLOCK-START without an end")
-      if not blocks: raise MarkerError("no evolve block")
-      outside.append(current)
-      return outside, blocks
+  **`defined_functions(tree)`**: the names of the functions defined at the top level of the syntax tree.
 
-  def normalized(lines):                      # whitespace that changes nothing is ignored (D13)
-      return [line.rstrip() for line in lines if line.strip() != ""]
+  **`fingerprint(tree)`**: the SHA-256 hash of the syntax tree written out without line numbers; comments
+  and spacing are not part of the tree, so they do not change it.
 
-  def same_outside_code(child_code, initial_code):
-      initial_outside, _ = split_evolve_blocks(initial_code)
-      try: child_outside, _ = split_evolve_blocks(child_code)
-      except MarkerError as e: return f"the evolve-block markers were changed: {e}"
-      if len(child_outside) != len(initial_outside):
-          return f"expected {len(initial_outside) - 1} evolve blocks, found {len(child_outside) - 1}"
-      for k, (child, initial) in enumerate(zip(child_outside, initial_outside)):
-          if normalized(child) != normalized(initial):
-              return f"code outside the evolve blocks was changed (part {k + 1})"
-      return None
+  **`count_block_nodes(tree, code)`**: the code feature (D17).
+  1. Find the line numbers inside each block, from the positions of the marker lines.
+  2. Go through every node of the tree; skip nodes without a position (contexts, operators).
+  3. Count the nodes whose first and last lines both fall inside one block.
 
-  def defined_functions(tree):
-      return {node.name for node in tree.body if isinstance(node, (FunctionDef, AsyncFunctionDef))}
-
-  def fingerprint(tree):
-      return sha256(ast.dump(tree, include_attributes=False))   # comments and spacing are not in the tree
-
-  def block_line_ranges(code):
-      ranges, start = [], None
-      for number, line in enumerate(code.splitlines(), start=1):
-          if line.strip() == START: start = number + 1
-          elif line.strip() == END: ranges.append((start, number - 1))
-      return ranges
-
-  def count_block_nodes(tree, code):
-      ranges = block_line_ranges(code)
-      count = 0
-      for node in ast.walk(tree):
-          if not hasattr(node, "lineno"): continue           # contexts and operators carry no position
-          if any(first <= node.lineno and node.end_lineno <= last for first, last in ranges):
-              count += 1
-      return count
-
-  def check_child(code, initial_code, entry_functions, known_fingerprints):
-      if code is None: return CheckOutcome("no code in the reply", None, None)
-      try: tree = ast.parse(code)
-      except SyntaxError as e: return CheckOutcome(f"syntax error: {e}", None, None)
-      print_ = fingerprint(tree); complexity = count_block_nodes(tree, code)
-      difference = same_outside_code(code, initial_code)
-      if difference: return CheckOutcome(difference, print_, complexity)
-      missing = set(entry_functions) - defined_functions(tree)
-      if missing: return CheckOutcome(f"missing entry function(s): {sorted(missing)}", print_, complexity)
-      if print_ in known_fingerprints:                     # a dict: fingerprint -> id of the first program
-          return CheckOutcome(f"same program as {known_fingerprints[print_]}", print_, complexity)
-      return CheckOutcome(None, print_, complexity)
-  ```
+  **`check_child(code, initial_code, entry_functions, known_fingerprints)`**: the four checks of D13;
+  returns the reason for a rejection (or none), the fingerprint and the code complexity.
+  1. No code: rejected, "no code in the reply".
+  2. Parse the code; a syntax error: rejected, with the error.
+  3. Compute the fingerprint and the code complexity.
+  4. `same_outside_code` against the initial program; a difference: rejected, with it.
+  5. A required entry function missing from `defined_functions`: rejected, naming it.
+  6. The fingerprint already known: rejected, "same program as" the id of the program that has it.
+  7. Otherwise: accepted.
 
 ### D68. Reply parsing (`reply_parser.py`) [now]
 - **v1**: functions in `reply_parser.py`.
 - **OE**: functions in `utils/code_utils.py`.
 - **SE**: functions in `edit/` (`apply_full_patch`, `apply_diff_patch`).
-- **Decision**: Functions, not a class, reusing v1's code-block rules. `ParsedReply` has `code` (or `None`)
-  and `description` (or `None`).
+- **Decision**: Functions, not a class, reusing v1's rules. `ParsedReply` holds `code` and `description`,
+  either of which may be none.
 
-  - `parse_reply(reply, parent_code) -> ParsedReply`
-  - `extract_description(text) -> (description or None, text without it)`
-  - `extract_code(text, parent_code) -> code or None`, with v1's helpers `is_valid_python`,
-    `is_same_program` and `choose_code_block`, and v1's four regular expressions (multi-line block,
-    one-line block, unclosed block, widest block).
+  **`parse_reply(reply, parent_code)`**:
+  1. Remove the thinking sections (`<think>` … `</think>`).
+  2. Take out the description with `extract_description`.
+  3. Find the code in what remains with `extract_code`.
+  4. Return both.
 
-  ```
-  def parse_reply(reply, parent_code):
-      text = THINKING_PATTERN.sub("", reply)          # <think>...</think> sections are dropped
-      description, text = extract_description(text)
-      return ParsedReply(extract_code(text, parent_code), description)
+  **`extract_description(text)`**:
+  1. Find the first text between `<DESCRIPTION>` and `</DESCRIPTION>`, in any letter case.
+  2. None found: return no description and the text unchanged.
+  3. Otherwise return the description, stripped (none if empty), and the text without that section, so
+     that code quoted inside the description is never taken for the program.
 
-  def extract_description(text):
-      match = re.search(r"<DESCRIPTION>(.*?)</DESCRIPTION>", text, DOTALL | IGNORECASE)
-      if not match: return None, text
-      description = match.group(1).strip() or None
-      return description, text[:match.start()] + text[match.end():]    # its code fences are not the program
+  **`extract_code(text, parent_code)`** (v1's rules):
+  1. Find the fenced code blocks (opening and closing fences on their own lines); if none, the one-line
+     blocks.
+  2. Some found: choose one with `choose_code_block`.
+  3. None found: a block opened but never closed gives everything after its opening; no fence at all gives
+     the whole text (rejected later if it is not Python).
+  4. Strip it; return none if it is empty, otherwise the code ending with one newline.
 
-  def extract_code(text, parent_code):                # v1's rules
-      blocks = CODE_BLOCK_PATTERN.findall(text) or ONE_LINE_CODE_BLOCK_PATTERN.findall(text)
-      if blocks: code = choose_code_block(blocks, text, parent_code)
-      else:
-          unclosed = UNCLOSED_CODE_BLOCK_PATTERN.search(text)
-          code = unclosed.group(1) if unclosed else text  # no fence: the whole text, as in v1
-      code = code.strip()
-      return code + "\n" if code else None
-
-  def choose_code_block(blocks, text, parent_code):
-      candidates = [b for b in blocks if is_valid_python(b)]
-      if not candidates:
-          widest = WIDEST_CODE_BLOCK_PATTERN.search(text)
-          if widest and is_valid_python(widest.group(1)): return widest.group(1)
-          candidates = blocks
-      new = [b for b in candidates if not is_same_program(b, parent_code)]   # a quoted parent is not the reply
-      return max(new or candidates, key=len)
-  ```
+  **`choose_code_block(blocks, text, parent_code)`**:
+  1. Keep the blocks that are valid Python. If none is, try the widest block (from the first opening fence
+     to the last closing one): if it is valid Python, return it; otherwise keep all the blocks.
+  2. Drop the blocks that are the same program as the parent (same syntax tree), unless that drops them all.
+  3. Return the longest.
 
 ### D67. The `PromptBuilder` class (`prompt.py`) [now]
 - **v1**: `PromptSampler`: one template, filled with the description, the parent and the allowed packages.
 - **OE**: `PromptSampler` with a `TemplateManager` over text files.
 - **SE**: `PromptSampler`, with one prompt module per change format.
 - **Decision**: Builds the two messages of Appendix A (D25, D26, D27, D10). The module also holds the
-  templates as constants (D29): `SYSTEM_TEMPLATE`, `ATTEMPT_TEMPLATE`, `PARENT_TEMPLATE`, `REQUEST`.
+  templates of Appendix A as constants (D29).
 
-  `Prompt` attributes: `system`, `user` (texts).
+  `Prompt` attributes: `system` and `user`, the two messages.
 
-  `PromptBuilder` attributes: `system_message` (built once, the same for the whole run), `settings`
-  (`PromptSettings`).
+  `PromptBuilder` attributes: `system_message` (built once, the same for the whole run), `settings` (the
+  prompt settings).
 
   Methods:
-  - `__init__(problem)`: fills `SYSTEM_TEMPLATE` once.
-  - `build(parent, examples, best_score) -> Prompt`: the prompt of one iteration.
-  - `program_section(program, heading) -> str`: one program's block (description, feedback, error, code).
-  - `truncated(text, limit) -> str`: a text cut to the size limit (D10).
+  - `PromptBuilder(problem)`: builds the system message.
+  - `build(parent, examples, best_score)`: the prompt of one iteration.
+  - `program_section(program, heading)`: one program's part of the user message.
+  - `truncated(text)`: a text cut to the size limit (D10).
 
-  ```
-  def __init__(self, problem):
-      packages = ", ".join(package_name(p) for p in problem.packages) or "nothing else"
-      self.system_message = SYSTEM_TEMPLATE.format(description=problem.description.strip(),
-                                                   packages=packages)
-      self.settings = problem.prompt
+  **`PromptBuilder(problem)`**:
+  1. Write the allowed packages as a list of names (without versions), or "nothing else" when there is none.
+  2. Fill the system template with the problem's description and that list; keep it.
 
-  def build(self, parent, examples, best_score):
-      examples = list(examples)
-      while True:
-          parts = []
-          if examples:
-              parts.append("# Previous attempts")
-              for n, example in enumerate(examples, start=1):
-                  label = f"score {example.result.score:.6g}" if example.result.is_ok \
-                          else example.result.status.value
-                  parts.append(self.program_section(example, f"## Attempt {n}: {label}"))
-          parts.append(self.program_section(parent,
-              f"# Program to improve (the parent): score {parent.result.score:.6g}; "
-              f"best score so far in this run: {best_score:.6g}"))
-          parts.append(REQUEST)
-          user = "\n\n".join(parts)
-          if len(self.system_message) + len(user) <= self.settings.max_chars or not examples:
-              break
-          examples.pop()                                   # D30: drop example programs, last first
-          log.warning("prompt over budget: one example program dropped")
-      if len(self.system_message) + len(user) > self.settings.max_chars:
-          log.warning("prompt over budget even without example programs")
-      return Prompt(self.system_message, user)
+  **`build(parent, examples, best_score)`**:
+  1. If there are example programs, start with "# Previous attempts", then one section per example, in the
+     order drawn, headed "Attempt n:" followed by its score for a working one, or its status otherwise.
+  2. Add the parent's section, headed with its score and the best score so far in the run.
+  3. Add the request, "Write the improved program."
+  4. If the two messages together exceed `max_chars` and examples are left, drop the last example, log a
+     warning and start again (D30).
+  5. If they still exceed it without examples, log a warning and keep them.
+  6. Return the system message and the user message.
 
-  def program_section(self, program, heading):
-      lines = [heading]
-      if program.description: lines.append(f"Description: {program.description}")
-      if program.result.feedback:
-          lines.append(f"Feedback: {self.truncated(program.result.feedback)}")
-      if program.result.error: lines.append(f"Error: {self.truncated(program.result.error)}")
-      lines.append(f"```python\n{program.code.rstrip()}\n```")
-      return "\n".join(lines)
+  **`program_section(program, heading)`**:
+  1. The heading.
+  2. "Description:" and the description, if there is one.
+  3. "Feedback:" and the feedback, truncated, if there is any.
+  4. "Error:" and the error, truncated, if there is one.
+  5. The code in a Python fence.
 
-  def truncated(self, text):
-      limit = self.settings.max_feedback_chars
-      return text if len(text) <= limit else text[:limit] + "\n... (truncated)"
-  ```
+  **`truncated(text)`**: the text itself if it fits in `max_feedback_chars`, otherwise its beginning
+  followed by "… (truncated)".
 
 ### D66. The `LLM` classes (`llm.py`) [now]
 - **v1**: an `LLM` base class with one method, `generate`, and an `OpenAICompatibleLLM` implementation.
 - **OE**: `LLMInterface`, implemented per provider, and `LLMEnsemble` on top.
 - **SE**: `LLMClient` and `AsyncLLMClient`, over one module per provider.
 - **Decision**: An abstract `LLM`, one implementation per model, and an `Ensemble` that the loop always
-  uses (with one model or several). Models are drawn, and their failures counted, in the main thread
-  only, so the run's random generator and the counters are never shared between threads (D36, D39).
+  uses, with one model or several. Models are drawn, and their failures counted, in the main thread only,
+  so the run's random generator and the counters are never shared between threads (D36, D39).
 
   - `LLMReply`: `text`, `model`, `input_tokens`, `output_tokens`, `duration`.
-  - `LLMError`: raised when no reply could be obtained; carries the model's name.
-  - `NoModelLeft`: raised by the ensemble when every model has been dropped (D34).
-  - `REASONING_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")` and `is_reasoning_model(name)` (D32).
+  - `LLMError`: no reply could be obtained; it names the model.
+  - `NoModelLeft`: every model has been dropped (D34).
+  - `is_reasoning_model(name)` (D32): true when the name, without any provider prefix such as `openai/`,
+    starts with `o1`, `o3`, `o4`, `gpt-5` or `gpt-oss`.
 
-  `LLM` (abstract): `name` attribute; `complete(prompt) -> LLMReply` (raises `LLMError`); `check()`: the
-  start-up check (D34).
+  `LLM` (abstract): attribute `name`; methods `complete(prompt)` (returns an `LLMReply` or raises
+  `LLMError`) and `check()` (the start-up check, D34).
 
-  `OpenAICompatibleLLM(LLM)` attributes: `settings` (`ModelSettings`), `client` (`openai.OpenAI`, the only
-  holder of the key).
+  `OpenAICompatibleLLM(LLM)` attributes: `settings` (its `ModelSettings`) and `client` (the `openai`
+  client, the only holder of the key).
 
-  `Ensemble` attributes: `models` (list of `LLM`), `weights`, `active` (names still in use),
-  `failures_in_a_row` (per name), `max_failures`, `rng`.
-  Methods: `draw() -> LLM`; `record_success(name)`; `record_failure(name)`; `check_all()`.
+  **`OpenAICompatibleLLM(settings)`**:
+  1. If the model names a key variable, read it from the environment; if it is not set, stop with an error
+     naming the variable.
+  2. Create the client with the model's address, the key (or a placeholder for a local server), its
+     timeout and its number of retries (one layer of retries, D34).
 
-  ```
-  def is_reasoning_model(name):
-      base = name.lower().split("/")[-1]              # "openai/gpt-5" -> "gpt-5"
-      return base.startswith(REASONING_PREFIXES)
+  **`complete(prompt)`**:
+  1. Send the system and user messages with the model's name.
+  2. For a reasoning model, send the token limit as `max_completion_tokens`, and the reasoning effort if
+     set; for any other, send it as `max_tokens`, and the temperature if set (D32, D33).
+  3. Any error from the `openai` package: raise `LLMError` with its type and message.
+  4. An empty reply: raise `LLMError`, "empty reply".
+  5. Return the text, the model's name, the token counts (0 when the server gives none) and the duration.
 
-  class OpenAICompatibleLLM:
-      def __init__(self, settings):
-          key = os.environ.get(settings.api_key_env) if settings.api_key_env else None
-          if settings.api_key_env and not key:
-              raise ConfigurationError(f"{settings.api_key_env} is not set")
-          self.client = openai.OpenAI(base_url=settings.api_base, api_key=key or "no-key-needed",
-                                      timeout=settings.timeout, max_retries=settings.retries)  # one layer (D34)
+  **`check()`**: send a one-line request ("Reply with the word OK.") with the model's own settings; any
+  `LLMError` reaches the caller.
 
-      def complete(self, prompt):
-          params = {"model": s.name, "messages": [{"role": "system", "content": prompt.system},
-                                                  {"role": "user", "content": prompt.user}]}
-          if s.reasoning:
-              params["max_completion_tokens"] = s.max_tokens
-              if s.reasoning_effort: params["reasoning_effort"] = s.reasoning_effort
-          else:
-              params["max_tokens"] = s.max_tokens
-              if s.temperature is not None: params["temperature"] = s.temperature
-          start = now()
-          try: response = self.client.chat.completions.create(**params)
-          except openai.OpenAIError as e: raise LLMError(s.name, f"{type(e).__name__}: {e}")
-          text = response.choices[0].message.content if response.choices else None
-          if not text: raise LLMError(s.name, "empty reply")
-          usage = response.usage
-          return LLMReply(text, s.name, usage.prompt_tokens if usage else 0,
-                          usage.completion_tokens if usage else 0, now() - start)
+  `Ensemble` attributes: `models`, their `weights`, `active` (the names still in use),
+  `failures_in_a_row` (per model), `max_failures`, `rng` (the run's random generator).
 
-      def check(self):
-          self.complete(Prompt("Reply with the word OK.", "OK?"))   # raises LLMError on any problem
+  **`draw()`**:
+  1. If no model is active, raise `NoModelLeft`.
+  2. Draw one active model at random, in proportion to the weights of the active models (dropping a model
+     thus rescales the others', D34).
 
-  class Ensemble:
-      def draw(self):
-          if not self.active: raise NoModelLeft()
-          names = [m.name for m in self.models if m.name in self.active]
-          return self.by_name[self.rng.choices(names, weights=[self.weight[n] for n in names])[0]]
-          # rng.choices rescales the remaining weights itself: dropping a model renormalizes them (D34)
+  **`record_success(name)`**: set the model's failures in a row to 0.
 
-      def record_success(self, name): self.failures_in_a_row[name] = 0
+  **`record_failure(name)`**: add 1 to its failures in a row; when they reach `max_failures`, remove it from
+  the active models and log a warning.
 
-      def record_failure(self, name):
-          self.failures_in_a_row[name] += 1
-          if self.failures_in_a_row[name] >= self.max_failures and name in self.active:
-              self.active.remove(name)
-              log.warning(f"{name} failed {self.max_failures} times in a row; dropped")
-
-      def check_all(self):
-          for model in self.models: model.check()   # any LLMError stops the run before iteration 1
-  ```
+  **`check_all()`**: `check()` every model; the first failure stops the run before its first iteration.
 
 ### D61. The `Grid` class (`grid.py`) [now]
 - **v1**: none on `main` (`aeaf384` rebuilt a grid from all programs at each sample).
@@ -1238,493 +1062,321 @@ database.add(child); storage.append_program(child); history, best, snapshot, mig
 - **SE**: no grid.
 - **Decision**: One fixed MAP-Elites grid (D17, D18).
 
-  Attributes: `features` (list of `FeatureSpec`), `reference_nodes` (the initial program's
-  `code_complexity`, for normalizing), `elites` (dict from a cell, a tuple of bin indices, to a `Program`).
+  Attributes: `features` (the `FeatureSpec`s), `reference_nodes` (the initial program's code complexity,
+  for normalizing), `elites` (for each occupied cell, given by one bin number per feature, its elite).
 
-  Methods:
-  - `feature_values(program) -> list of numbers`: the program's value on each dimension.
-  - `cell_of(program) -> tuple`: its cell.
-  - `place(program) -> Placement`: puts an `ok` program in its cell if the cell is empty or its elite
-    scores strictly lower; `Placement` says whether it took the cell and which elite it displaced.
-  - `remove(program_id)`: takes a program out of its cell (used when a migrant moves away, D23).
-  - `elite_list() -> list of Program`: the elites, in cell order (so draws are repeatable).
-  - `best() -> Program or None`: the highest-scoring elite (the earliest placed, on a tie).
+  **`feature_values(program)`**: for each feature, `code_complexity` gives log2 of the program's node count
+  over `reference_nodes` (each taken as at least 1, D18); any other feature gives the value the evaluator
+  put in the result's features.
 
-  ```
-  def feature_values(self, program):
-      values = []
-      for f in self.features:
-          if f.name == "code_complexity":
-              nodes = max(program.code_complexity, 1)        # an empty block counts as one node
-              values.append(log2(nodes / max(self.reference_nodes, 1)))      # D18
-          else:
-              values.append(program.result.features[f.name])
-      return values
+  **`cell_of(program)`**: for each feature, the bin of its value: its position between `low` and `high`,
+  times the number of bins, rounded down, and moved into the first or the last bin when out of range.
 
-  def bin_of(value, f):
-      position = (value - f.low) / (f.high - f.low)
-      return min(f.bins - 1, max(0, floor(position * f.bins)))   # out of range: nearest end bin
+  **`place(program)`**: for an `ok` program only (D7).
+  1. Find its cell.
+  2. If the cell is empty, or its elite scores strictly lower, the program becomes the cell's elite.
+  3. Return whether it took the cell, the cell, and the elite it displaced, if any.
 
-  def cell_of(self, program):
-      return tuple(bin_of(v, f) for v, f in zip(self.feature_values(program), self.features))
+  **`remove(program_id)`**: empty the cell this program holds, if any (a migrant moving away, D23).
 
-  def place(self, program):
-      assert program.result.is_ok                       # failed programs never enter a grid (D7)
-      cell = self.cell_of(program)
-      incumbent = self.elites.get(cell)
-      if incumbent is None or program.result.score > incumbent.result.score:
-          self.elites[cell] = program
-          return Placement(took_cell=True, cell=cell, displaced=incumbent)
-      return Placement(took_cell=False, cell=cell, displaced=None)
+  **`elite_list()`**: the elites, in the order of their cells, so that draws can be repeated.
 
-  def remove(self, program_id):
-      for cell, elite in list(self.elites.items()):
-          if elite.id == program_id: del self.elites[cell]
-
-  def elite_list(self): return [self.elites[c] for c in sorted(self.elites)]
-  def best(self): return max(self.elite_list(), key=score, default=None)   # first maximum wins
-  ```
+  **`best()`**: the elite with the highest score; the first in cell order, on a tie.
 
 ### D62. The `Island` class (`database.py`) [now]
 - **OE**: sets of program ids, alongside the grids, inside `ProgramDatabase`.
 - **SE**: an `island_idx` column, managed by an `IslandManager` and migration strategy classes.
 - **Decision**: An island's number, its grid and the list of every program made on it.
 
-  Attributes: `index`, `grid` (`Grid`), `program_ids` (every program made on the island, in order; for
-  example programs, D26).
-  Methods: `elites() -> list of Program` (the island's population, D23); `best() -> Program`.
+  Attributes: `index`, `grid` (its `Grid`), `program_ids` (every program made on the island, in order;
+  where example programs are drawn from, D26).
 
-  ```
-  def elites(self): return self.grid.elite_list()
-  def best(self):   return self.grid.best()
-  ```
+  Methods: `elites()`, the island's population (D23): its grid's elites; `best()`: its grid's best.
 
 ### D75. The parent selectors (`database.py`) [now]
 - **In the references**: v1's rule inside `Database.sample`; openevolve's inside
   `ProgramDatabase.sample_from_island`; ShinkaEvolve's `CombinedParentSelector` and strategy classes.
-- **Decision**: An abstract `ParentSelector` with one method, `choose(island, database, rng) ->
-  Program`, and the two strategies of D19, chosen by `parents.strategy`.
+- **Decision**: An abstract `ParentSelector` with one method, `choose(island, database, rng)`, and the two
+  strategies of D19, chosen by `parents.strategy`. The child of an iteration always lives on the
+  iteration's island: with the weighted rule that is its parent's island; with openevolve's archive branch
+  it may not be, as in openevolve itself.
 
-  `WeightedSelector` (primary) attributes: `lam` (λ). `OpenEvolveSelector` (secondary) attributes:
-  `archive_size`.
+  `WeightedSelector` (primary), attribute `lam` (λ). **`choose`**:
+  1. Take the island's elites (never empty: every island starts with a copy of the initial program) and
+     their scores.
+  2. Compute the median score and the spread: the median absolute deviation from the median; if that is 0,
+     the standard deviation (D19).
+  3. For each elite, the performance term is 0.5 if the spread is 0, otherwise the sigmoid of λ × (score −
+     median) / spread; the novelty term is 1 / (1 + its number of children).
+  4. Draw one elite at random in proportion to performance × novelty.
 
-  ```
-  class WeightedSelector:
-      def choose(self, island, database, rng):
-          elites = island.elites()                      # never empty: every island starts with a copy
-          scores = [e.result.score for e in elites]
-          middle = median(scores)
-          spread = median(abs(s - middle) for s in scores)       # median absolute deviation
-          if spread == 0: spread = pstdev(scores)                # D19's fallbacks
-          weights = []
-          for elite, s in zip(elites, scores):
-              performance = 0.5 if spread == 0 else sigmoid(self.lam * (s - middle) / spread)
-              novelty = 1 / (1 + database.children_count(elite.id))
-              weights.append(performance * novelty)
-          return rng.choices(elites, weights=weights)[0]
-
-  class OpenEvolveSelector:
-      def choose(self, island, database, rng):
-          elites = island.elites()
-          draw = rng.random()
-          if draw < 0.2: return rng.choice(elites)                          # uniform
-          if draw < 0.9:                                                    # archive, D21
-              archive = database.archive(self.archive_size)
-              own = [p for p in archive if p.island == island.index]
-              return rng.choice(own or archive)
-          weights = [max(e.result.score, 0.001) for e in elites]           # fitness-weighted
-          return rng.choices(elites, weights=weights)[0]
-  ```
-
-  The child of an iteration always lives on the iteration's island. With the weighted rule that is its
-  parent's island; with openevolve's archive branch it may not be, as in openevolve itself.
+  `OpenEvolveSelector` (secondary), attribute `archive_size`. **`choose`**:
+  1. Draw a number between 0 and 1.
+  2. Below 0.2: a uniform draw among the island's elites.
+  3. Below 0.9: a uniform draw among the archive's programs made on this island, or among the whole
+     archive if none was (D21).
+  4. Otherwise: a draw among the island's elites in proportion to their scores (each at least 0.001, as in
+     openevolve).
 
 ### D63. The `Database` class (`database.py`) [now]
 - **v1**: `Database`: a flat dict of programs and the 70/30 parent choice.
 - **OE**: `ProgramDatabase`, 2,800 lines: islands, grids, archive, migration, sampling, saving, artifacts.
 - **SE**: `ProgramDatabase` over SQLite, with separate classes for parents, islands and inspirations.
 - **Decision**: All of the run's state that is derived from its programs. Only the main thread uses it
-  (D36). Adding the saved programs again, in order, rebuilds it exactly (D49), so nothing here is saved
-  on its own.
+  (D36). Adding the saved programs again, in order, rebuilds it exactly (D49), so none of it is saved on
+  its own.
 
   Attributes:
 
   | Attribute | For |
   |---|---|
-  | `problem` | grid, island and parent settings |
-  | `programs` | dict from id to `Program`, every program of the run, in the order added (D22) |
-  | `islands` | list of `Island` |
-  | `fingerprints` | dict from fingerprint to the id of the first program with it (D13) |
-  | `children` | count of `llm` children per parent id, `error` ones excluded (D19) |
-  | `best_id` | the best `ok` program so far (the first one, on a tie) |
-  | `best_changed_at` | the completed-iteration count when the best last improved (for `--patience`) |
-  | `selector` | the `ParentSelector` |
+  | `problem` | the grid, island and parent settings |
+  | `programs` | every program of the run, by id, in the order added (D22) |
+  | `islands` | the `Island`s |
+  | `fingerprints` | for each fingerprint, the id of the first program that had it (D13) |
+  | `children` | for each program, its number of `llm` children, `error` ones excluded (D19) |
+  | `best_id` | the best `ok` program so far; the earliest, on a tie |
+  | `best_changed_at` | the number of completed iterations when the best last improved (for `--patience`, D37) |
+  | `selector` | the parent selector (D75) |
   | `rng` | the run's random generator (D39) |
 
-  Methods:
-  - `add(program, completed=None)`: records a program and updates everything derived from it.
-  - `seed_islands(initial_program) -> list of Program`: the initial program's copies, one per island.
-  - `children_count(id) -> int`.
-  - `best() -> Program`.
-  - `archive(k) -> list of Program`: the k best `ok` programs, one per fingerprint (D21).
-  - `sample_island() -> Island`: uniform (D23).
-  - `sample_parent(island) -> Program`: through the selector.
-  - `sample_examples(island, parent, count) -> list of Program` (D26).
-  - `migrate(iteration) -> list of Program`: the copies (or moves) of one migration (D23).
-  - `replay(programs)`: `add` for each saved program, in order (D49).
+  **`Database(problem, initial_program, rng)`**: create one island per `islands.count`, each with a grid
+  whose reference is the initial program's code complexity; create the selector named by
+  `parents.strategy`.
 
-  ```
-  def __init__(self, problem, initial_program, rng):
-      self.islands = [Island(i, Grid(problem.grid_features, initial_program.code_complexity), [])
-                      for i in range(problem.islands.count)]
-      self.selector = WeightedSelector(problem.parents.lam) if problem.parents.strategy == "weighted" \
-                      else OpenEvolveSelector(problem.parents.archive_size)
-      ...
+  **`add(program, completed)`**:
+  1. Record the program; if it was made on an island, add it to that island's list.
+  2. If it has a fingerprint and its status is `ok`, `failed`, `timeout` or `invalid`, record the
+     fingerprint, unless already known (D13).
+  3. If it is an `llm` child whose status is not `error`, add 1 to its parent's children (D19).
+  4. If it is a `move`: take the moved program out of its island's grid, and give the new record the moved
+     program's children count (D19, D23).
+  5. If it is `ok` and on an island, place it in that island's grid.
+  6. If it is `ok` and scores strictly higher than the best, it becomes the best; record the number of
+     completed iterations, when given.
 
-  def add(self, program, completed=None):
-      self.programs[program.id] = program
-      if program.island is not None: self.islands[program.island].program_ids.append(program.id)
-      if program.fingerprint and program.result.status in {ok, failed, timeout, invalid}:
-          self.fingerprints.setdefault(program.fingerprint, program.id)
-      if program.origin == llm and program.parent_id and program.result.status != error:
-          self.children[program.parent_id] += 1
-      if program.origin == move:                                      # D23 "move": leaves its island
-          moved = self.programs[program.parent_id]
-          self.islands[moved.island].grid.remove(moved.id)
-          self.children[program.id] = self.children[moved.id]          # a moved program keeps its count
-      if program.result.is_ok and program.island is not None:
-          self.islands[program.island].grid.place(program)
-      if program.result.is_ok and (self.best_id is None
-                                   or program.result.score > self.best().result.score):
-          self.best_id = program.id
-          if completed is not None: self.best_changed_at = completed
+  **`seed_islands(initial_program)`**: one copy of the initial program per island, iteration 0.
 
-  def seed_islands(self, initial_program):
-      return [initial_program.copy_to(island=i, iteration=0, mode=copy) for i in range(len(self.islands))]
+  **`best()`**: the program of `best_id`. **`children_count(id)`**: its children, 0 if none.
 
-  def archive(self, k):
-      ranked = sorted((p for p in self.programs.values() if p.result.is_ok),
-                      key=lambda p: p.result.score, reverse=True)       # stable: earlier first on ties
-      unique, seen = [], set()
-      for p in ranked:                                   # copies of one program count once
-          if p.fingerprint not in seen: unique.append(p); seen.add(p.fingerprint)
-      return unique[:k]
+  **`archive(k)`** (D21):
+  1. Sort the `ok` programs by score, highest first; the earlier one first on a tie.
+  2. Keep one program per fingerprint, so that copies count once.
+  3. Return the first k.
 
-  def best(self):                    return self.programs[self.best_id]
-  def children_count(self, id):      return self.children[id]
-  def sample_island(self):           return self.rng.choice(self.islands)
-  def sample_parent(self, island):   return self.selector.choose(island, self, self.rng)
+  **`sample_island()`**: a uniform draw among the islands (D23).
 
-  def sample_examples(self, island, parent, count):
-      pool = [self.programs[i] for i in island.program_ids
-              if i != parent.id and self.programs[i].result.status != error
-              and self.programs[i].code.strip()]            # a reply without code shows nothing
-      return self.rng.sample(pool, min(count, len(pool)))        # shown in the order drawn
+  **`sample_parent(island)`**: the selector's choice on that island.
 
-  def migrate(self, iteration):
-      s = self.problem.islands
-      plan = []                                          # chosen first, so copies never migrate twice
-      for island in self.islands:
-          elites, best = island.elites(), island.best()
-          if s.migrants == "best": chosen = [best]
-          else:
-              pool = elites if s.migrants == "random" else [e for e in elites if e is not best]
-              n = min(len(pool), max(1, floor(s.migration_share * len(elites))))
-              chosen = self.rng.sample(pool, n)
-          destinations = [(island.index + 1) % len(self.islands)] if s.destinations == "ring" \
-                         else [j for j in range(len(self.islands)) if j != island.index]
-          if s.mode == "move": destinations = destinations[:1]     # a program can only be in one place
-          plan += [(program, d) for program in chosen for d in destinations]
-      arrivals = [program.copy_to(d, iteration, mode=s.mode) for program, d in plan]
-      for arrival in arrivals: self.add(arrival)        # takes its cell only if empty or better (Grid.place)
-      return arrivals                                    # stored by the loop, so replay repeats them
+  **`sample_examples(island, parent, count)`** (D26):
+  1. Take every program made on the island except the parent, programs with status `error` and children
+     without code.
+  2. Draw `count` of them at random without replacement (fewer if there are fewer), and keep the order drawn.
 
-  def replay(self, programs):
-      for program in programs: self.add(program)
-  ```
+  **`migrate(iteration)`** (D23):
+  1. For each island, choose its migrants: its best for `best`; otherwise draw at random among its elites
+     (`random`) or its elites except its best (`random_non_best`), `migration_share` × the number of elites,
+     rounded down, at least 1, at most as many as there are.
+  2. Its destinations: the next island for `ring`, every other island for `all_others`; with `move`, only
+     the first destination, since a program can be in one place only.
+  3. Choose every island's migrants first, then create them, so that an arrival never migrates in the same
+     round.
+  4. Create a copy (or move) of each migrant for each destination, with this iteration, and `add` each:
+     it takes its cell only if the cell is empty or holds a worse elite.
+  5. Return the new records, for the loop to store, so that a replay repeats the migration exactly.
 
-  With `mode: move` and several destinations, a program moves to the first destination only.
+  **`replay(programs)`**: `add` every saved program, in order (D49).
 
 ### D76. The evaluation API (`evaluation_api.py`) [now]
 - **In the references**: v1's `evaluate(namespace)` returns a float; openevolve's evaluators return a
   dict or an `EvaluationResult` and call `run_with_timeout`; ShinkaEvolve's call `run_shinka_eval`.
-- **Decision**: What an evaluation file imports, and the contract of its stage functions.
+- **Decision**: What an evaluation file imports, and the contract of its functions.
 
   An evaluation file defines either `evaluate(namespace)` or `evaluate_stage1(namespace)`,
   `evaluate_stage2(namespace)`, … (D9), and optionally `visualize(output_data, path)` (D51). Each stage
   function receives the program's namespace (D8) and:
-  - returns a `StageResult`: `score` (a finite number, higher is better), `metrics` (dict), `features`
-    (dict, required from stage 1 for the problem's output features), `feedback` (text), `output_data`
-    (plain data or `None`);
-  - or raises `InvalidProgram(reason, feedback="")` when the answer breaks the problem's rules (D7);
-  - and lets `ProgramFailure` and `CallTimeout` through, unless it handles them itself (function
-    minimization's stage 2 catches them per trial).
+  - returns a `StageResult`: `score` (a finite number, higher is better), `metrics`, `features` (from
+    stage 1: every output feature of the problem), `feedback`, `output_data`;
+  - or raises `InvalidProgram(reason, feedback)` when the answer breaks the problem's rules (D7);
+  - and lets `ProgramFailure`, `CallTimeout` and `StageTimeout` through, unless it handles them itself
+    (function minimization's stage 2 catches the first two for each trial).
 
-  Exceptions (raised by the namespace, D64):
-  - `ProgramFailure`: the program raised, or its process ended; carries the exception's type, message,
-    traceback and the end of the program's error output.
+  Exceptions raised by the namespace (D64):
+  - `ProgramFailure`: the program raised, or its process ended; it carries the exception's type and
+    message, its traceback, and the end of the program's error output.
   - `CallTimeout`: one call exceeded its own limit; the evaluator may catch it.
-  - `StageTimeout`: the stage's own limit (D41) ran out; deliberately not a subclass of `CallTimeout`, so
+  - `StageTimeout`: the stage's own limit ran out (D41); deliberately not a kind of `CallTimeout`, so that
     catching a trial's timeout never hides it.
 
-  ```
-  def call_with_timeout(function, seconds, *args, **kwargs):     # openevolve's run_with_timeout, ported
-      return function.with_timeout(seconds)(*args, **kwargs)
-  ```
+  **`call_with_timeout(function, seconds, arguments)`**: openevolve's `run_with_timeout`, ported: call the
+  namespace function with that time limit.
 
-  Stage functions run in worker threads, several at once when `workers > 1` (D36): they must not keep
+  Stage functions run in worker threads, several at once when `workers` > 1 (D36), so they must not keep
   state between calls.
 
 ### D77. The sandbox protocol and worker (`sandbox_protocol.py`, `sandbox_worker.py`) [now]
 - **In the references**: v1 passes the code on stdin and reads one JSON result line from stdout
   (`container_worker.py`); openevolve and ShinkaEvolve have nothing similar.
-- **Decision**: One JSON message per line between the host and the worker in the container. The worker
-  answers calls for as long as the stage lasts (D8).
+- **Decision**: One JSON message per line between the host and the worker, which answers calls for as
+  long as the stage lasts (D8).
 
-  Messages, host to worker: `{"type": "load", "code": ...}`; `{"type": "call", "id": n, "name": ...,
-  "args": [...], "kwargs": {...}}`; `{"type": "get", "id": n, "name": ...}`.
-  Worker to host: `{"type": "loaded", "names": {name: "function" | "data" | "other"}}`;
-  `{"type": "load_failed", "error": ..., "traceback": ...}`; `{"type": "return", "id": n, "value": ...}`;
-  `{"type": "raised", "id": n, "error": ..., "traceback": ...}`.
+  Messages:
 
-  Functions of `sandbox_protocol.py` (imported on both sides; numpy is optional):
-  - `encode(value) -> JSON value`: plain data only: `None`, booleans, integers, floats, strings, lists,
-    dicts with string keys, tuples (tagged, so `run_search`'s `(x, y, value)` stays a tuple), numpy
-    arrays of numbers (tagged: dtype, shape, base64 bytes), numpy numbers (as Python numbers). Anything
-    else raises `NotPlainData`.
-  - `decode(JSON value) -> value`: the reverse; numpy arrays are rebuilt with `numpy.frombuffer` from a
-    numeric dtype only, never with pickle (D8).
-  - `send(stream, message)` and `receive(stream) -> message`: one line of JSON each.
+  | From | Message | Contents |
+  |---|---|---|
+  | host | `load` | the program's code |
+  | host | `call` | an id, a function name, its arguments |
+  | host | `get` | an id, the name of a plain-data global |
+  | worker | `loaded` | the program's top-level names, each marked `function`, `data` or `other` |
+  | worker | `load_failed` | the error and its traceback |
+  | worker | `return` | the id, the value |
+  | worker | `raised` | the id, the error and its traceback |
 
-  ```
-  def encode(v):
-      if v is None or isinstance(v, (bool, str)): return v
-      if isinstance(v, int): return v
-      if isinstance(v, float): return v if isfinite(v) else {"__float__": repr(v)}   # nan and inf survive
-      if numpy and isinstance(v, numpy.generic): return encode(v.item())
-      if numpy and isinstance(v, numpy.ndarray):
-          if v.dtype.kind not in "biuf": raise NotPlainData(f"array of {v.dtype}")
-          return {"__ndarray__": {"dtype": v.dtype.str, "shape": v.shape, "data": b64(v.tobytes())}}
-      if isinstance(v, tuple): return {"__tuple__": [encode(x) for x in v]}
-      if isinstance(v, list):  return [encode(x) for x in v]
-      if isinstance(v, dict) and all(isinstance(k, str) for k in v):
-          return {"__dict__": {k: encode(x) for k, x in v.items()}}   # tagged, so a user key never collides
-      raise NotPlainData(type(v).__name__)
-  ```
+  **`encode(value)`**: turns plain data into JSON values; anything else raises `NotPlainData`.
+  - Kept as they are: none, booleans, integers, strings, finite floats.
+  - Tagged, so that they come back unchanged: floats that are not finite; tuples (so that `run_search`'s
+    `(x, y, value)` stays a tuple); dictionaries with text keys; numpy arrays of numbers (their type, shape
+    and bytes in base64).
+  - Converted: numpy numbers become Python numbers; lists are encoded item by item.
+  - Refused: arrays of anything but numbers, and every other type.
 
-  The worker (`python -m my_evolve.sandbox_worker`), run under a time limit of its own, slightly longer
+  **`decode(value)`**: the reverse; numpy arrays are rebuilt from their bytes for a number type only,
+  never through pickle (D8). numpy is optional on both sides.
+
+  **`send(stream, message)`** and **`receive(stream)`**: one line of JSON each way.
+
+  **The worker** (`python -m my_evolve.sandbox_worker`), under a time limit of its own, slightly longer
   than the stage's (D42):
+  1. Keep a private copy of standard output for the protocol, then point standard output at standard
+     error, so that what the program prints goes to the error output the host captures.
+  2. Read the `load` message.
+  3. Run the code in a fresh namespace whose `__name__` is `program`, so the program's
+     `if __name__ == "__main__":` part never runs.
+  4. Anything raised, exit requests included: send `load_failed` and stop.
+  5. Send `loaded` with the program's top-level names and their kinds.
+  6. For each following message: look the name up in the namespace; for `get`, take its value; for `call`,
+     decode the arguments and call it; send `return` with the encoded value, or `raised` with the error
+     and the traceback if anything was raised (a value that is not plain data included).
 
-  ```
-  def main():
-      protocol_out = fdopen(dup(stdout_fd))   # the protocol keeps its own copy of stdout
-      dup2(stderr_fd, stdout_fd)               # the program's prints go to stderr, captured by the host
-      message = receive(stdin)                 # {"type": "load"}
-      namespace = {"__name__": "program"}      # so the program's `if __name__ == "__main__":` never runs
-      try: exec(compile(message["code"], "program.py", "exec"), namespace)
-      except BaseException as e:               # SystemExit included
-          send(protocol_out, {"type": "load_failed", "error": describe(e), "traceback": format_exc()})
-          return
-      send(protocol_out, {"type": "loaded", "names": {n: kind(v) for n, v in namespace.items()
-                                                      if not n.startswith("__")}})
-      for message in messages(stdin):
-          try:
-              if message["type"] == "get": value = namespace[message["name"]]
-              else: value = namespace[message["name"]](*decode(message["args"]), **decode(message["kwargs"]))
-              send(protocol_out, {"type": "return", "id": message["id"], "value": encode(value)})
-          except BaseException as e:
-              send(protocol_out, {"type": "raised", "id": message["id"],
-                                  "error": describe(e), "traceback": format_exc()})
-  ```
-
-  A program can write to the protocol's stream too, but it gains nothing: it already chooses what its
-  functions return, and the host ignores any message whose `id` it is not waiting for.
+  A program can write to the protocol's stream too, but gains nothing: it already chooses what its
+  functions return, and the host ignores any message whose id it is not waiting for.
 
 ### D64. The `Sandbox` classes (`sandbox.py`) [now]
 - **v1**: `DockerEvaluator`, plus the `container_worker` module that runs inside the container.
 - **OE**: none.
 - **SE**: `JobScheduler` and the `launch` modules (local processes, Slurm).
-- **Decision**: A sandbox starts one session per cascade stage (D40); a session is one worker process,
-  in a container or not, holding one loaded program, with the namespace stand-in in front of it.
+- **Decision**: A sandbox starts one session per cascade stage (D40). A session is one worker process,
+  in a container or not, holding one loaded program; the namespace stands in front of it.
 
-  - `Sandbox` (abstract): `start(code, stage_limit) -> SandboxSession` (shared by both); `command(name,
-    stage_limit) -> list` (how to start the worker); `stop(session)` (kill its process);
-    `remove_leftovers()`.
-  - `DockerSandbox(Sandbox)` attributes: `image` (tag), `settings` (`SandboxSettings`), `run_id`; plus
-    `ensure_image(packages)` (D71). `stop` runs `docker kill`; `remove_leftovers` removes the run's containers.
-  - `LocalSandbox(Sandbox)`: the same worker as a plain subprocess, no isolation (`--unsafe-local-sandbox`):
-    `command` is `[python, -m, my_evolve.sandbox_worker]` with the thread variables set; `stop` kills the
-    process; `remove_leftovers` does nothing.
-  - `SandboxSession` attributes: `process`, `reader` (a thread putting the worker's messages in a queue),
-    `stderr_file`, `deadline` (when the stage ends), `names` (from the `loaded` message), `code`, `alive`.
-    `stage_limit`. Methods: `call(name, args, kwargs, timeout) -> value`, `get(name) -> value`, `restart()`, `kill()`,
-    `close()`, `error_tail() -> str` (the end of the program's error output, D10).
-  - `ProgramNamespace` (what `evaluate` receives): `__getitem__(name)`, `__contains__(name)`, `get(name,
-    default)`, `keys()`. A function name gives a `RemoteFunction`; a plain-data global gives its value; a
-    missing name raises `ProgramFailure("the program does not define <name>")`, which is `failed` (D7).
-  - `RemoteFunction`: `__call__(*args, **kwargs)` (limited by the stage only) and `with_timeout(seconds)`.
-  - `SandboxError`: the sandbox itself failed (Docker missing or not running, image build failed, a
-    container that cannot start); the program gets status `error`.
+  Classes:
+  - `Sandbox` (abstract): `start(code, stage_limit)`, shared; `command(name, stage_limit)`, how to start
+    the worker; `stop(session)`, how to kill it; `remove_leftovers()`.
+  - `DockerSandbox` attributes: `image`, `settings` (the sandbox settings), `run_id`; plus
+    `ensure_image(packages)`.
+  - `LocalSandbox`: the same worker as a plain subprocess, without any isolation (`--unsafe-local-sandbox`).
+  - `SandboxSession` attributes: `process`, `reader` (a thread collecting the worker's messages in a
+    queue), `stderr_file`, `code`, `stage_limit`, `deadline` (when the stage ends), `names` (from
+    `loaded`), `alive`. Methods: `restart()`, `call(name, args, kwargs, timeout)`, `get(name)`, `kill()`,
+    `close()`, `error_tail()` (the end of the program's error output, D10).
+  - `ProgramNamespace`, what `evaluate` receives: looking a name up gives a `RemoteFunction` for a
+    function, the value for a plain-data global, and raises `ProgramFailure` for anything else or a
+    missing name (`failed`, D7); it also tells whether a name exists and lists the names.
+  - `RemoteFunction`: calling it calls the program's function, limited by the stage only;
+    `with_timeout(seconds)` gives the same function with a time limit of its own.
+  - `SandboxError`: the sandbox itself failed (Docker missing or stopped, the image build failed, a
+    container that cannot start); the program then gets status `error`.
 
-  ```
-  def ensure_image(packages):                            # D71
-      tag = "my-evolve-evaluation:" + sha256(read(DOCKERFILE) + "\n".join(packages))[:12]
-      if `docker image inspect tag` fails:
-          build from a temporary folder holding the Dockerfile and requirements.txt (the packages)
-      return tag
+  **`ensure_image(packages)`** (D71):
+  1. The tag: `my-evolve-evaluation:` and the start of a hash of the Dockerfile and the package list.
+  2. If Docker has no image with that tag, build it from a temporary folder holding only the Dockerfile
+     and the package list.
+  3. Return the tag.
 
-  def command(self, name, stage_limit):                   # DockerSandbox; D41, D42
-      s = self.settings
-      return ["docker", "run", "--rm", "--interactive", "--name", name,
-              "--label", f"my-evolve.run={self.run_id}",
-              "--network", "none", "--read-only", "--tmpfs", "/tmp",
-              "--memory", s.memory, "--memory-swap", s.memory, "--cpus", str(s.cpus),
-              "--pids-limit", str(s.max_processes), "--cap-drop", "ALL",
-              "--security-opt", "no-new-privileges", "--user", "65534:65534",
-              *[f"--env={v}={max(1, floor(s.cpus))}" for v in THREAD_VARIABLES],   # OMP_NUM_THREADS, ...
-              "--mount", f"type=bind,source={PACKAGE_FOLDER},target=/app/my_evolve,readonly",
-              self.image, "timeout", "--signal=KILL", str(ceil(stage_limit) + 10),
-              "python", "-m", "my_evolve.sandbox_worker"]
+  **`command(name, stage_limit)`**, Docker (D41, D42): `docker run`, removed when it ends, with: the
+  container's name; the run's label; no network; a read-only file system with a temporary `/tmp`; the
+  memory limit and no swap; the CPU and process limits; all capabilities dropped and no new privileges;
+  the user `nobody`; the thread variables (`OMP_NUM_THREADS` and similar) set to the CPU count; the package
+  folder mounted read-only; and, as the command, the worker under `timeout`, killed 10 s after the
+  stage's limit. Local: the same worker, run by the host's Python, with the thread variables set.
 
-  def start(self, code, stage_limit):
-      session = SandboxSession(self, code, stage_limit, deadline=now() + stage_limit)
-      session.restart()                  # starts the process and loads the program
-      return session
+  **`start(code, stage_limit)`**: create a session with the stage's deadline, `restart` it, return it.
 
-  def restart(self):                     # SandboxSession: a fresh process with the program reloaded
-      self.kill()
-      try: self.process = popen(self.sandbox.command(new_container_name(), self.stage_limit), stdin=PIPE, stdout=PIPE,
-                                stderr=self.stderr_file)
-      except OSError as e: raise SandboxError(f"cannot start a container: {e}")
-      start the reader thread
-      send(self.process.stdin, {"type": "load", "code": self.code})
-      answer = self.wait_for(lambda m: m["type"] in ("loaded", "load_failed"), self.deadline)
-      if answer["type"] == "load_failed":
-          raise ProgramFailure(answer["error"], answer["traceback"], self.error_tail())
-      self.names, self.alive = answer["names"], True
+  **`restart()`** (a fresh process with the program reloaded):
+  1. `kill` any process still running.
+  2. Start the worker with `command`; failing to start raises `SandboxError`.
+  3. Start the reader thread; send `load` with the code.
+  4. Wait, until the deadline, for `loaded` or `load_failed`.
+  5. `load_failed` raises `ProgramFailure` with the error, the traceback and the error output.
+  6. Keep the names; the session is alive.
 
-  def call(self, name, args, kwargs, timeout=None):
-      if not self.alive: self.restart()  # after a call timeout, the next call starts afresh (D8)
-      if now() >= self.deadline: self.kill(); raise StageTimeout()
-      request_id = next id
-      send(self.process.stdin, {"type": "call", "id": request_id, "name": name,
-                                "args": encode(list(args)), "kwargs": encode(kwargs)})
-      call_end = now() + timeout if timeout else infinity
-      try: answer = self.wait_for(lambda m: m.get("id") == request_id, min(call_end, self.deadline))
-      except WaitTimedOut:
-          self.kill()
-          if call_end < self.deadline: raise CallTimeout(name, timeout)
-          raise StageTimeout()
-      except WorkerEnded as e:                   # the process died: exit(), memory, os._exit
-          self.alive = False
-          raise ProgramFailure(describe_end(e.exit_code), "", self.error_tail())
-             # exit code 137: "stopped, most likely for using too much memory" (as v1)
-      if answer["type"] == "raised": raise ProgramFailure(answer["error"], answer["traceback"], self.error_tail())
-      return decode(answer["value"])
+  **`call(name, args, kwargs, timeout)`**:
+  1. If the session is not alive (a previous call ran out of time), `restart` it (D8).
+  2. If the stage's deadline has passed, `kill` and raise `StageTimeout`.
+  3. Send `call` with a new id and the encoded arguments.
+  4. Wait for the answer with that id until the call's own limit or the deadline, whichever comes first;
+     any other message is ignored.
+  5. Time ran out: `kill`, then raise `CallTimeout` if it was the call's own limit, `StageTimeout` if it
+     was the stage's.
+  6. The worker ended: the session is no longer alive; raise `ProgramFailure` explaining how it ended
+     (exit code 137: "stopped, most likely for using too much memory", as in v1) with the error output.
+  7. `raised`: raise `ProgramFailure` with the error, the traceback and the error output.
+  8. `return`: return the decoded value.
 
-  def wait_for(self, matches, until):            # messages arrive on the reader thread's queue
-      while True:
-          message = self.queue.get(timeout=max(0, until - now()))   # Empty -> WaitTimedOut
-          if message is END_OF_STREAM: raise WorkerEnded(self.process.wait())
-          if matches(message): return message    # anything else (forged or stale) is ignored
+  **`get(name)`**: the same as `call`, with a `get` message.
 
-  def kill(self):                                # SandboxSession
-      if self.process and self.process.poll() is None:
-          self.sandbox.stop(self); self.process.wait()
-      self.alive = False
+  **`kill()`**: if the process is running, `stop` it (`docker kill`, or killing the process) and wait for
+  it; the session is no longer alive. **`close()`**: `kill`, then close the error-output file.
 
-  def close(self): self.kill(); close the stderr file
-
-  def remove_leftovers(self):                    # DockerSandbox: at start-up, at the end, on a second Ctrl+C (D42)
-      ids = `docker ps -aq --filter label=my-evolve.run=<run_id>`
-      if ids: `docker rm -f <ids>`
-  ```
-
-  `ProgramNamespace.__getitem__(name)`: `"function"` gives `RemoteFunction(session, name)`, `"data"` gives
-  `session.get(name)`, `"other"` raises `ProgramFailure` (a class or a module cannot cross the boundary),
-  a missing name raises `ProgramFailure`.
+  **`remove_leftovers()`**, Docker (D42): remove every container labelled with the run's id. Called at
+  start-up, when the run stops, and on a second Ctrl+C. Local: nothing to do.
 
 ### D65. The `Evaluator` class (`evaluator.py`) [now]
 - **v1**: the `Evaluator` base class, implemented by `DockerEvaluator`.
 - **OE**: `Evaluator`: cascade, artifacts, retries, LLM feedback.
 - **SE**: the evaluation script itself, helped by `run_shinka_eval`.
 - **Decision**: Runs the cascade (D9) on the host, each stage in a fresh sandbox session, and turns
-  whatever happens into a `Result` (D73). It never raises for a program's sake.
+  whatever happens into a `Result` (D73). It never raises because of a program.
 
   Attributes: `stages` (the stage functions, in order), `thresholds`, `stage_limit`, `output_features`
-  (names, D17), `sandbox`, `visualize` (the evaluation file's function, or `None`).
+  (their names, D17), `sandbox`, `visualize` (the evaluation file's function, or none).
 
-  Methods:
-  - `__init__(evaluation_path, problem, sandbox)`: loads the evaluation file (with v1's
-    `load_score_function` approach: helper files next to it importable, then forgotten) and finds its stages.
-  - `evaluate(code) -> Result`: the cascade.
-  - `run_stage(stage, code) -> StageResult`: one stage in one session.
-  - `checked(outcome, stage_number) -> StageResult`: validates what a stage returned.
+  **`Evaluator(evaluation_path, problem, sandbox)`**:
+  1. Load the evaluation file on the host with v1's loader (helper files next to it can be imported, and
+     are forgotten afterwards).
+  2. Its stages: `evaluate_stage1`, `evaluate_stage2`, … as long as they exist; otherwise `evaluate`
+     alone; neither is an error.
+  3. If there are fewer thresholds than stages after the first, stop with an error.
+  4. Keep the thresholds, the stage limit, the output feature names, the sandbox and `visualize`.
 
-  ```
-  def __init__(self, evaluation_path, problem, sandbox):
-      module_names = load_python_file(evaluation_path)          # v1's loader
-      numbered = [module_names[f"evaluate_stage{k}"] for k in 1, 2, ... while it exists]
-      self.stages = numbered or [module_names["evaluate"]]       # neither: ProblemError
-      if len(problem.evaluation.thresholds) < len(self.stages) - 1:
-          raise ProblemError("evaluation.thresholds needs one value per stage after the first")
-      self.visualize = module_names.get("visualize")
-      self.thresholds = problem.evaluation.thresholds
-      self.stage_limit = problem.evaluation.stage_time_limit
-      self.output_features = problem.output_feature_names
-      self.sandbox = sandbox
+  **`evaluate(code)`**:
+  1. Start a clock; nothing merged yet.
+  2. For each stage, in order, run it with `run_stage` and validate what it returned with `checked`.
+     - It raised `InvalidProgram`, at any stage: return `invalid`, with the reason as the error and the
+       feedback gathered so far plus its own (openevolve scores such programs 0, D9).
+     - It raised `ProgramFailure`, `CallTimeout` or `StageTimeout`: at stage 1, return `failed` (or
+       `timeout` for the last two) with the failure described; at a later stage, keep the earlier stages'
+       result, note "stage k:" and the failure as its error, and stop going through stages (D9).
+     - It raised `SandboxError`: return `error`, "sandbox:" and the message.
+     - Anything else (the evaluation file itself raised, or `checked` refused its result): return `error`,
+       "evaluator:" and the traceback; not the program's fault.
+  3. Merge the stage's result into the result so far with `merge`, and gather its feedback.
+  4. If another stage follows and this stage's score is below its threshold, stop going through stages.
+  5. Return `ok` with the merged score, metrics, features and output data, the gathered feedback, the
+     error of a later stage if any, the stage reached and the duration.
 
-  def evaluate(self, code):
-      start, merged, feedback, error = now(), None, [], None
-      for k, stage in enumerate(self.stages, start=1):
-          try:
-              outcome = self.checked(self.run_stage(stage, code), k)
-          except InvalidProgram as e:                # any stage: openevolve scores it 0, here invalid
-              return Result.failure(invalid, error=e.reason, feedback=join(feedback + [e.feedback]),
-                                    duration=now() - start)
-          except (ProgramFailure, CallTimeout, StageTimeout) as e:
-              status = timeout if isinstance(e, (CallTimeout, StageTimeout)) else failed
-              if merged is None:                     # stage 1: the program failed (D7)
-                  return Result.failure(status, error=describe(e), feedback=join(feedback),
-                                        duration=now() - start)
-              error = f"stage {k}: {describe(e)}"    # a later stage: keep what earlier stages gave (D9)
-              break
-          except SandboxError as e:
-              return Result.failure(error, error=f"sandbox: {e}", duration=now() - start)
-          except Exception:                          # the evaluation file itself raised: not the program's fault
-              return Result.failure(error, error=f"evaluator: {format_exc()}", duration=now() - start)
-          merged = merge(merged, outcome, k)
-          if outcome.feedback: feedback.append(outcome.feedback)
-          if k < len(self.stages) and outcome.score < self.thresholds[k - 1]: break
-      return Result(ok, score=merged.score, metrics=merged.metrics, features=merged.features,
-                    feedback=join(feedback), error=error, output_data=merged.output_data,
-                    stage_reached=merged.stage, duration=now() - start)
+  **`run_stage(stage, code)`**: start a sandbox session (loading the program; `ProgramFailure` if that
+  fails), call the stage function with a `ProgramNamespace` over the session, and always close the
+  session afterwards.
 
-  def run_stage(self, stage, code):
-      session = self.sandbox.start(code, self.stage_limit)     # ProgramFailure if loading fails
-      try: return stage(ProgramNamespace(session))
-      finally: session.close()
+  **`checked(outcome, stage_number)`**: refuse anything that is not a `StageResult`, a score that is a
+  boolean or not a finite number, and, at stage 1, any output feature missing or not finite.
 
-  def checked(self, outcome, k):
-      if not isinstance(outcome, StageResult): raise EvaluatorBug("a stage must return StageResult")
-      if isinstance(outcome.score, bool) or not isfinite(outcome.score): raise EvaluatorBug("score")
-      if k == 1:
-          for name in self.output_features:
-              if not isfinite(outcome.features.get(name, nan)): raise EvaluatorBug(f"feature {name}")
-      return outcome
+  **`merge(previous, outcome, stage_number)`**: at stage 1, the stage's own values; later, the new score,
+  the earlier metrics updated with the new ones, stage 1's features (D17), the new output data if the stage
+  gave any (otherwise the earlier one), and the new stage number.
 
-  def merge(previous, outcome, k):               # D9
-      if previous is None: return Merged(outcome.score, dict(outcome.metrics), dict(outcome.features),
-                                         outcome.output_data, stage=1)
-      return Merged(score=outcome.score, metrics={**previous.metrics, **outcome.metrics},
-                    features=previous.features,                     # stage 1's only (D17)
-                    output_data=outcome.output_data if outcome.output_data is not None
-                                else previous.output_data, stage=k)
-  ```
-
-  `EvaluatorBug` is an ordinary exception, so it reaches the `except Exception` branch: status `error`.
-  A `describe(e)` for `ProgramFailure` is its type and message, then the end of its traceback and of the
-  program's error output, each cut to the prompt's size limit later (D67).
+  Describing a `ProgramFailure`: its type and message, then the end of its traceback and of the program's
+  error output; the prompt cuts them to its size limit later (D67).
 
 ### D69. The `Storage` class (`storage.py`) [now]
 - **v1**: `RunStorage`: appends to `programs.jsonl`, writes `best_program.py`, reads a run back.
@@ -1732,75 +1384,51 @@ database.add(child); storage.append_program(child); history, best, snapshot, mig
 - **SE**: the SQLite file itself, plus the generation folders written by the runner.
 - **Decision**: Owns the run folder (D47). Only the main thread uses it (D36).
 
-  `RunInfo` (the content of `run.json`, D50) attributes: `run_id`, `seed`, `fingerprints` (initial
-  program, evaluation file, problem without `llm`, image), and `sessions` (a list: start and end time,
-  git commit, command line, `llm` section, flags, system message, how it ended). Methods: `to_dict`,
-  `from_dict`.
+  `RunInfo` (the content of `run.json`, D50) attributes: `run_id`, `seed`, `fingerprints` (of the initial
+  program, the evaluation file, the problem without its `llm` section, and the image), `sessions` (for
+  each: start and end time, git commit, command line, `llm` section, flags, system message, how it ended).
+  Methods: `to_dict`, `from_dict`.
 
-  `HistoryRow` (one line of `history.csv`): `iteration`, `completed` (the count of completed iterations),
-  `program_id` (or empty), `status` (a `Status`, or `skipped` when the LLM call failed, or `error` when the
-  iteration failed before having a child), `score`, `best_score`, `best_id`, `model`.
+  `HistoryRow` (one line of `history.csv`) attributes: `iteration`, `completed` (the number of completed
+  iterations), `program_id` (empty when there is no child), `status` (the child's status, `skipped` when
+  the LLM call failed, `error` when the iteration failed before having a child), `score`, `best_score`,
+  `best_id`, `model`.
 
   `Storage` attributes: `folder` and the path of each file. Methods:
-  - `is_new() -> bool`: no `programs.jsonl` yet.
-  - `append_program(program)`; `append_llm_call(record)`; `append_history(row)`: one line each, flushed.
-  - `write_best(program)`: rewrites `best_program.py`.
-  - `write_snapshot(program, completed)`: `best/iteration_<completed, 4 digits>.py`.
-  - `save_problem(path)`: copies the problem file to `problem.yaml`.
-  - `read_run_info() -> RunInfo or None`; `write_run_info(info)`: `run.json`, rewritten whole, via a
-    temporary file and a rename, so a crash never leaves half a file.
-  - `load_programs() -> list of Program`; `load_history() -> list of HistoryRow`.
+  - `is_new()`: true while there is no `programs.jsonl`.
+  - `append_program(program)`, `append_llm_call(record)`, `append_history(row)`: add one line, and make sure
+    it reaches the disk before returning.
+  - `write_best(program)`: rewrite `best_program.py`: a comment header (score, iteration, id, and the
+    description as comment lines), then the code.
+  - `write_snapshot(program, completed)`: the same, as `best/iteration_` and the number on four digits.
+  - `save_problem(path)`: copy the problem file to `problem.yaml`.
+  - `read_run_info()`, `write_run_info(info)`: `run.json`, written whole to a temporary file then renamed,
+    so that a crash never leaves half a file.
+  - `load_programs()`, `load_history()`: read the files back.
 
-  ```
-  def append_line(path, text):
-      with open(path, "a", encoding="utf-8") as f: f.write(text + "\n"); f.flush(); fsync(f)
+  **Reading a line-based file back** (`load_programs`, `load_history`, as in v1):
+  1. No file: nothing saved yet.
+  2. Read each line.
+  3. A line that cannot be read: if it is the last one, it was cut off by a crash; rewrite the file without
+     it and stop there; otherwise stop with an error naming the file and the line.
 
-  def append_program(self, program): append_line(self.programs_path, json.dumps(program.to_dict()))
-
-  def write_best(self, program):
-      atomic_write(self.best_path, header(program) + program.code)
-
-  def header(program):                    # D47: a comment that keeps the file a valid program
-      return (f"# Best program: score {program.result.score}, iteration {program.iteration}\n"
-              f"# Program id: {program.id}\n" +
-              "".join(f"# {line}\n" for line in wrap(program.description or "")) + "\n")
-
-  def load_jsonl(path, parse):            # v1's rule for a cut-off last line
-      lines = read_text(path).splitlines() if exists(path) else []
-      items = []
-      for number, line in enumerate(lines, start=1):
-          try: items.append(parse(json.loads(line)))
-          except (JSONDecodeError, KeyError, TypeError):
-              if number == len(lines): rewrite(path, lines[:-1]); break      # cut off by a crash
-              raise StorageError(f"{path}, line {number}: cannot be read")
-      return items
-
-  def load_programs(self): return load_jsonl(self.programs_path, Program.from_dict)
-  def load_history(self):  return load the CSV the same way (a cut-off last row is dropped)
-  ```
-
-  `llm_calls.jsonl` records: `iteration`, `program_id` (or `None` when skipped), `model`, `user` (the user
-  message; the system message is saved once per session in `run.json`), `reply` (or `None`), the token
-  counts, `duration`, `error` (or `None`).
+  `llm_calls.jsonl` records: iteration, program id (none when skipped), model, the user message (the system
+  message is saved once per session in `run.json`), the reply (none when the call failed), the token
+  counts, the duration, the error (none when the call succeeded).
 
 ### D78. Logging (`logs.py`) [now]
 - **In the references**: v1 uses `print`; openevolve and ShinkaEvolve the `logging` module, with a file per run.
-- **Decision**: One function, `setup_logging(folder, verbose)`, and module loggers
-  (`logging.getLogger(__name__)`) everywhere else (D52).
+- **Decision**: One function, `setup_logging(folder, verbose)`, and a logger per module everywhere else (D52).
 
-  ```
-  def setup_logging(folder, verbose):
-      root = logging.getLogger("my_evolve"); root.setLevel(DEBUG)
-      console = StreamHandler(stdout with UTF-8)            # D55: any character prints on Windows too
-      console.setLevel(DEBUG if verbose else INFO)
-      console.setFormatter("%(message)s")
-      file = FileHandler(folder / "log.txt", mode="a", encoding="utf-8")
-      file.setLevel(DEBUG); file.setFormatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
-      root.addHandler(console); root.addHandler(file)
-  ```
+  **`setup_logging(folder, verbose)`**:
+  1. The package's logger lets everything through.
+  2. A console handler, writing UTF-8 (D55), shows the message alone; it shows the details too only with
+     `verbose`.
+  3. A file handler appends everything to `log.txt` in the run folder, with the time, the level and the
+     module.
 
-  The one line per iteration, at INFO: `iteration 42/100 · island 1 · qwen3-coder:30b · ok 0.912 · best
-  0.951`. Details at DEBUG. No secret is ever passed to a logger (D46): keys are only read inside
+  The one line per iteration on the console: iteration and total, island, model, the child's status and
+  score, the best score so far. No secret is ever logged (D46): keys are only read inside
   `OpenAICompatibleLLM`.
 
 ### D70. The loop (`loop.py`) [now]
@@ -1813,274 +1441,153 @@ database.add(child); storage.append_program(child); history, best, snapshot, mig
   `RunSettings` attributes (the flags, D45): `initial_program`, `evaluation_file`, `problem_file`,
   `iterations`, `output`, `workers`, `seed`, `target_score`, `patience`, `unsafe_local_sandbox`, `verbose`.
 
-  `WorkerPool`: `workers` daemon threads reading tasks from one queue and putting results on another, so
-  a second Ctrl+C never waits for them (fixing Part D, v1 item 1). Methods: `submit(kind, iteration,
-  function, *args)`; `next_result(timeout) -> TaskResult or None` (`kind`, `iteration`, `value` or
-  `exception`).
+  `WorkerPool`: `workers` daemon threads taking tasks from one queue and putting their results on another;
+  being daemon threads, they are never waited for when the program ends, so a second Ctrl+C cannot hang
+  on them (Part D, v1 item 1). Methods: `submit(kind, iteration, function, arguments)`;
+  `next_result(timeout)`, the next finished task (its kind, iteration, and value or exception), or none.
 
-  `IterationState` attributes: `number`, `island`, `parent`, `examples`, `model`, `prompt`,
-  `parsed` (after the proposal), `checks` (`CheckOutcome`).
+  `IterationState` attributes: `number`, `island`, `parent`, `examples`, `model`, `prompt`, and, once the
+  reply is back, `reply`, `parsed`, `checks`.
 
-  Functions of `loop.py`:
-  - `run(settings) -> Database`: the whole run.
-  - `prepare(settings, problem, storage) -> Context`: everything before the first iteration.
-  - `start_iteration(context, number) -> IterationState`: the main thread's first part.
-  - `propose(model, prompt, parent_code) -> (LLMReply, ParsedReply)`: in a worker.
-  - `after_proposal(context, state, result)`: back in the main thread.
-  - `finish(context, state, child)`: stores a child and does everything that follows.
-  - `skip(context, state, error)`: an iteration without a child.
-  - `should_stop(context) -> reason or None` (D37).
-  - `summary(context)`: the end summary (D51).
+  `Context` attributes: the settings, the problem, the storage, the database, the evaluator, the sandbox,
+  the ensemble, the prompt builder, the initial code, `started` and `completed` (iteration counts),
+  `errors_in_a_row`.
 
-  ```
-  def run(settings):
-      problem = Problem.load(settings.problem_file)
-      storage = Storage(settings.output)
-      setup_logging(storage.folder, settings.verbose)
-      context = prepare(settings, problem, storage)
-      pool = WorkerPool(settings.workers)
-      in_flight = {}                          # iteration number -> IterationState
-      stopping, reason = False, None
-      install a SIGTERM handler (Linux) that raises Terminate
-      try:
-          while True:
-              while not stopping and len(in_flight) < settings.workers \
-                      and context.started < settings.iterations:
-                  context.started += 1
-                  try: state = start_iteration(context, context.started)
-                  except NoModelLeft: stopping, reason = True, "no LLM model left"; break
-                  in_flight[state.number] = state
-                  pool.submit("proposal", state.number, propose, state.model, state.prompt,
-                              state.parent.code)
-              if not in_flight: break
-              task = pool.next_result(timeout=0.2)    # short waits, so Ctrl+C reaches the main thread (D53)
-              if task is None: continue
-              state = in_flight[task.iteration]
-              if task.kind == "proposal":
-                  if after_proposal(context, state, task) == "evaluating":
-                      pool.submit("evaluation", state.number, context.evaluator.evaluate, state.parsed.code)
-                      continue
-              else:
-                  child = child_program(state, result=task.value) if task.exception is None \
-                          else child_program(state, Result.failure(error, error=describe(task.exception)))
-                  finish(context, state, child)
-              del in_flight[task.iteration]
-              if not stopping and (reason := should_stop(context)): stopping = True
-      except KeyboardInterrupt:                   # first Ctrl+C: finish what is in flight (D53)
-          log.info("Stopping: finishing the iterations in progress (Ctrl+C again to stop now)")
-          reason = "Ctrl+C"
-          try: drain(pool, in_flight, context)    # the same handling as above, starting nothing new
-          except (KeyboardInterrupt, Terminate):  # second Ctrl+C or SIGTERM: stop now (D54)
-              context.sandbox.remove_leftovers(); reason = "interrupted"
-      except Terminate:
-          context.sandbox.remove_leftovers(); reason = "interrupted"
-      finally:
-          context.sandbox.remove_leftovers()
-          record the session's end and reason in run.json
-      summary(context, reason)
-      return context.database                     # daemon worker threads are not waited for
+  **`run(settings)`**:
+  1. Load the problem; open the storage; set up logging.
+  2. `prepare` everything else.
+  3. Start the worker pool; on Linux, make SIGTERM interrupt the main thread as a second Ctrl+C would.
+  4. Repeat until nothing is in flight and nothing more may start:
+     1. While fewer than `workers` iterations are in flight, fewer than `iterations` have started, and the
+        run is not stopping: `start_iteration` and submit its proposal (`propose`) to the pool. If no model
+        is left, the run is stopping.
+     2. Wait for a finished task in steps of 0.2 s, so that Ctrl+C reaches the main thread (D53).
+     3. A finished proposal: `after_proposal`; if the child passed the checks, submit its evaluation.
+     4. A finished evaluation: build the child with its result (an exception gives status `error`) and
+        `finish` it.
+     5. When an iteration is done, check `should_stop`; a reason means the run is stopping.
+  5. First Ctrl+C: log that the iterations in progress will be finished and that a second Ctrl+C stops at
+     once; finish them as above without starting new ones (D53).
+  6. Second Ctrl+C, or SIGTERM: remove the containers and stop at once; the session ends "interrupted" (D54).
+  7. In every case: remove the run's containers, record the end of the session and its reason in
+     `run.json`, print the `summary`, and return the database.
 
-  def prepare(settings, problem, storage):
-      info = storage.read_run_info()
-      fingerprints = {initial program, evaluation file, problem.fingerprint_without_llm(), image tag}
-      if info is None:
-          info = RunInfo(run_id=new_uuid(), seed=settings.seed if settings.seed is not None
-                         else random_seed(), fingerprints=fingerprints, sessions=[])
-          storage.save_problem(settings.problem_file)
-      elif info.fingerprints != fingerprints:
-          raise RunError("this folder holds a run of a different problem: " + what changed)   # D50
-      sandbox = LocalSandbox(info.run_id) if settings.unsafe_local_sandbox \
-                else DockerSandbox(info.run_id, problem.sandbox, ensure_image(problem.packages))
-      if settings.unsafe_local_sandbox: log.warning("programs run WITHOUT isolation")
-      sandbox.remove_leftovers()                                          # D42
-      evaluator = Evaluator(settings.evaluation_file, problem, sandbox)
-      models = [OpenAICompatibleLLM(m) for m in problem.llm.models]
-      initial_code = read_text(settings.initial_program)
-      if storage.is_new():
-          initial = evaluate_initial(initial_code, problem, evaluator)   # refuses to start unless ok (D20)
-          rng = Random(info.seed)
-          database = Database(problem, initial, rng)
-          for p in [initial] + database.seed_islands(initial):
-              database.add(p); storage.append_program(p)
-          storage.write_best(initial); storage.write_snapshot(initial, 0)
-          completed = 0
-      else:
-          programs, history = storage.load_programs(), storage.load_history()
-          rng = Random(hash_seed(info.seed, len(programs)))               # D39
-          database = Database(problem, programs[0], rng); database.replay(programs)
-          completed = len(history)
-      ensemble = Ensemble(models, rng, problem.llm.max_failures_in_a_row)
-      ensemble.check_all()                       # D34: any failure stops the run here
-      builder = PromptBuilder(problem)
-      info.sessions.append(Session(start=now(), commit=git_commit(), command=argv, llm=problem.llm,
-                                   flags=settings, system=builder.system_message))
-      storage.write_run_info(info)
-      return Context(settings, problem, storage, database, evaluator, sandbox, ensemble, builder, initial_code,
-                     completed=completed, started=completed, errors_in_a_row=0)
+  **`prepare(settings, problem, storage)`**:
+  1. Compute the fingerprints of the initial program, the evaluation file, the problem without `llm`, and
+     the image tag.
+  2. No `run.json` yet: create the run's information (a new run id; the seed given, or one drawn at random)
+     and copy the problem file. A `run.json` with other fingerprints: stop, saying what changed (D50).
+  3. Create the sandbox: the local one with `--unsafe-local-sandbox`, announced with a warning; otherwise
+     Docker, after `ensure_image`. Remove leftover containers (D42).
+  4. Create the evaluator and one `OpenAICompatibleLLM` per model.
+  5. A new run: `evaluate_initial`; create the random generator from the seed and the database; add the
+     initial program and its island copies, storing each; write the best program and snapshot 0; no
+     iteration completed yet.
+  6. A resumed run: load the programs and the history; create the random generator from the seed and the
+     number of programs stored (D39); create the database from the first program and `replay` the rest;
+     the completed iterations are the history's rows.
+  7. Create the ensemble and `check_all` the models (D34).
+  8. Create the prompt builder; record the session (time, commit, command, `llm` section, flags, system
+     message) in `run.json`.
+  9. Return the context, with `started` equal to `completed`.
 
-  def evaluate_initial(code, problem, evaluator):
-      try: split_evolve_blocks(code)
-      except MarkerError as e: raise RunError(f"the initial program's evolve blocks are not valid: {e}")
-      outcome = check_child(code, code, problem.entry_functions, {})
-      if outcome.rejection: raise RunError(f"the initial program is not usable: {outcome.rejection}")
-      result = evaluator.evaluate(code)
-      if not result.is_ok: raise RunError(f"the initial program got status {result.status}: {result.error}")
-      return Program(id=new_uuid(), code=code, result=result, origin=initial, parent_id=None, island=None,
-                     iteration=0, generation=0, description=None, fingerprint=outcome.fingerprint,
-                     code_complexity=outcome.code_complexity, example_ids=[], llm=None, created_at=now())
+  **`evaluate_initial(code, problem, evaluator)`** (D20):
+  1. Its evolve blocks must split without error; otherwise stop, saying why.
+  2. Check it against itself (it must compile and define its entry functions); a rejection stops the run.
+  3. Evaluate it; anything but `ok` stops the run with its status and error.
+  4. Return it as the `initial` program, on no island, iteration 0, generation 0.
 
-  def start_iteration(context, number):
-      db = context.database
-      island = db.sample_island()
-      parent = db.sample_parent(island)
-      examples = db.sample_examples(island, parent, context.problem.prompt.example_programs)
-      model = context.ensemble.draw()            # NoModelLeft if every model was dropped
-      prompt = context.builder.build(parent, examples, db.best().result.score)
-      return IterationState(number, island.index, parent, examples, model, prompt)
+  **`start_iteration(context, number)`**: draw the island, then the parent, then the example programs,
+  then the model (`NoModelLeft` if none is left); build the prompt with the best score so far.
 
-  def propose(model, prompt, parent_code):        # in a worker thread
-      reply = model.complete(prompt)              # LLMError if no reply
-      return reply, parse_reply(reply.text, parent_code)
+  **`propose(model, prompt, parent_code)`**, in a worker: ask the model (`LLMError` if no reply) and parse
+  its reply.
 
-  def after_proposal(context, state, task):
-      if isinstance(task.exception, LLMError):
-          context.ensemble.record_failure(state.model.name)
-          context.storage.append_llm_call(call_record(state, None, task.exception))
-          skip(context, state, status="skipped", error=str(task.exception))     # still counts (D34)
-          return "done"
-      if task.exception is not None:              # anything else: an infrastructure error (D38)
-          skip(context, state, status="error", error=describe(task.exception))
-          return "done"
-      reply, state.parsed = task.value
-      context.ensemble.record_success(state.model.name)
-      state.checks = check_child(state.parsed.code, context.initial_code,
-                                 context.problem.entry_functions, context.database.fingerprints)
-      state.reply = reply
-      if state.checks.rejection:
-          finish(context, state, child_program(state, Result.rejected(state.checks.rejection)))
-          return "done"
-      return "evaluating"
+  **`after_proposal(context, state, task)`**:
+  1. An `LLMError`: record the model's failure in the ensemble, store the failed call, and `skip` the
+     iteration as `skipped` (it still counts, D34).
+  2. Any other exception: `skip` the iteration as `error` (D38).
+  3. Otherwise: record the model's success; keep the reply and the parsed reply; run `check_child` against
+     the initial program, the entry functions and the known fingerprints.
+  4. Rejected: `finish` with a `rejected` child. Accepted: the evaluation can start.
 
-  def child_program(state, result):
-      return Program.new_child(state.parent, code=state.parsed.code or "", result=result,
-                               island=state.island, iteration=state.number,
-                               description=state.parsed.description,
-                               fingerprint=state.checks.fingerprint if state.checks else None,
-                               code_complexity=state.checks.code_complexity if state.checks else None,
-                               example_ids=[e.id for e in state.examples],
-                               llm=LLMUsage(state.reply.model, state.reply.input_tokens,
-                                            state.reply.output_tokens, state.reply.duration))
+  **The child** (`child_program`): `Program.new_child` of the parent, with the parsed code (empty if none),
+  the result, the iteration's island and number, the description, the fingerprint and code complexity
+  from the checks, the example ids, and the model's usage.
 
-  def finish(context, state, child):
-      db, storage = context.database, context.storage
-      context.completed += 1
-      best_before = db.best_id
-      db.add(child, completed=context.completed)
-      storage.append_program(child)
-      storage.append_llm_call(call_record(state, child, None))
-      context.errors_in_a_row = context.errors_in_a_row + 1 if child.result.status == error else 0
-      if db.best_id != best_before: storage.write_best(db.best())
-      storage.append_history(HistoryRow(state.number, context.completed, child.id, child.result.status,
-                                        child.result.score, db.best().result.score, db.best_id,
-                                        state.model.name))
-      log.info(iteration line)
-      after_completion(context)
+  **`finish(context, state, child)`**:
+  1. One more completed iteration.
+  2. `add` the child to the database with that count; store it; store its LLM call.
+  3. Errors in a row: one more if its status is `error`, otherwise back to 0.
+  4. If the best changed, rewrite `best_program.py`.
+  5. Store its history row; log its line.
+  6. `after_completion`.
 
-  def skip(context, state, status, error):
-      context.completed += 1
-      if status == "error": context.errors_in_a_row += 1
-      context.storage.append_history(HistoryRow(state.number, context.completed, None, status, None,
-                                                context.database.best().result.score,
-                                                context.database.best_id, state.model.name))
-      log.info(iteration line with the error)
-      after_completion(context)
+  **`skip(context, state, status, error)`**: one more completed iteration; one more error in a row for
+  `error`; store a history row without a child; log the line with the error; `after_completion`.
 
-  def after_completion(context):
-      p, n = context.problem, context.completed
-      if n % p.snapshot_every == 0: context.storage.write_snapshot(context.database.best(), n)
-      if n % p.islands.migration_interval == 0:
-          for arrival in context.database.migrate(iteration=n): context.storage.append_program(arrival)
+  **`after_completion(context)`**: every `snapshot_every` completed iterations, write the best program's
+  snapshot; every `migration_interval` completed iterations, `migrate` and store the arrivals.
 
-  def should_stop(context):                                  # D37 (the iteration total is the loop's own test)
-      s, db = context.settings, context.database
-      if s.target_score is not None and db.best().result.score >= s.target_score: return "target score reached"
-      if s.patience is not None and context.completed - db.best_changed_at >= s.patience: return "patience ran out"
-      if context.errors_in_a_row >= context.problem.max_errors_in_a_row: return "too many errors in a row"
-      if not context.ensemble.active: return "no LLM model left"
-      return None
-  ```
+  **`should_stop(context)`** (D37), the iteration total being the loop's own test:
+  1. The target score is set and the best score reaches it: "target score reached".
+  2. Patience is set and that many iterations have completed since the best last improved: "patience ran out".
+  3. Errors in a row reach `max_errors_in_a_row`: "too many errors in a row".
+  4. No model is active: "no LLM model left".
+  5. Otherwise none.
 
-  `drain` runs the same handling as the main loop (`after_proposal`, evaluation, `finish`) for the
-  iterations in flight, without starting new ones. `summary` writes the end summary of D51 to the console
-  and `log.txt`: iterations done, the reason, the best score and its iteration, counts by status, tokens
-  and cost per model (D35, from the `llm` fields of the programs and the prices of the `llm` section).
+  **`summary(context, reason)`** (D51), to the console and `log.txt`: iterations done, the reason, the best
+  score and its iteration, the counts by status, the tokens and cost per model (from the programs' LLM
+  usage and the prices of the `llm` section, D35).
 
-### D79. The command line and the report (`scripts/run.py`, `scripts/report.py`) [now]
+### D79. The command line and the report (`scripts/run.py`, `scripts/report.py`, `report.py`) [now]
 - **In the references**: v1's `scripts/run.py`; openevolve's `cli.py` and Flask visualizer;
   ShinkaEvolve's `shinka_run` and WebUI.
-- **Decision**: Two scripts; neither holds logic that a test would need, which lives in the package.
+- **Decision**: Two scripts; any logic a test would need lives in the package.
 
   `scripts/run.py`:
-  - `parse_arguments(argv) -> RunSettings`: argparse with the positional `INITIAL_PROGRAM` and
-    `EVALUATION_FILE` and the flags of D45; every value checked (`--iterations >= 1`, `--workers >= 1`,
-    `--patience >= 1`, files exist), `parser.error` otherwise.
-  - `main()`: reconfigures stdout and stderr to UTF-8 (D55), builds `RunSettings`, calls `run`, and turns
-    `ProblemError`, `RunError`, `SandboxError` and `ConfigurationError` into one clear message and exit
-    code 1, without a traceback.
-  - `default_output(problem_name) -> Path`: `runs/<name>_<YYYYmmdd_HHMMSS>` (D45).
+  - **`parse_arguments(argv)`**: the two positional files and the flags of D45; check every value
+    (`--iterations`, `--workers` and `--patience` at least 1, the files exist) and report a wrong one as a
+    usage error.
+  - **`default_output(problem_name)`**: `runs/`, the problem's name, and the date and time (D45).
+  - **`main()`**: switch the console's output to UTF-8 (D55); parse the arguments; call `run`; turn a
+    problem, run, sandbox or configuration error into one clear message and exit code 1, without a
+    traceback.
 
-  `scripts/report.py RUN_FOLDER` (D51), functions of `my_evolve/report.py`:
-  - `load_run(folder) -> (Problem, programs, history, evaluation file)`: from `problem.yaml`,
-    `programs.jsonl`, `history.csv`, and the evaluation file's path recorded in `run.json` (D50).
-  - `plot_progress(history, programs, path)`: the best score so far against the completed-iteration count
-    as a step line, every `ok` child's score as a dot.
-  - `grid_snapshots(problem, programs, history) -> list of (completed, list of grids)`: replays the run
-    and keeps a copy of every island's grid after every k completed iterations and at the end.
-  - `colour_scale(programs) -> (low, high)`: the lowest and highest `ok` scores of the whole run.
-  - `draw_grids(snapshot, scale, path)`: one panel per island; empty cells white, others coloured on the
-    `Blues` colour map from light (low) to deep (high).
-  - `animate(snapshot images, path)`: the snapshots as one animated GIF.
-  - `draw_outputs(evaluation_file, snapshots, path)`: calls the evaluation file's `visualize(output_data,
-    path)` for the best program of every snapshot, when it defines one (circle packing does).
+  `scripts/report.py RUN_FOLDER` calls the functions of `report.py` (D51):
 
-  ```
-  def grid_snapshots(problem, programs, history):
-      database = Database(problem, programs[0], Random(0))     # a replay draws nothing
-      completed_at = {row.program_id: row.completed for row in history if row.program_id}
-      due = sorted(row.completed for row in history if row.completed % problem.snapshot_every == 0)
-      grids = lambda: [deepcopy(island.grid) for island in database.islands]
-      snapshots = []
-      for program in programs:
-          n = completed_at.get(program.id)              # None for the initial program, copies, migrants
-          while n is not None and due and due[0] < n:   # due after a skipped iteration: nothing changed since
-              snapshots.append((due.pop(0), grids()))
-          database.add(program)
-          if n is not None and due and due[0] == n: snapshots.append((due.pop(0), grids()))
-      snapshots += [(n, grids()) for n in due]           # skipped iterations at the very end
-      snapshots.append(("end", grids()))
-      return snapshots
+  **`load_run(folder)`**: the problem from `problem.yaml`, the programs, the history, and the evaluation
+  file's path recorded in `run.json`.
 
-  def draw_grids(snapshot, scale, path):
-      completed, grids = snapshot
-      figure with one panel per island, titled "island i"
-      for each grid: shape = [f.bins for f in grid.features]
-          values = full(shape, nan); for cell, elite in grid.elites.items(): values[cell] = elite.result.score
-          1D: one row of cells; 2D: a square (first feature across, second up);
-          3D: one square per bin of the third feature, side by side
-          imshow with the Blues colour map, normalized to scale, nan cells drawn white, a colour bar
-      title "after iteration {completed}"; save to path
+  **`plot_progress(history, programs, path)`**: the best score so far against the number of completed
+  iterations, as a step line, with every `ok` child's score as a dot.
 
-  def draw_outputs(evaluation_file, snapshots, folder):
-      visualize = load_python_file(evaluation_file).get("visualize")   # loaded on the host, trusted
-      if visualize is None: return
-      for completed, best in best program of each snapshot:
-          if best.result.output_data is not None:
-              visualize(best.result.output_data, folder / f"output_{completed:04d}.png")
-  ```
+  **`grid_snapshots(problem, programs, history)`**:
+  1. Create a database from the first program; a replay draws nothing at random.
+  2. Find, from the history, the completed count of each child and the counts at which a snapshot is due
+     (multiples of `snapshot_every`).
+  3. Go through the programs in order. Before adding a child, take the snapshots due earlier than its count
+     (they followed skipped iterations, which changed nothing). Add it. If a snapshot is due at its count,
+     take it.
+  4. A snapshot is a copy of every island's grid, with its count.
+  5. At the end, take the snapshots still due, then a final one.
 
-  Circle packing's `visualize(output_data, path)` draws the unit square and each circle (centre, radius,
-  number) with matplotlib and the title "n=26, sum of radii=…", as openevolve's `visualize` does, but
-  saves to `path` instead of showing a window.
+  **`colour_scale(programs)`**: the lowest and the highest `ok` score of the whole run.
+
+  **`draw_grids(snapshot, scale, path)`**: one panel per island, titled with its number; each cell white
+  when empty, otherwise coloured on the `Blues` colour map, from light for the scale's lowest score to deep
+  for its highest; a 1D grid as a row of cells, a 2D grid as a square (first feature across, second up),
+  a 3D grid as one square per bin of its third feature; a colour bar; the title says after which iteration.
+
+  **`animate(images, path)`**: the grid images, in order, as one animated GIF.
+
+  **`draw_outputs(evaluation_file, snapshots, folder)`**: if the evaluation file defines `visualize`
+  (loaded on the host: it is your code), call it with the saved output data of the best program at each
+  snapshot, writing `output_` and the count on four digits.
+
+  Circle packing's `visualize(output_data, path)` draws the unit square and each circle with its number,
+  titled with n and the sum of the radii, as openevolve's `visualize` does, but saves the image to `path`
+  instead of opening a window.
 
 ---
 
