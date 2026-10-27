@@ -47,6 +47,8 @@ native_parser = false
 line-length = 100
 # The oldest Python version the code must keep working on
 target-version = "py311"
+# OpenEvolve's initial programs stay exactly as OpenEvolve wrote them (D3)
+extend-exclude = ["examples/*/initial_program.py"]
 
 [tool.ruff.lint]
 # Rule families to enforce:
