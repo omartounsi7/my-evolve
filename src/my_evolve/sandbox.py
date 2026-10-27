@@ -16,6 +16,8 @@ the tests and trusted code (--unsafe-local-sandbox, D40); and the Docker sandbox
 the default.
 """
 
+import hashlib
+import logging
 import math
 import os
 import queue
@@ -33,6 +35,7 @@ from pathlib import Path
 from typing import IO, Any
 
 from my_evolve.evaluation_api import CallTimeout, ProgramFailure, StageTimeout
+from my_evolve.problem import SandboxSettings
 from my_evolve.sandbox_protocol import (
     DATA,
     FUNCTION,
@@ -43,6 +46,8 @@ from my_evolve.sandbox_protocol import (
     receive,
     send,
 )
+
+logger = logging.getLogger(__name__)
 
 # The environment variables that set how many threads numeric libraries use (D41).
 THREAD_VARIABLES = (
@@ -232,8 +237,12 @@ class SandboxSession:
             if item is END or matches(item):
                 return item
 
-    def ended(self) -> ProgramFailure:
-        """Return the error for a worker that ended without answering; the session is dead."""
+    def ended(self) -> ProgramFailure | SandboxError:
+        """Return the error for a worker that ended without answering; the session is dead.
+
+        Usually the program's fault (ProgramFailure); a SandboxError if the sandbox
+        finds that it failed itself, for example Docker no longer running.
+        """
         exit_code: int | None = None
         if self.process is not None:
             try:
@@ -241,7 +250,11 @@ class SandboxSession:
             except subprocess.TimeoutExpired:
                 pass
         self.kill()
-        return ProgramFailure(describe_end(exit_code), error_output=self.error_tail())
+        error_output = self.error_tail()
+        sandbox_failure = self.sandbox.infrastructure_failure(exit_code)
+        if sandbox_failure is not None:
+            return SandboxError(f"{sandbox_failure}: {error_output.strip()[-500:]}")
+        return ProgramFailure(describe_end(exit_code), error_output=error_output)
 
     def request(self, message: dict[str, Any], what: str, timeout: float | None) -> Any:
         """Send a call or get message and return the decoded value of its answer."""
@@ -461,6 +474,13 @@ class Sandbox(ABC):
     def stop(self, session: SandboxSession) -> None:
         """Kill a session's worker and everything it started."""
 
+    def infrastructure_failure(self, exit_code: int | None) -> str | None:
+        """Say why the sandbox itself failed, if it did, when a worker ended with exit_code.
+
+        None means the program is to blame.
+        """
+        return None
+
     @abstractmethod
     def remove_leftovers(self) -> None:
         """Remove the workers an earlier session of the run left behind (D42)."""
@@ -527,3 +547,187 @@ class LocalSandbox(Sandbox):
         A worker whose host died ends by itself once its current call returns, since
         its input is then closed; only a call that never returns would keep it alive.
         """
+
+
+# ----------------------------------------------------------------------------------
+# The Docker sandbox
+# ----------------------------------------------------------------------------------
+
+# The image definition, and the name of the images built from it (D71).
+DOCKERFILE_PATH = Path(__file__).resolve().parent / "evaluation.Dockerfile"
+IMAGE_NAME = "my-evolve-evaluation"
+# The label every container of a run carries, with the run's id as value (D42).
+RUN_LABEL = "my-evolve.run"
+# Where the my_evolve package is mounted in the container (the image's PYTHONPATH is /app).
+CONTAINER_PACKAGE_FOLDER = "/app/my_evolve"
+# "nobody": a user without any rights.
+NOBODY = "65534:65534"
+# The worker's own time limit is this much longer than the stage's, so that a
+# container stops by itself even if the host process dies (D42).
+CONTAINER_TIME_MARGIN = 10.0
+# How long a docker command (other than a build) may take, in seconds.
+DOCKER_COMMAND_SECONDS = 60
+# The exit codes of "docker run" when the container could not be run at all.
+DOCKER_RUN_FAILURE_CODES = (125, 126, 127)
+
+
+def docker_image_tag(packages: tuple[str, ...]) -> str:
+    """Return the image's name, tagged with a hash of the Dockerfile and the package list.
+
+    Changing either changes the tag, so the image is rebuilt (D71).
+    """
+    content = DOCKERFILE_PATH.read_bytes() + "\n".join(packages).encode("utf-8")
+    return f"{IMAGE_NAME}:{hashlib.sha256(content).hexdigest()[:12]}"
+
+
+def run_docker(
+    arguments: list[str], timeout: float = DOCKER_COMMAND_SECONDS
+) -> "subprocess.CompletedProcess[str]":
+    """Run a docker command and return how it went; SandboxError if it cannot run at all."""
+    try:
+        return subprocess.run(
+            ["docker", *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SandboxError(f"docker {arguments[0]} failed: {error}") from error
+
+
+def check_docker() -> None:
+    """Raise SandboxError unless Docker is installed and running."""
+    if shutil.which("docker") is None:
+        raise SandboxError("Docker is not installed.")
+    if run_docker(["info"]).returncode != 0:
+        raise SandboxError("Docker is not running: start it (Docker Desktop on Windows).")
+
+
+class DockerSandbox(Sandbox):
+    """Runs each worker in its own Docker container, removed when it stops (D40-D42).
+
+    Inside, the program has no network, can write only in a temporary /tmp, runs as
+    a user without rights, and is limited in memory (without swap), CPUs and
+    processes. It sees the my_evolve package, read-only, and nothing of the host's
+    files or environment variables.
+    """
+
+    def __init__(self, image: str, settings: SandboxSettings, run_id: str) -> None:
+        """Prepare to start containers from image; nothing is checked or started yet."""
+        # The image's tag, from ensure_image.
+        self.image: str = image
+        # The memory, CPU and process limits (D41).
+        self.settings: SandboxSettings = settings
+        # The run's id, the value of every container's label.
+        self.run_id: str = run_id
+
+    @staticmethod
+    def ensure_image(packages: tuple[str, ...]) -> str:
+        """Check Docker, build the evaluation image if it does not exist yet, and return its tag.
+
+        The build sees only a folder holding the Dockerfile and the package list. It
+        is the only moment with network access (D71). Raises SandboxError if Docker
+        is missing or not running, or if the build fails.
+        """
+        check_docker()
+        tag = docker_image_tag(packages)
+        if run_docker(["image", "inspect", tag]).returncode == 0:
+            return tag
+        logger.info("Building the Docker image %s (only once)...", tag)
+        with tempfile.TemporaryDirectory() as build_folder:
+            shutil.copyfile(DOCKERFILE_PATH, Path(build_folder) / "Dockerfile")
+            requirements = "".join(f"{package}\n" for package in packages)
+            (Path(build_folder) / "requirements.txt").write_text(requirements, encoding="utf-8")
+            # No time limit: downloading Python's image and the packages may be slow.
+            try:
+                build = subprocess.run(
+                    ["docker", "build", "--tag", tag, build_folder],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+            except OSError as error:
+                raise SandboxError(f"docker build failed: {error}") from error
+        if build.returncode != 0:
+            last_lines = "\n".join((build.stdout + build.stderr).strip().splitlines()[-15:])
+            raise SandboxError(f"building the image {tag} failed:\n{last_lines}")
+        return tag
+
+    def new_session_name(self) -> str:
+        """Return a container name, starting with the run's id so it is easy to recognise."""
+        return f"my-evolve-{self.run_id[:8]}-{uuid.uuid4().hex[:12]}"
+
+    def command(self, name: str, stage_limit: float) -> list[str]:
+        """Return the docker run command of one worker (D41, D42)."""
+        threads = str(max(1, int(self.settings.cpus)))
+        thread_options = [
+            option for variable in THREAD_VARIABLES for option in ("--env", f"{variable}={threads}")
+        ]
+        package_folder = Path(__file__).resolve().parent
+        package_mount = f"type=bind,source={package_folder},target={CONTAINER_PACKAGE_FOLDER}"
+        return [
+            "docker", "run", "--rm", "--interactive",
+            "--name", name,
+            "--label", f"{RUN_LABEL}={self.run_id}",
+            "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp",
+            "--memory", self.settings.memory,
+            "--memory-swap", self.settings.memory,
+            "--cpus", f"{self.settings.cpus:g}",
+            "--pids-limit", str(self.settings.max_processes),
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--user", NOBODY,
+            *thread_options,
+            "--mount", f"{package_mount},readonly",
+            self.image,
+            "timeout", "--signal=KILL", f"{stage_limit + CONTAINER_TIME_MARGIN:g}",
+            "python", "-m", "my_evolve.sandbox_worker",
+        ]  # fmt: skip
+
+    def stop(self, session: SandboxSession) -> None:
+        """Kill the session's container, which takes every process inside with it.
+
+        A container still being created cannot be killed yet: it is removed instead.
+        The docker client process is killed last.
+        """
+        try:
+            if run_docker(["kill", session.name]).returncode != 0:
+                run_docker(["rm", "--force", session.name])
+        except SandboxError as error:
+            logger.warning("Could not stop the container %s: %s", session.name, error)
+        if session.process is not None:
+            session.process.kill()
+
+    def infrastructure_failure(self, exit_code: int | None) -> str | None:
+        """Tell Docker's failures apart from the program's when a container ends early.
+
+        docker run exits with 125 to 127 when the container could not run at all. A
+        program may exit with the same codes, so Docker itself is checked: only if it
+        stopped running, or the image is gone, is the sandbox to blame.
+        """
+        if exit_code not in DOCKER_RUN_FAILURE_CODES:
+            return None
+        try:
+            if run_docker(["info"]).returncode != 0:
+                return "Docker stopped running"
+            if run_docker(["image", "inspect", self.image]).returncode != 0:
+                return f"the image {self.image} no longer exists"
+        except SandboxError as error:
+            return str(error)
+        return None
+
+    def remove_leftovers(self) -> None:
+        """Remove every container labelled with the run's id, running or not (D42)."""
+        listing = run_docker(
+            ["ps", "--all", "--quiet", "--filter", f"label={RUN_LABEL}={self.run_id}"]
+        )
+        container_ids = listing.stdout.split()
+        if container_ids:
+            run_docker(["rm", "--force", *container_ids])

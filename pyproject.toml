@@ -27,6 +27,10 @@ dev = [
     "types-PyYAML",  # type information for pyyaml, which mypy needs
 ]
 
+[tool.setuptools.package-data]
+# The image definition DockerSandbox builds from
+my_evolve = ["evaluation.Dockerfile"]
+
 [tool.setuptools.packages.find]
 # Tells setuptools that the package lives inside the src folder
 where = ["src"]
