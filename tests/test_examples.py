@@ -7,6 +7,8 @@ from typing import Any
 
 import numpy as np
 
+from my_evolve.evaluation_api import InvalidProgram
+
 # The top folder of the repository, found relative to this test file
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
@@ -43,19 +45,19 @@ class CirclePackingTest(unittest.TestCase):
     def test_overlapping_circles_are_refused(self) -> None:
         """Two circles closer than the sum of their radii break the rules."""
         centers = [[0.1 + 0.03 * i, 0.5] for i in range(26)]
-        with self.assertRaisesRegex(ValueError, "circles 0 and 1 overlap"):
+        with self.assertRaisesRegex(InvalidProgram, "circles 0 and 1 overlap"):
             self.evaluate(packing_of(centers, [0.02] * 26))
 
     def test_a_circle_outside_the_square_is_refused(self) -> None:
         """A circle sticking out of the unit square breaks the rules."""
         centers = [[0.5, 0.5]] + [[0.03 * i, 0.9] for i in range(1, 26)]
         radii = [0.6] + [0.0] * 25
-        with self.assertRaisesRegex(ValueError, "circle 0 .* leaves the unit square"):
+        with self.assertRaisesRegex(InvalidProgram, "circle 0 .* leaves the unit square"):
             self.evaluate(packing_of(centers, radii))
 
     def test_the_wrong_number_of_circles_is_refused(self) -> None:
         """A packing must have exactly 26 circles."""
-        with self.assertRaisesRegex(ValueError, "expected centers of shape"):
+        with self.assertRaisesRegex(InvalidProgram, "expected centers of shape"):
             self.evaluate(packing_of([[0.5, 0.5]], [0.1]))
 
 
@@ -69,7 +71,7 @@ class ToyProblemTest(unittest.TestCase):
 
     def test_a_number_above_the_limit_is_refused(self) -> None:
         """Returning more than 10 breaks the toy problem's rule."""
-        with self.assertRaisesRegex(ValueError, "more than 10"):
+        with self.assertRaisesRegex(InvalidProgram, "more than 10"):
             self.evaluate({"solve": lambda: 11})
 
 

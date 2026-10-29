@@ -4,17 +4,17 @@ import random
 import unittest
 
 from my_evolve.database import EXAMPLE_PROGRAMS, Database
-from my_evolve.program import Program, Result
+from my_evolve.program import Program, Result, Status
 
 
 def working(score: float) -> Program:
     """Return a program with that score."""
-    return Program(f"x = {score}\n", Result(score=score))
+    return Program(f"x = {score}\n", Result(Status.OK, score=score))
 
 
 def failed() -> Program:
     """Return a program that failed its evaluation."""
-    return Program("x = (\n", Result(error="SyntaxError: '(' was never closed"))
+    return Program("x = (\n", Result.failure(Status.FAILED, "SyntaxError: '(' was never closed"))
 
 
 def filled_database(seed: int = 0) -> Database:
@@ -53,7 +53,7 @@ class DatabaseTest(unittest.TestCase):
             parent, examples = database.sample()
             self.assertEqual(len(examples), EXAMPLE_PROGRAMS)
             drawn = [parent, *examples]
-            self.assertTrue(all(program.result.score is not None for program in drawn))
+            self.assertTrue(all(program.result.is_ok for program in drawn))
             self.assertEqual(len({program.id for program in drawn}), len(drawn))
 
     def test_fewer_examples_when_fewer_programs_work(self) -> None:

@@ -33,7 +33,7 @@ class Database:
         """Store a program; if it works and beats the best score, it becomes the best."""
         self.programs[program.id] = program
         score = program.result.score
-        if score is None:
+        if not program.result.is_ok or score is None:
             return
         best_score = self.best_score()
         # Strictly higher: on a tie, the earlier program stays the best.
@@ -50,8 +50,8 @@ class Database:
         return best.result.score if best is not None else None
 
     def working_programs(self) -> list[Program]:
-        """Return the programs that have a score, in the order they were added."""
-        return [program for program in self.programs.values() if program.result.score is not None]
+        """Return the programs whose status is ok, in the order they were added."""
+        return [program for program in self.programs.values() if program.result.is_ok]
 
     def sample(self) -> tuple[Program, list[Program]]:
         """Draw the parent of the next child, and the example programs shown beside it.

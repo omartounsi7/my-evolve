@@ -1,22 +1,50 @@
-"""The records of a run: how an evaluation ended (Result), and one program (Program)."""
+"""The records of a run: how an evaluation ended (Status, Result), and one program (Program)."""
 
+import enum
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
 
+class Status(enum.Enum):
+    """How a program's evaluation ended."""
+
+    # Evaluated, and its answer is legal: the only status with a score
+    OK = "ok"
+    # Raised an exception while loading or while one of its functions ran
+    FAILED = "failed"
+    # Returned an answer the evaluation file judged illegal, such as overlapping circles
+    INVALID = "invalid"
+
+
 @dataclass(frozen=True)
 class Result:
-    """How a program's evaluation ended: a score, or the error that stopped it."""
+    """How a program's evaluation ended: its status, and a score or the reason it failed."""
 
-    # How good the program is, higher is better; None when the program failed
+    status: Status
+    # How good the program is, higher is better; only an ok program has one
     score: float | None = None
-    # Why the program failed, such as "ZeroDivisionError: division by zero"; None when it worked
+    # Why the program failed, such as "ZeroDivisionError: division by zero"; None when ok
     error: str | None = None
+
+    def __post_init__(self) -> None:
+        """Refuse a result that contradicts itself: a score belongs to ok programs only."""
+        if (self.status is Status.OK) != (self.score is not None):
+            raise ValueError(f"status {self.status.value} cannot go with the score {self.score}")
+
+    @property
+    def is_ok(self) -> bool:
+        """True when the program works: the only meaning of "correct"."""
+        return self.status is Status.OK
+
+    @classmethod
+    def failure(cls, status: Status, error: str) -> "Result":
+        """Return the result of a program that did not work, saying why."""
+        return cls(status=status, error=error)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the result as plain JSON values; a missing score is None (null in JSON)."""
-        return {"score": self.score, "error": self.error}
+        return {"status": self.status.value, "score": self.score, "error": self.error}
 
 
 def new_id() -> str:

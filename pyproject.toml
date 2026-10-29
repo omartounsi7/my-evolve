@@ -55,3 +55,6 @@ extend-exclude = ["examples/*/initial_program.py", "*.md"]
 #   I    = import order                 B = common bug patterns
 #   UP   = outdated syntax              N = naming conventions
 select = ["E", "W", "F", "I", "B", "UP", "N"]
+# Exceptions may be named for what happened (InvalidProgram), as the design names them,
+# without an "Error" suffix
+ignore = ["N818"]

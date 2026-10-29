@@ -119,7 +119,7 @@ class LoopTest(unittest.TestCase):
     def test_a_failing_initial_program_stops_the_run(self) -> None:
         """Evolution needs a working starting point; nothing is saved without one."""
         with (
-            self.assertRaisesRegex(RunError, "the initial program does not work: ValueError"),
+            self.assertRaisesRegex(RunError, r"does not work \(invalid\): solve\(\) returned 11"),
             contextlib.redirect_stdout(io.StringIO()),
         ):
             run(

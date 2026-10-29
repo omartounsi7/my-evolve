@@ -55,14 +55,14 @@ def write_best_program(folder: Path, program: Program) -> None:
 
 
 def describe(program: Program) -> str:
-    """Return the program's score, or its error cut to one short line, for the console."""
+    """Return the program's score, or its status and error in one short line, for the console."""
     if program.result.score is not None:
         return f"score {program.result.score:.6f}"
     lines = (program.result.error or "").splitlines()
     error = lines[0] if lines else "no error message"
     if len(error) > MAX_CONSOLE_ERROR:
         error = error[:MAX_CONSOLE_ERROR] + "…"
-    return f"failed: {error}"
+    return f"{program.result.status.value}: {error}"
 
 
 def best_score_text(database: Database) -> str:
@@ -106,8 +106,11 @@ def run(
             write_best_program(output, program)
 
     initial = Program(initial_code, evaluator.evaluate(initial_code))
-    if initial.result.score is None:
-        raise RunError(f"the initial program does not work: {initial.result.error}")
+    if not initial.result.is_ok:
+        raise RunError(
+            f"the initial program does not work ({initial.result.status.value}): "
+            f"{initial.result.error}"
+        )
     output.mkdir(parents=True, exist_ok=True)
     store(initial)
     print(f"Initial program: {describe(initial)}")

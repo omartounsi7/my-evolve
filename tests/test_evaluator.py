@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
+from my_evolve.program import Status
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
@@ -19,6 +20,7 @@ class EvaluatorTest(unittest.TestCase):
     def test_a_working_program_gets_its_score(self) -> None:
         """The toy initial program scores the number it returns."""
         result = self.evaluator.evaluate((TOY_FOLDER / "initial_program.py").read_text())
+        self.assertEqual(result.status, Status.OK)
         self.assertEqual(result.score, 1.0)
         self.assertIsNone(result.error)
 
@@ -30,20 +32,27 @@ class EvaluatorTest(unittest.TestCase):
         self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)
 
     def test_failures_become_errors(self) -> None:
-        """Whatever goes wrong, the program gets no score and an error saying what."""
+        """Whatever goes wrong, the program fails: no score, and an error saying what."""
         cases = {
             "def solve(:\n": "SyntaxError",
             "raise RuntimeError('boom')\n": "RuntimeError: boom",
             "def solve():\n    return 1 / 0\n": "ZeroDivisionError: division by zero",
             "x = 1\n": "KeyError: 'solve'",
-            "def solve():\n    return 11\n": "ValueError: solve() returned 11",
             "import sys\nsys.exit(3)\n": "SystemExit: 3",
         }
         for code, error in cases.items():
             with self.subTest(error=error):
                 result = self.evaluator.evaluate(code)
+                self.assertEqual(result.status, Status.FAILED)
                 self.assertIsNone(result.score)
                 self.assertIn(error, result.error or "")
+
+    def test_an_illegal_answer_is_invalid(self) -> None:
+        """InvalidProgram from the evaluation file gives the status invalid, with the reason."""
+        result = self.evaluator.evaluate("def solve():\n    return 11\n")
+        self.assertEqual(result.status, Status.INVALID)
+        self.assertIsNone(result.score)
+        self.assertEqual(result.error, "solve() returned 11, more than 10.0")
 
     def test_the_main_part_of_a_program_does_not_run(self) -> None:
         """A program's `if __name__ == "__main__":` part is not run."""

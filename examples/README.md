@@ -25,6 +25,6 @@ What changed:
 
 - `evaluate` receives the program's names (`namespace`) and returns the score alone,
   instead of receiving a file path and returning several metrics.
-- For now, a single stage, and an illegal packing raises an error where OpenEvolve
-  scores it 0. A later step of the plan (1.12) makes the evaluation a faithful port of
-  OpenEvolve's, cascade included.
+- For now, a single stage, and an illegal packing raises `InvalidProgram` (status
+  `invalid`) where OpenEvolve scores it 0. A later step of the plan (1.12) makes the
+  evaluation a faithful port of OpenEvolve's, cascade included.

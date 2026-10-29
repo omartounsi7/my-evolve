@@ -42,7 +42,7 @@ class Prompt:
 
 def score_of(program: Program) -> float:
     """Return a program's score. Raises ValueError for a failed one: only working ones are shown."""
-    if program.result.score is None:
+    if not program.result.is_ok or program.result.score is None:
         raise ValueError(f"program {program.id} has no score, so it cannot be shown in a prompt")
     return program.result.score
 

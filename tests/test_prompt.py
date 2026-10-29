@@ -3,7 +3,7 @@
 import unittest
 
 from my_evolve.problem import LLMSettings, Problem
-from my_evolve.program import Program, Result
+from my_evolve.program import Program, Result, Status
 from my_evolve.prompt import PromptBuilder
 
 PROBLEM = Problem(
@@ -15,7 +15,9 @@ PROBLEM = Problem(
 
 def program(code: str, score: float | None) -> Program:
     """Return a program with that code and score (None for a failed program)."""
-    return Program(code, Result(score=score, error=None if score is not None else "Error: x"))
+    if score is None:
+        return Program(code, Result.failure(Status.FAILED, "Error: x"))
+    return Program(code, Result(Status.OK, score=score))
 
 
 class PromptTest(unittest.TestCase):

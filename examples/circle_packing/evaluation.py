@@ -3,14 +3,16 @@
 A program's score is OpenEvolve's: the sum of the radii of its packing divided by
 2.635, the sum the AlphaEvolve paper reached. This is a first, simplified version of
 OpenEvolve's evaluator (examples/circle_packing/evaluator.py): a single stage, and an
-illegal packing raises an error where OpenEvolve gives it a score of 0. Step 1.12 of
-the implementation plan turns it into a faithful port.
+illegal packing raises InvalidProgram where OpenEvolve gives it a score of 0. Step 1.12
+of the implementation plan turns it into a faithful port.
 """
 
 from collections.abc import Mapping
 from typing import Any
 
 import numpy as np
+
+from my_evolve.evaluation_api import InvalidProgram
 
 # The function every program must define, and how many circles it must place
 ENTRY_FUNCTION = "run_packing"
@@ -22,31 +24,31 @@ TOLERANCE = 1e-6
 
 
 def check_packing(centers: np.ndarray[Any, Any], radii: np.ndarray[Any, Any]) -> None:
-    """Raise ValueError naming the first rule of the problem the packing breaks."""
+    """Raise InvalidProgram naming the first rule of the problem the packing breaks."""
     if centers.shape != (NUMBER_OF_CIRCLES, 2) or radii.shape != (NUMBER_OF_CIRCLES,):
-        raise ValueError(
+        raise InvalidProgram(
             f"expected centers of shape ({NUMBER_OF_CIRCLES}, 2) and radii of shape "
             f"({NUMBER_OF_CIRCLES},), got {centers.shape} and {radii.shape}"
         )
     if np.isnan(centers).any() or np.isnan(radii).any():
-        raise ValueError("the centers or the radii contain NaN values")
+        raise InvalidProgram("the centers or the radii contain NaN values")
     for i in range(NUMBER_OF_CIRCLES):
         x, y = centers[i]
         r = radii[i]
         if r < 0:
-            raise ValueError(f"circle {i} has a negative radius, {r}")
+            raise InvalidProgram(f"circle {i} has a negative radius, {r}")
         if (
             x - r < -TOLERANCE
             or x + r > 1 + TOLERANCE
             or y - r < -TOLERANCE
             or y + r > 1 + TOLERANCE
         ):
-            raise ValueError(f"circle {i} at ({x}, {y}) with radius {r} leaves the unit square")
+            raise InvalidProgram(f"circle {i} at ({x}, {y}) with radius {r} leaves the unit square")
     for i in range(NUMBER_OF_CIRCLES):
         for j in range(i + 1, NUMBER_OF_CIRCLES):
             distance = np.sqrt(np.sum((centers[i] - centers[j]) ** 2))
             if distance < radii[i] + radii[j] - TOLERANCE:
-                raise ValueError(
+                raise InvalidProgram(
                     f"circles {i} and {j} overlap (distance {distance:.6f}, "
                     f"radii sum {radii[i] + radii[j]:.6f})"
                 )
@@ -55,7 +57,7 @@ def check_packing(centers: np.ndarray[Any, Any], radii: np.ndarray[Any, Any]) ->
 def evaluate(namespace: Mapping[str, Any]) -> float:
     """Return the program's score: the sum of its radii divided by 2.635 (higher is better).
 
-    namespace gives the names the program defines. Raises ValueError if the packing
+    namespace gives the names the program defines. Raises InvalidProgram if the packing
     breaks a rule of the problem.
     """
     centers, radii, _ = namespace[ENTRY_FUNCTION]()

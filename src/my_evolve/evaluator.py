@@ -8,6 +8,8 @@ The evaluation file is Python code written for the problem. It defines a functio
 
 which receives the names the program defines (its functions and constants), calls
 the program's functions, and returns the program's score: a number, higher is better.
+When the program's answer breaks a rule of the problem, evaluate raises InvalidProgram
+(from my_evolve.evaluation_api) with the reason.
 
 For now the program runs inside this very process, with exec: it has no time limit
 and no isolation, so it can read and write your files and use the network. Phase 1
@@ -21,7 +23,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from my_evolve.program import Result
+from my_evolve.evaluation_api import InvalidProgram
+from my_evolve.program import Result, Status
 
 # The function every evaluation file must define
 EVALUATE_FUNCTION_NAME = "evaluate"
@@ -99,12 +102,16 @@ class Evaluator:
     def evaluate(self, code: str) -> Result:
         """Run the program's code and score it.
 
-        Never raises because of the program: whatever goes wrong becomes a result
-        without a score, whose error says what happened. Only Ctrl+C gets through.
+        Never raises because of the program: an illegal answer gives the status
+        invalid, anything else that goes wrong the status failed, each with an error
+        saying what happened. Only Ctrl+C gets through.
         """
         try:
             namespace = run_program(code)
-            return Result(score=checked_score(self.evaluate_function(namespace)))
+            score = checked_score(self.evaluate_function(namespace))
+        except InvalidProgram as error:
+            return Result.failure(Status.INVALID, error.reason)
         # SystemExit too: a program calling exit() must not end the run.
         except (Exception, SystemExit) as error:
-            return Result(error=describe_error(error))
+            return Result.failure(Status.FAILED, describe_error(error))
+        return Result(Status.OK, score=score)
