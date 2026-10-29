@@ -151,7 +151,7 @@ def run(
             append_line(output / LLM_CALLS_FILE, call)
             print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
             continue
-        code = extract_code(reply.text)
+        code = extract_code(reply.text, parent.code)
         result = evaluator.evaluate(code)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
         child = Program.new_child(parent, code, result, iteration, usage)
