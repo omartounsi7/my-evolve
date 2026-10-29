@@ -1,0 +1,21 @@
+{
+  "openevolve_commit": "da3d701",
+  "circle_packing": {
+    "initial_program": 0.36423689449571406,
+    "best_program_1_threads": 0.0,
+    "best_program_8_threads": 1.0003709277995376,
+    "crash": 0.0,
+    "float32_grid": 0.9364327192306519,
+    "grid": 0.9487666034155601,
+    "nan_radius": 0.0,
+    "negative_radius": 0.0,
+    "outside": 0.0,
+    "overlap": 0.0,
+    "plain_lists": 0.9487666034155601,
+    "too_few_circles": 0.0,
+    "two_values": 0.0,
+    "weak_grid": 0.3795066413662239,
+    "wrong_reported_sum": 0.9487666034155601,
+    "zero_radii": 0.0
+  }
+}

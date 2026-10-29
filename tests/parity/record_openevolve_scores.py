@@ -1,0 +1,108 @@
+"""Record the scores OpenEvolve's own evaluators give the parity programs.
+
+Usage: python tests/parity/record_openevolve_scores.py [OPENEVOLVE_CHECKOUT]
+
+The checkout defaults to the openevolve folder next to this repository. The scores are
+written to tests/parity/openevolve_scores.json, which tests/test_parity.py compares
+my-evolve's scores with; the tests themselves never need OpenEvolve. Run it again only
+if the programs or OpenEvolve's evaluators change.
+
+Each program goes through OpenEvolve's cascade as OpenEvolve runs it: stage 1, then, if
+its combined_score reaches the threshold, stage 2, whose metrics replace stage 1's. The
+recorded score is the final combined_score: what OpenEvolve would select on.
+
+Numeric libraries get one thread, as in my-evolve's sandbox (D41). OpenEvolve's best
+circle packing gives another answer with more threads, so it is recorded with 1 and 8.
+"""
+
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+HERE = Path(__file__).resolve().parent
+PROGRAMS = HERE / "programs"
+REPOSITORY = HERE.parent.parent
+OUTPUT = HERE / "openevolve_scores.json"
+THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+
+# Each problem's evaluator in the openevolve checkout, and its cascade threshold
+PROBLEMS: dict[str, tuple[str, float]] = {
+    "circle_packing": ("examples/circle_packing/evaluator.py", 0.5),
+}
+
+
+def set_threads(count: int) -> None:
+    """Set how many threads numeric libraries use, here and in subprocesses."""
+    for variable in THREAD_VARIABLES:
+        os.environ[variable] = str(count)
+
+
+def load_evaluator(path: Path) -> Any:
+    """Load one of OpenEvolve's evaluator files as a module."""
+    spec = importlib.util.spec_from_file_location("evaluator", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def fitness(metrics: dict[str, Any]) -> float:
+    """Return what OpenEvolve selects on: combined_score, or the average of the numbers."""
+    score = metrics.get("combined_score")
+    if isinstance(score, int | float) and not isinstance(score, bool):
+        return float(score)
+    numbers = [
+        float(value)
+        for name, value in metrics.items()
+        if name != "error" and isinstance(value, int | float) and not isinstance(value, bool)
+    ]
+    return sum(numbers) / len(numbers) if numbers else 0.0
+
+
+def numbers_only(metrics: dict[str, Any]) -> dict[str, Any]:
+    """Return the metrics without the error text OpenEvolve sometimes adds."""
+    return {name: value for name, value in metrics.items() if not isinstance(value, str)}
+
+
+def cascade_score(evaluator: Any, program: Path, threshold: float) -> float:
+    """Return the score OpenEvolve's cascade gives a program."""
+    metrics = dict(evaluator.evaluate_stage1(str(program)))
+    if fitness(metrics) < threshold:
+        return fitness(metrics)
+    merged = numbers_only(metrics)
+    merged.update(numbers_only(dict(evaluator.evaluate_stage2(str(program)))))
+    return fitness(merged)
+
+
+def main(arguments: list[str]) -> None:
+    openevolve = Path(arguments[0]) if arguments else REPOSITORY.parent / "openevolve"
+    commit = subprocess.run(
+        ["git", "-C", str(openevolve), "rev-parse", "--short", "HEAD"],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    recorded: dict[str, Any] = {"openevolve_commit": commit}
+    for problem, (evaluator_path, threshold) in PROBLEMS.items():
+        evaluator = load_evaluator(openevolve / evaluator_path)
+        programs = {"initial_program": REPOSITORY / "examples" / problem / "initial_program.py"}
+        programs.update({path.stem: path for path in sorted((PROGRAMS / problem).glob("*.py"))})
+        scores: dict[str, float] = {}
+        for name, path in programs.items():
+            thread_counts = (1, 8) if name == "best_program" else (1,)
+            for threads in thread_counts:
+                set_threads(threads)
+                key = name if len(thread_counts) == 1 else f"{name}_{threads}_threads"
+                scores[key] = cascade_score(evaluator, path, threshold)
+                print(f"{problem} / {key}: {scores[key]!r}", file=sys.__stderr__, flush=True)
+        recorded[problem] = scores
+    OUTPUT.write_text(json.dumps(recorded, indent=2) + "\n", encoding="utf-8")
+    print(f"Written: {OUTPUT}", file=sys.__stderr__)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

@@ -22,9 +22,9 @@ def run_program(path: Path) -> dict[str, Any]:
     return namespace
 
 
-def load_evaluate(folder: Path) -> Any:
-    """Return the evaluate function of the evaluation file in a problem's folder."""
-    return runpy.run_path(str(folder / "evaluation.py"))["evaluate"]
+def load_evaluate(folder: Path, name: str = "evaluate") -> Any:
+    """Return a function of the evaluation file in a problem's folder: evaluate by default."""
+    return runpy.run_path(str(folder / "evaluation.py"))[name]
 
 
 def packing_of(centers: list[list[float]], radii: list[float]) -> dict[str, Any]:
@@ -34,7 +34,7 @@ def packing_of(centers: list[list[float]], radii: list[float]) -> dict[str, Any]
 
 class CirclePackingTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.evaluate = load_evaluate(CIRCLE_PACKING_FOLDER)
+        self.evaluate = load_evaluate(CIRCLE_PACKING_FOLDER, "evaluate_stage1")
 
     def test_the_initial_program_scores_as_in_openevolve(self) -> None:
         """The initial program's radii add up to about 0.959, a score of 0.364."""
@@ -52,7 +52,7 @@ class CirclePackingTest(unittest.TestCase):
         """A circle sticking out of the unit square breaks the rules."""
         centers = [[0.5, 0.5]] + [[0.03 * i, 0.9] for i in range(1, 26)]
         radii = [0.6] + [0.0] * 25
-        with self.assertRaisesRegex(InvalidProgram, "circle 0 .* leaves the unit square"):
+        with self.assertRaisesRegex(InvalidProgram, "circle 0 .* is outside the unit square"):
             self.evaluate(packing_of(centers, radii))
 
     def test_the_wrong_number_of_circles_is_refused(self) -> None:

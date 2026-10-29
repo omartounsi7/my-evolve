@@ -184,7 +184,9 @@ class EvaluationInDockerTest(unittest.TestCase):
         """Circle packing (with its packages) and the toy problem score the same in Docker."""
         problem = Problem.load(CIRCLE_PACKING_FOLDER / "problem.yaml")
         sandbox = DockerSandbox(ensure_image(problem.packages), problem.sandbox, "test")
-        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", sandbox, 60.0)
+        evaluator = Evaluator(
+            CIRCLE_PACKING_FOLDER / "evaluation.py", sandbox, 60.0, problem.evaluation.thresholds
+        )
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
         self.assertEqual(result.status, Status.OK, result.error)
         self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)

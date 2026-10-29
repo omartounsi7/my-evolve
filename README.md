@@ -75,6 +75,9 @@ with `.venv\Scripts\python.exe`.
 # Run the tests (those that need Docker are skipped without it)
 .venv/bin/python -m unittest discover tests
 
+# The same, with the slow tests too (about a minute more)
+MY_EVOLVE_SLOW_TESTS=1 .venv/bin/python -m unittest discover tests
+
 # Check the types, then each example's evaluation file on its own (their names are the same)
 .venv/bin/python -m mypy
 .venv/bin/python -m mypy examples/circle_packing/evaluation.py

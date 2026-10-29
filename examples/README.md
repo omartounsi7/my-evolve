@@ -19,12 +19,16 @@ What is the same as in OpenEvolve:
   included.
 - **The problem description**: the `system_message` of OpenEvolve's config file,
   followed by the contract of the entry function, in the problem file's `description`.
-- **The score**: the sum of the radii divided by 2.635.
+- **The scores**: `evaluation.py` is a port of OpenEvolve's evaluator, with the same
+  cascade (two stages, threshold 0.5): every program OpenEvolve scores above 0 gets
+  exactly the same score. `tests/parity/` checks this on a set of programs.
+- **The packages** programs may import (`packages` in the problem file).
 
 What changed:
 
-- `evaluate` receives the program's names (`namespace`) and returns the score alone,
-  instead of receiving a file path and returning several metrics.
-- For now, a single stage, and an illegal packing raises `InvalidProgram` (status
-  `invalid`) where OpenEvolve scores it 0. A later step of the plan (1.12) makes the
-  evaluation a faithful port of OpenEvolve's, cascade included.
+- The stage functions receive the program's names (`namespace`) and return a
+  `StageResult` (score, metrics, feedback), instead of receiving a file path and
+  returning a dictionary of metrics.
+- Where OpenEvolve scores a program 0, the evaluation says why: an illegal packing
+  raises `InvalidProgram` (status `invalid`), an answer that breaks the contract of
+  `run_packing` raises `ProgramFailure` (status `failed`).

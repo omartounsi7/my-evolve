@@ -38,7 +38,7 @@ class EvaluatorTest(unittest.TestCase):
 
     def test_metrics_and_feedback_reach_the_result(self) -> None:
         """The circle-packing evaluation reports the sum of radii and describes the packing."""
-        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), 30.0)
+        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), 30.0, [0.5])
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
         self.assertAlmostEqual(result.metrics["sum_radii"], 0.9598, places=3)
         self.assertIn("Valid packing", result.feedback or "")
@@ -57,7 +57,7 @@ class EvaluatorTest(unittest.TestCase):
     def test_the_circle_packing_initial_program_scores(self) -> None:
         """The example's initial program scores 0.364 through the sandbox: numpy arrays travel."""
         evaluator = Evaluator(
-            CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT
+            CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT, [0.5]
         )
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
         self.assertEqual(result.status, Status.OK, result.error)

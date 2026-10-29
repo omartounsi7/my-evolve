@@ -35,6 +35,7 @@ llm:
   model: qwen3-coder:30b
   api_base: http://localhost:11434/v1
 
-# OpenEvolve's time limit: 60 s for a program's evaluation.
+# OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
 evaluation:
   stage_time_limit: 60
+  thresholds: [0.5]
