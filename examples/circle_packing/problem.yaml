@@ -28,3 +28,7 @@ description: |
 llm:
   model: qwen3-coder:30b
   api_base: http://localhost:11434/v1
+
+# OpenEvolve's time limit: 60 s for a program's evaluation.
+evaluation:
+  stage_time_limit: 60

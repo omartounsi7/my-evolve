@@ -18,6 +18,7 @@ Whatever happens becomes a Result with a status:
 - ok: evaluate returned a finite number, the score;
 - invalid: evaluate raised InvalidProgram, the program's answer is illegal;
 - failed: the program failed (it raised, or its process ended): ProgramFailure;
+- timeout: the evaluation ran over its time limit: StageTimeout;
 - error: not the program's fault: the sandbox failed, or the evaluation file raised.
 """
 
@@ -29,7 +30,7 @@ from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from my_evolve.evaluation_api import InvalidProgram, ProgramFailure
+from my_evolve.evaluation_api import InvalidProgram, ProgramFailure, StageTimeout
 from my_evolve.program import Result, Status
 from my_evolve.sandbox import ProgramNamespace, Sandbox, SandboxError
 
@@ -85,10 +86,10 @@ def checked_score(score: Any) -> float:
 class Evaluator:
     """Scores programs with one problem's evaluation file."""
 
-    def __init__(self, evaluation_path: Path, sandbox: Sandbox) -> None:
+    def __init__(self, evaluation_path: Path, sandbox: Sandbox, stage_time_limit: float) -> None:
         """Load the evaluation file. Raises EvaluationFileError if it defines no evaluate.
 
-        sandbox runs the programs.
+        sandbox runs the programs; an evaluation may last stage_time_limit seconds.
         """
         names = load_evaluation_file(evaluation_path)
         function = names.get(EVALUATE_FUNCTION_NAME)
@@ -100,6 +101,8 @@ class Evaluator:
         self.evaluate_function: EvaluateFunction = function
         # Where the programs run
         self.sandbox: Sandbox = sandbox
+        # How long an evaluation may last, in seconds, loading the program included
+        self.stage_time_limit: float = stage_time_limit
 
     def evaluate(self, code: str) -> Result:
         """Load the program in a fresh sandbox session, and score it.
@@ -108,24 +111,36 @@ class Evaluator:
         what (see the top of this file). Only Ctrl+C gets through.
         """
         try:
-            session = self.sandbox.start(code)
+            session = self.sandbox.start(code, self.stage_time_limit)
         except ProgramFailure as failure:
             return Result.failure(Status.FAILED, failure.describe())
+        except StageTimeout as timeout:
+            return Result.failure(Status.TIMEOUT, str(timeout))
         except SandboxError as error:
             return Result.failure(Status.ERROR, f"sandbox: {error}")
         try:
             score = checked_score(self.evaluate_function(ProgramNamespace(session)))
         except InvalidProgram as invalid:
-            return Result.failure(Status.INVALID, invalid.reason)
+            result = Result.failure(Status.INVALID, invalid.reason)
         except ProgramFailure as failure:
-            return Result.failure(Status.FAILED, failure.describe())
+            result = Result.failure(Status.FAILED, failure.describe())
+        except StageTimeout as timeout:
+            result = Result.failure(Status.TIMEOUT, str(timeout))
         except SandboxError as error:
-            return Result.failure(Status.ERROR, f"sandbox: {error}")
+            result = Result.failure(Status.ERROR, f"sandbox: {error}")
         # The evaluation file raised, or returned something that is not a score.
         except Exception as error:
-            return Result.failure(
+            result = Result.failure(
                 Status.ERROR, f"evaluator: {describe_error(error)}\n\n{traceback.format_exc()}"
             )
+        else:
+            result = Result(Status.OK, score=score)
         finally:
             session.close()
-        return Result(Status.OK, score=score)
+        # Out of time, whatever the evaluation file made of it (it may catch every exception).
+        if session.timed_out:
+            limit = f"{self.stage_time_limit:g}"
+            return Result.failure(
+                Status.TIMEOUT, f"the evaluation ran over its time limit of {limit} s"
+            )
+        return result

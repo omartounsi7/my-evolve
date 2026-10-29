@@ -13,6 +13,8 @@ class Status(enum.Enum):
     OK = "ok"
     # Raised an exception while loading or while one of its functions ran
     FAILED = "failed"
+    # Ran out of time
+    TIMEOUT = "timeout"
     # Returned an answer the evaluation file judged illegal, such as overlapping circles
     INVALID = "invalid"
     # Not the program's fault: the sandbox failed, or the evaluation file itself raised

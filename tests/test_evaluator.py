@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -11,6 +12,8 @@ from my_evolve.sandbox import LocalSandbox, Sandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
+# Long enough for any test program: the tests of time limits set their own
+STAGE_TIME_LIMIT = 30.0
 CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
 
 
@@ -19,12 +22,12 @@ def evaluate_with(evaluation_code: str, program_code: str) -> Result:
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "evaluation.py"
         path.write_text(evaluation_code)
-        return Evaluator(path, LocalSandbox()).evaluate(program_code)
+        return Evaluator(path, LocalSandbox(), STAGE_TIME_LIMIT).evaluate(program_code)
 
 
 class EvaluatorTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox())
+        self.evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT)
 
     def test_a_working_program_gets_its_score(self) -> None:
         """The toy initial program scores the number it returns."""
@@ -33,7 +36,9 @@ class EvaluatorTest(unittest.TestCase):
 
     def test_the_circle_packing_initial_program_scores(self) -> None:
         """The example's initial program scores 0.364 through the sandbox: numpy arrays travel."""
-        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox())
+        evaluator = Evaluator(
+            CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT
+        )
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
         self.assertEqual(result.status, Status.OK, result.error)
         self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)
@@ -87,6 +92,36 @@ class EvaluatorTest(unittest.TestCase):
         self.assertIn("'np' is neither a function nor plain data", result.error or "")
 
 
+class TimeoutTest(unittest.TestCase):
+    def test_a_program_that_never_returns_times_out(self) -> None:
+        """A function that never returns is stopped at the time limit: status timeout."""
+        evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), stage_time_limit=1.0)
+        started = time.monotonic()
+        result = evaluator.evaluate("def solve():\n    while True:\n        pass\n")
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(result.status, Status.TIMEOUT)
+        self.assertEqual(result.error, "the evaluation ran over its time limit of 1 s")
+
+    def test_loading_counts_toward_the_limit(self) -> None:
+        """A program that never finishes loading times out too."""
+        evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), stage_time_limit=1.0)
+        result = evaluator.evaluate("import time\ntime.sleep(60)\n")
+        self.assertEqual(result.status, Status.TIMEOUT)
+
+    def test_an_evaluation_file_cannot_hide_a_timeout(self) -> None:
+        """Even if the evaluation file catches every exception, the status is timeout."""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "evaluation.py"
+            path.write_text(
+                "def evaluate(namespace):\n"
+                "    try:\n        return namespace['solve']()\n"
+                "    except Exception:\n        return 0.0\n"
+            )
+            evaluator = Evaluator(path, LocalSandbox(), stage_time_limit=1.0)
+            result = evaluator.evaluate("def solve():\n    while True:\n        pass\n")
+            self.assertEqual(result.status, Status.TIMEOUT)
+
+
 class ErrorStatusTest(unittest.TestCase):
     def test_a_mistake_in_the_evaluation_file_is_an_error(self) -> None:
         """The evaluation file raising is not the program's fault: status error."""
@@ -113,7 +148,7 @@ class ErrorStatusTest(unittest.TestCase):
             def command(self) -> list[str]:
                 return ["/no/such/python", "-m", "my_evolve.sandbox_worker"]
 
-        evaluator = Evaluator(TOY_FOLDER / "evaluation.py", BrokenSandbox())
+        evaluator = Evaluator(TOY_FOLDER / "evaluation.py", BrokenSandbox(), STAGE_TIME_LIMIT)
         result = evaluator.evaluate("def solve():\n    return 1\n")
         self.assertEqual(result.status, Status.ERROR)
         self.assertIn("sandbox: cannot start the worker", result.error or "")
@@ -126,9 +161,9 @@ class EvaluationFileTest(unittest.TestCase):
             path = Path(folder) / "evaluation.py"
             path.write_text("def score(namespace):\n    return 1\n")
             with self.assertRaisesRegex(EvaluationFileError, "must define a function"):
-                Evaluator(path, LocalSandbox())
+                Evaluator(path, LocalSandbox(), STAGE_TIME_LIMIT)
             with self.assertRaisesRegex(EvaluationFileError, "no such evaluation file"):
-                Evaluator(Path(folder) / "missing.py", LocalSandbox())
+                Evaluator(Path(folder) / "missing.py", LocalSandbox(), STAGE_TIME_LIMIT)
 
     def test_helper_files_are_imported_then_forgotten(self) -> None:
         """An evaluation file may import a helper next to it, which is forgotten afterwards."""
@@ -139,7 +174,7 @@ class EvaluationFileTest(unittest.TestCase):
                 "from my_evolve_test_helper import BONUS\n\n"
                 "def evaluate(namespace):\n    return namespace['solve']() + BONUS\n"
             )
-            evaluator = Evaluator(path, LocalSandbox())
+            evaluator = Evaluator(path, LocalSandbox(), STAGE_TIME_LIMIT)
             self.assertNotIn("my_evolve_test_helper", sys.modules)
             self.assertEqual(evaluator.evaluate("def solve():\n    return 1\n").score, 6.0)
 

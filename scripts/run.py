@@ -60,7 +60,9 @@ def main(arguments: list[str]) -> int:
     try:
         problem = Problem.load(parsed.config)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        evaluator = Evaluator(parsed.evaluation_file, LocalSandbox())
+        evaluator = Evaluator(
+            parsed.evaluation_file, LocalSandbox(), problem.evaluation.stage_time_limit
+        )
         llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
         run(problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed)
     except (ProblemError, EvaluationFileError, RunError) as error:

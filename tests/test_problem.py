@@ -48,6 +48,20 @@ class ProblemTest(unittest.TestCase):
         with self.assertRaisesRegex(ProblemError, "unknown key 'temperature' in the llm section"):
             Problem.from_dict(data)
 
+    def test_the_stage_time_limit(self) -> None:
+        """60 s by default; any number above 0 may be set."""
+        self.assertEqual(Problem.from_dict(valid_data()).evaluation.stage_time_limit, 60.0)
+        data = valid_data()
+        data["evaluation"] = {"stage_time_limit": 5}
+        self.assertEqual(Problem.from_dict(data).evaluation.stage_time_limit, 5.0)
+        for wrong in [0, -1, "60", True]:
+            data["evaluation"] = {"stage_time_limit": wrong}
+            with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, "above 0"):
+                Problem.from_dict(data)
+        data["evaluation"] = {"time_limit": 5}
+        with self.assertRaisesRegex(ProblemError, "unknown key 'time_limit' in the evaluation"):
+            Problem.from_dict(data)
+
     def test_a_missing_key_is_refused(self) -> None:
         """Each required key must be there."""
         data = valid_data()

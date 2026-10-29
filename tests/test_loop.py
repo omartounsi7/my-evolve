@@ -24,6 +24,8 @@ from my_evolve.sandbox import LocalSandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
+# Long enough for any test program: the tests of time limits set their own
+STAGE_TIME_LIMIT = 30.0
 RUN_SCRIPT = REPOSITORY_FOLDER / "scripts" / "run.py"
 
 
@@ -43,7 +45,7 @@ def run_toy(
             problem=Problem.load(TOY_FOLDER / "problem.yaml"),
             initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
             llm=llm,
-            evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox()),
+            evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
             iterations=iterations if iterations is not None else len(replies),
             output=output,
             seed=seed,
@@ -127,7 +129,7 @@ class LoopTest(unittest.TestCase):
                 problem=Problem.load(TOY_FOLDER / "problem.yaml"),
                 initial_code="def solve():\n    return 11\n",
                 llm=FakeLLM([]),
-                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox()),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=1,
                 output=self.output,
                 seed=0,

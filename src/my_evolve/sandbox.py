@@ -6,18 +6,25 @@ sends a call message to the worker, which runs the program's function and sends 
 its value. So the program chooses what its functions return, but never runs in the
 same process as the code that computes its score.
 
+A session has a deadline: past it, the worker is killed and StageTimeout raised. A
+reader thread collects the worker's messages in a queue, so that waiting for an answer
+can stop at the deadline.
+
 For now the worker is a plain subprocess (LocalSandbox), without any isolation: the
 program can still read and write your files and use the network. Step 1.8 of the plan
 adds the Docker sandbox.
 """
 
+import queue
 import subprocess
 import sys
+import threading
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Mapping
-from typing import Any
+from typing import IO, Any
 
-from my_evolve.evaluation_api import ProgramFailure
+from my_evolve.evaluation_api import ProgramFailure, StageTimeout
 from my_evolve.sandbox_protocol import Message, receive, send, to_plain
 
 # How long closing a session waits for the worker to end on its own, in seconds
@@ -28,28 +35,54 @@ class SandboxError(Exception):
     """The sandbox itself failed, not the program: the program's status is error."""
 
 
-class SandboxSession:
-    """One worker process holding one loaded program."""
+def read_messages(stream: IO[str], messages: "queue.Queue[Message | None]") -> None:
+    """Put every message the worker sends in the queue, then None when its output ends.
 
-    def __init__(self, command: list[str], code: str) -> None:
+    Runs in the session's reader thread. A line that is not a message is skipped.
+    """
+    while True:
+        try:
+            message = receive(stream)
+        except ValueError:
+            continue
+        except (OSError, UnicodeDecodeError):
+            message = None
+        messages.put(message)
+        if message is None:
+            return
+
+
+class SandboxSession:
+    """One worker process holding one loaded program, until its deadline."""
+
+    def __init__(self, command: list[str], code: str, stage_limit: float) -> None:
         """Prepare a session; start() starts the worker and loads the program."""
         # How to start the worker
         self.command: list[str] = command
         # The program's code
         self.code: str = code
+        # How long the session may last, in seconds, loading included
+        self.stage_limit: float = stage_limit
+        # When the session must end (time.monotonic), set when it starts
+        self.deadline: float = 0.0
         # The worker process, once started
         self.process: subprocess.Popen[str] | None = None
+        # The worker's messages, collected by the reader thread; None when its output ended
+        self.messages: queue.Queue[Message | None] = queue.Queue()
         # The program's top-level names, each "function", "data" or "other"
         self.names: dict[str, str] = {}
         # The id of the last call or get message sent
         self.last_id: int = 0
+        # True once the worker was killed because the deadline passed
+        self.timed_out: bool = False
 
     def start(self) -> None:
         """Start the worker and load the program.
 
-        Raises ProgramFailure if the program fails to load, SandboxError if the worker
-        cannot be started.
+        Raises ProgramFailure if the program fails to load, StageTimeout if loading
+        outlasts the deadline, SandboxError if the worker cannot be started.
         """
+        self.deadline = time.monotonic() + self.stage_limit
         try:
             self.process = subprocess.Popen(
                 self.command,
@@ -62,6 +95,11 @@ class SandboxSession:
             )
         except OSError as error:
             raise SandboxError(f"cannot start the worker: {error}") from error
+        assert self.process.stdout is not None
+        reader = threading.Thread(
+            target=read_messages, args=(self.process.stdout, self.messages), daemon=True
+        )
+        reader.start()
         answer = self.exchange({"type": "load", "code": self.code})
         if answer["type"] == "load_failed":
             raise ProgramFailure(answer["error"], answer["traceback"])
@@ -70,14 +108,23 @@ class SandboxSession:
     def exchange(self, message: Message) -> Message:
         """Send one message and return the worker's answer.
 
-        Raises ProgramFailure if the worker ends without answering.
+        Raises StageTimeout if the deadline passes first (the worker is then killed),
+        ProgramFailure if the worker ends without answering.
         """
-        assert self.process is not None and self.process.stdin and self.process.stdout
+        assert self.process is not None and self.process.stdin is not None
         try:
             send(self.process.stdin, message)
-            answer = receive(self.process.stdout)
-        except (BrokenPipeError, OSError):
-            answer = None
+        except OSError:
+            # The worker has ended: its output tells how, below.
+            pass
+        try:
+            answer = self.messages.get(timeout=max(0.0, self.deadline - time.monotonic()))
+        except queue.Empty:
+            self.timed_out = True
+            self.kill()
+            raise StageTimeout(
+                f"the evaluation ran over its time limit of {self.stage_limit:g} s"
+            ) from None
         if answer is None:
             exit_code = self.process.wait()
             raise ProgramFailure(f"the program's process ended (exit code {exit_code})")
@@ -88,7 +135,8 @@ class SandboxSession:
     ) -> Any:
         """Call one of the program's functions in the worker, and return its value.
 
-        Raises ProgramFailure if the function raises, or if the worker ends.
+        Raises ProgramFailure if the function raises or the worker ends, StageTimeout
+        if the deadline passes.
         """
         self.last_id += 1
         message = {
@@ -111,6 +159,12 @@ class SandboxSession:
             raise ProgramFailure(answer["error"], answer["traceback"])
         return answer["value"]
 
+    def kill(self) -> None:
+        """Stop the worker at once, if it is still running."""
+        if self.process is not None and self.process.poll() is None:
+            self.process.kill()
+            self.process.wait()
+
     def close(self) -> None:
         """End the worker: close its input, so that it stops, and kill it if it does not."""
         if self.process is None:
@@ -123,10 +177,7 @@ class SandboxSession:
         try:
             self.process.wait(timeout=CLOSE_WAIT_SECONDS)
         except subprocess.TimeoutExpired:
-            self.process.kill()
-            self.process.wait()
-        if self.process.stdout:
-            self.process.stdout.close()
+            self.kill()
 
 
 class RemoteFunction:
@@ -181,12 +232,13 @@ class Sandbox(ABC):
     def command(self) -> list[str]:
         """Return the command that starts a worker."""
 
-    def start(self, code: str) -> SandboxSession:
-        """Start a worker and load the program into it. The caller must close the session.
+    def start(self, code: str, stage_limit: float) -> SandboxSession:
+        """Start a worker, load the program into it, and give it stage_limit seconds in all.
 
-        Raises ProgramFailure if the program fails to load, SandboxError if the sandbox fails.
+        The caller must close the session. Raises ProgramFailure if the program fails to
+        load, StageTimeout if loading takes too long, SandboxError if the sandbox fails.
         """
-        session = SandboxSession(self.command(), code)
+        session = SandboxSession(self.command(), code, stage_limit)
         try:
             session.start()
         except BaseException:

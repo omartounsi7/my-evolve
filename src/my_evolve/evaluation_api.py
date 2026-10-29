@@ -8,6 +8,8 @@ in the program's own process (the sandbox), and returns its value as plain data.
   negative radius), evaluate raises InvalidProgram with the reason: status invalid.
 - When the program itself fails (it raises, its process ends, a name is missing), the
   namespace raises ProgramFailure, which evaluate lets through: status failed.
+- When the evaluation runs out of time, the namespace raises StageTimeout, which
+  evaluate lets through too: status timeout.
 """
 
 
@@ -33,3 +35,7 @@ class ProgramFailure(Exception):
     def describe(self) -> str:
         """Return the error, then the traceback if there is one."""
         return f"{self.error}\n\n{self.traceback}".rstrip() if self.traceback else self.error
+
+
+class StageTimeout(Exception):
+    """Raised by the namespace when the evaluation ran out of time; the program is stopped."""
