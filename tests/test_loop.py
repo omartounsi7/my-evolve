@@ -64,7 +64,7 @@ class LoopTest(unittest.TestCase):
             reply_returning("5"),
             reply_returning("1 / 0"),
             "I cannot write that program.",
-            LLMError("fake-model: the server is down"),
+            LLMError("fake-model", "the server is down"),
             reply_returning("7"),
         ]
         database, llm, console = run_toy(replies, self.output)
@@ -107,6 +107,36 @@ class LoopTest(unittest.TestCase):
         best_file = (self.output / "best_program.py").read_text()
         self.assertTrue(best_file.startswith("# Best program of the run: score 4.0, iteration 1"))
         self.assertIn("    return 4\n", best_file)
+
+    def test_every_llm_call_is_saved(self) -> None:
+        """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""
+        replies: list[str | Exception] = [
+            reply_returning("5"),
+            LLMError("fake-model", "the server is down"),
+            reply_returning("6"),
+        ]
+        database, llm, _ = run_toy(replies, self.output, seed=3)
+        lines = (self.output / "llm_calls.jsonl").read_text().splitlines()
+        calls = [json.loads(line) for line in lines]
+        self.assertEqual([call["iteration"] for call in calls], [1, 2, 3])
+        self.assertEqual(calls[0]["user_message"], llm.prompts[0].user)
+        self.assertEqual(calls[0]["reply"], reply_returning("5"))
+        self.assertIsNone(calls[0]["error"])
+        self.assertGreater(calls[0]["input_tokens"], 0)
+        self.assertEqual(
+            (calls[1]["program_id"], calls[1]["reply"], calls[1]["error"]),
+            (None, None, "fake-model: the server is down"),
+        )
+        child = database.programs[calls[2]["program_id"]]
+        self.assertEqual(child.iteration, 3)
+        self.assertIsNotNone(child.llm)
+        assert child.llm is not None
+        words = len(reply_returning("6").split())
+        self.assertEqual((child.llm.model, child.llm.output_tokens), ("fake-model", words))
+        info = json.loads((self.output / "run.json").read_text())
+        self.assertEqual(info["seed"], 3)
+        self.assertEqual(info["system_message"], llm.prompts[0].system)
+        self.assertEqual(len(info["run_id"]), 32)
 
     def test_the_same_seed_repeats_the_run(self) -> None:
         """With the same seed and the same replies, the same parents are drawn."""

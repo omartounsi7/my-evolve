@@ -87,7 +87,7 @@ def main(arguments: list[str]) -> int:
     try:
         problem = Problem.load(parsed.config)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        # Identifies the run's containers. Saved in the run folder from step 2.1 of the plan.
+        # Identifies the run, and labels its containers; saved in run.json.
         run_id = uuid.uuid4().hex
         sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox, run_id)
         evaluator = Evaluator(
@@ -100,7 +100,14 @@ def main(arguments: list[str]) -> int:
         sandbox.remove_leftovers()
         try:
             run(
-                problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed
+                problem,
+                initial_code,
+                llm,
+                evaluator,
+                parsed.iterations,
+                parsed.output,
+                parsed.seed,
+                run_id,
             )
         finally:
             # Whatever happened, no container of the run outlives it.

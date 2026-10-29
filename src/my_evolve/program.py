@@ -70,6 +70,28 @@ class Result:
         }
 
 
+@dataclass(frozen=True)
+class LLMUsage:
+    """The LLM call that wrote a program, and what it cost."""
+
+    # The model that wrote it
+    model: str
+    # The tokens of the prompt and of the reply
+    input_tokens: int
+    output_tokens: int
+    # How long the call took, in seconds
+    duration: float
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return the usage as plain JSON values."""
+        return {
+            "model": self.model,
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "duration": self.duration,
+        }
+
+
 def new_id() -> str:
     """Return a new, unique program id."""
     return str(uuid.uuid4())
@@ -92,11 +114,20 @@ class Program:
     generation: int = 0
     # The iteration of the run that produced it; 0 for the initial program
     iteration: int = 0
+    # The LLM call that wrote it; None for the initial program
+    llm: LLMUsage | None = None
     # Identifies the program everywhere: in the database and in the saved files
     id: str = field(default_factory=new_id)
 
     @classmethod
-    def new_child(cls, parent: "Program", code: str, result: Result, iteration: int) -> "Program":
+    def new_child(
+        cls,
+        parent: "Program",
+        code: str,
+        result: Result,
+        iteration: int,
+        llm: LLMUsage | None = None,
+    ) -> "Program":
         """Return a program the LLM wrote from parent, one generation further."""
         return cls(
             code=code,
@@ -104,6 +135,7 @@ class Program:
             parent_id=parent.id,
             generation=parent.generation + 1,
             iteration=iteration,
+            llm=llm,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -114,5 +146,6 @@ class Program:
             "generation": self.generation,
             "iteration": self.iteration,
             "result": self.result.to_dict(),
+            "llm": self.llm.to_dict() if self.llm else None,
             "code": self.code,
         }

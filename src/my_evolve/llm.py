@@ -5,7 +5,9 @@ Ollama and most cloud providers offer. Step 2.9 of the implementation plan bring
 ensemble of several models.
 """
 
+import time
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 from my_evolve.prompt import Prompt
 
@@ -21,8 +23,28 @@ RETRIES = 2
 PLACEHOLDER_API_KEY = "no-key-needed"
 
 
+@dataclass(frozen=True)
+class LLMReply:
+    """A model's reply to a prompt, and what it cost."""
+
+    # The reply's text
+    text: str
+    # The model that wrote it
+    model: str
+    # The tokens of the prompt and of the reply, as the server counted them (0 if it did not)
+    input_tokens: int
+    output_tokens: int
+    # How long the call took, in seconds
+    duration: float
+
+
 class LLMError(Exception):
     """Raised when a model gave no usable reply; the message names the model and says why."""
+
+    def __init__(self, model: str, reason: str) -> None:
+        super().__init__(f"{model}: {reason}")
+        # The model that gave no reply
+        self.model: str = model
 
 
 class LLM(ABC):
@@ -33,8 +55,8 @@ class LLM(ABC):
         self.name: str = name
 
     @abstractmethod
-    def complete(self, prompt: Prompt) -> str:
-        """Return the model's reply to the prompt, as text. Raises LLMError if there is none."""
+    def complete(self, prompt: Prompt) -> LLMReply:
+        """Return the model's reply to the prompt. Raises LLMError if there is none."""
 
 
 class OpenAICompatibleLLM(LLM):
@@ -54,7 +76,7 @@ class OpenAICompatibleLLM(LLM):
             max_retries=RETRIES,
         )
 
-    def complete(self, prompt: Prompt) -> str:
+    def complete(self, prompt: Prompt) -> LLMReply:
         """Send the system and user messages to the model and return its reply.
 
         Raises LLMError if the request fails after its retries, or if the reply is empty.
@@ -62,6 +84,7 @@ class OpenAICompatibleLLM(LLM):
         # Already imported in __init__, so this costs nothing.
         import openai
 
+        started = time.monotonic()
         try:
             response = self.client.chat.completions.create(
                 model=self.name,
@@ -71,8 +94,15 @@ class OpenAICompatibleLLM(LLM):
                 ],
             )
         except openai.OpenAIError as error:
-            raise LLMError(f"{self.name}: {type(error).__name__}: {error}") from error
-        reply = response.choices[0].message.content if response.choices else None
-        if not reply:
-            raise LLMError(f"{self.name}: the reply is empty")
-        return reply
+            raise LLMError(self.name, f"{type(error).__name__}: {error}") from error
+        text = response.choices[0].message.content if response.choices else None
+        if not text:
+            raise LLMError(self.name, "the reply is empty")
+        usage = response.usage
+        return LLMReply(
+            text=text,
+            model=self.name,
+            input_tokens=usage.prompt_tokens if usage else 0,
+            output_tokens=usage.completion_tokens if usage else 0,
+            duration=time.monotonic() - started,
+        )

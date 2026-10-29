@@ -1,6 +1,6 @@
 """Stand-ins the tests use in place of the real building blocks."""
 
-from my_evolve.llm import LLM
+from my_evolve.llm import LLM, LLMReply
 from my_evolve.prompt import Prompt
 
 
@@ -17,12 +17,16 @@ class FakeLLM(LLM):
         # Every prompt received, in order
         self.prompts: list[Prompt] = []
 
-    def complete(self, prompt: Prompt) -> str:
-        """Return the next reply written in advance (or raise it, if it is an exception)."""
+    def complete(self, prompt: Prompt) -> LLMReply:
+        """Return the next reply written in advance (or raise it, if it is an exception).
+
+        The tokens are counted as one per word of the prompt and of the reply.
+        """
         self.prompts.append(prompt)
         if not self.replies:
             raise AssertionError("FakeLLM: no reply left to give")
         reply = self.replies.pop(0)
         if isinstance(reply, Exception):
             raise reply
-        return reply
+        input_tokens = len((prompt.system + prompt.user).split())
+        return LLMReply(reply, self.name, input_tokens, len(reply.split()), 0.01)
