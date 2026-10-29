@@ -46,3 +46,6 @@ llm:
       weight: 0.8
     - name: qwen3:8b
       weight: 0.2
+      # It thinks at length: up to 14,600 tokens in the first runs. The reply limit
+      # plus the prompt must fit in Ollama's context (32,768 tokens).
+      max_tokens: 24576

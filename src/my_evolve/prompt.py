@@ -33,8 +33,10 @@ than it does, using what the previous attempts show.
 # Reply format
 Your reply must contain these two parts. You may write anything else around them.
 <DESCRIPTION>
-How this program solves the problem: its approach and main ideas. Describe the
-program on its own; do not mention any other program.
+How this program solves the problem: its approach and main ideas. Write it for a
+reader who has never seen any other version: do not compare it with the parent or
+any earlier program, and do not use words such as "improved", "enhanced", "now",
+"instead", "previous" or "original".
 </DESCRIPTION>
 ```python
 the complete program

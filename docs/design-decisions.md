@@ -177,6 +177,11 @@ refers to the parent or any other program ("compared to the previous version", "
 program is later shown in a prompt, its parent is usually absent. The reply may contain anything else
 (reasoning, comments); only the description and the code are kept (D68). A reply without a description is
 accepted if its code is usable. The description is shown in prompts (D26) and saved (D48).
+The reply format (Appendix A) names the words that give a comparison away ("improved", "enhanced", "now",
+"instead", "previous", "original"): in Milestone 1, a plain "do not mention any other program" was ignored by
+all 60 replies, which began with "This improved program…" or the like. With the named words, `qwen3-coder:30b`
+wrote stand-alone descriptions (6 of 6 tried); `qwen3:8b` still did not (0 of 11, even with the rule repeated in
+the request), so its descriptions keep comparing.
 
 ---
 
@@ -1436,8 +1441,10 @@ than it does, using what the previous attempts show.
 # Reply format
 Your reply must contain these two parts. You may write anything else around them.
 <DESCRIPTION>
-How this program solves the problem: its approach and main ideas. Describe the
-program on its own; do not mention any other program.
+How this program solves the problem: its approach and main ideas. Write it for a
+reader who has never seen any other version: do not compare it with the parent or
+any earlier program, and do not use words such as "improved", "enhanced", "now",
+"instead", "previous" or "original".
 </DESCRIPTION>
 ```python
 the complete program
@@ -1498,6 +1505,10 @@ Notes:
 - Batch 1: the two models (about 18 GB and 5 GB) fit together in the RTX 5090's 32 GB, so Ollama keeps
   both loaded. Start the server with a context length that holds the whole prompt
   (`OLLAMA_CONTEXT_LENGTH=32768`), since Ollama silently cuts longer prompts.
+- Batch 1: `qwen3:8b` gets `max_tokens: 24576` instead of the default 16,384. It thinks at length before
+  answering (11,000 output tokens per reply in Milestone 1's circle-packing run, up to 14,600), so 16,384
+  risked cutting a reply before its code. The reply limit plus the prompt must fit in the context, which
+  leaves about 8,000 tokens for the prompt.
 - Batch 2: no `temperature`, since these Claude models reject it (D33), as openevolve's
   function-minimization config already does. The weights mirror that config (Haiku 0.8, Sonnet 0.2).
 - The weights are proposals; any model and weight can be changed in the problem file.
