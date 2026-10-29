@@ -164,6 +164,7 @@ class RunScriptTest(unittest.TestCase):
             "1",
             "--output",
             str(output),
+            "--unsafe-local-sandbox",
         ]
 
     def test_the_script_runs_with_an_unreachable_llm(self) -> None:

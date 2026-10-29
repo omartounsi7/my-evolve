@@ -11,6 +11,10 @@ The problem file is written in YAML. For now it holds:
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds a program's evaluation may take
+    sandbox:                               # optional: the limits of the Docker sandbox
+      memory: 1g                           # memory, without swap (Docker's notation)
+      cpus: 1                              # CPUs
+      max_processes: 64                    # processes and threads
 
 Every key is checked, and an unknown key is an error rather than silently ignored.
 """
@@ -22,6 +26,8 @@ from typing import Any
 
 import yaml
 
+# An amount of memory in Docker's notation, such as "1g" or "512m"
+MEMORY_PATTERN = re.compile(r"[0-9]+(\.[0-9]+)?[bkmg]?")
 # A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
 PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
 
@@ -49,6 +55,18 @@ class EvaluationSettings:
 
 
 @dataclass(frozen=True)
+class SandboxSettings:
+    """The limits of the Docker sandbox's containers."""
+
+    # Memory, without swap, in Docker's notation
+    memory: str = "1g"
+    # How many CPUs a container may use; numeric libraries get as many threads
+    cpus: float = 1.0
+    # How many processes and threads a container may run
+    max_processes: int = 64
+
+
+@dataclass(frozen=True)
 class Problem:
     """A problem to solve, and every setting of its runs."""
 
@@ -62,6 +80,8 @@ class Problem:
     packages: tuple[str, ...] = ()
     # How programs are evaluated
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
+    # The limits of the Docker sandbox
+    sandbox: SandboxSettings = field(default_factory=SandboxSettings)
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -83,13 +103,19 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "llm"},
-            optional={"packages", "evaluation"},
+            optional={"packages", "evaluation", "sandbox"},
         )
         llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
         evaluation = checked_section(
             top.get("evaluation", {}), "the evaluation section", optional={"stage_time_limit"}
         )
+        sandbox = checked_section(
+            top.get("sandbox", {}),
+            "the sandbox section",
+            optional={"memory", "cpus", "max_processes"},
+        )
         defaults = EvaluationSettings()
+        sandbox_defaults = SandboxSettings()
         return cls(
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
@@ -104,6 +130,15 @@ class Problem:
                     "stage_time_limit",
                     "the evaluation section",
                     defaults.stage_time_limit,
+                ),
+            ),
+            sandbox=SandboxSettings(
+                memory=checked_memory(sandbox.get("memory", sandbox_defaults.memory)),
+                cpus=checked_positive_number(
+                    sandbox, "cpus", "the sandbox section", sandbox_defaults.cpus
+                ),
+                max_processes=checked_count(
+                    sandbox, "max_processes", "the sandbox section", sandbox_defaults.max_processes
                 ),
             ),
         )
@@ -137,6 +172,23 @@ def checked_positive_number(section: dict[str, Any], key: str, where: str, defau
     if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
         raise ProblemError(f"{key!r} in {where} must be a number above 0, got {value!r}")
     return float(value)
+
+
+def checked_count(section: dict[str, Any], key: str, where: str, default: int) -> int:
+    """Return the value of a key that must hold a whole number of 1 or more, or the default."""
+    value = section.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ProblemError(f"{key!r} in {where} must be a whole number of 1 or more, got {value!r}")
+    return value
+
+
+def checked_memory(value: Any) -> str:
+    """Return an amount of memory written in Docker's notation, such as "1g" or "512m"."""
+    if not isinstance(value, str) or not MEMORY_PATTERN.fullmatch(value):
+        raise ProblemError(
+            f"'memory' in the sandbox section must be like 1g or 512m, got {value!r}"
+        )
+    return value
 
 
 def package_name(package: str) -> str:

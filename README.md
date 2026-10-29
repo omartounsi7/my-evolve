@@ -40,7 +40,12 @@ python -m venv .venv
 
 ## Running a problem
 
-A run needs the problem file's model reachable: for the circle-packing example, a
+A run needs Docker, installed and running: every program runs in a container of its
+own, without network, with a read-only file system except `/tmp`, and limited memory,
+CPUs and processes (the problem file's `sandbox` section). The image is built the first
+time, with the problem file's `packages`.
+
+It also needs the problem file's model reachable: for the circle-packing example, a
 local [Ollama](https://ollama.com) server with `qwen3-coder:30b` pulled
 (`ollama pull qwen3-coder:30b`). Ollama silently cuts prompts longer than its context
 length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
@@ -55,14 +60,11 @@ length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
 | `--iterations` | How many children to ask the LLM for | required |
 | `--output` | The run folder; it must not hold a run already | required |
 | `--seed` | The seed of the run's random draws | drawn, and printed |
+| `--unsafe-local-sandbox` | Run programs as plain processes, without any isolation: tests and trusted code only | off |
 
 The console shows one line per iteration. The run folder holds every program
 (`programs.jsonl`, one line of JSON each) and the best one (`best_program.py`).
 Ctrl+C stops the run; every program evaluated so far is already saved.
-
-**Warning.** For now the programs the LLM writes run in a process of their own, but
-with your files, your network and no time limit (the Docker sandbox comes later in
-Phase 1 of the plan). Keep runs short and watch them.
 
 ## Everyday commands
 
@@ -70,7 +72,7 @@ These are written for Linux and macOS. On Windows, replace `.venv/bin/python`
 with `.venv\Scripts\python.exe`.
 
 ```bash
-# Run the tests
+# Run the tests (those that need Docker are skipped without it)
 .venv/bin/python -m unittest discover tests
 
 # Check the types, then each example's evaluation file on its own (their names are the same)

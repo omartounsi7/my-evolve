@@ -11,12 +11,16 @@ reader thread collects the worker's messages in a queue, so that waiting for an 
 can stop at the deadline. What the program prints goes to a temporary file, whose end
 is added to every failure; a message the host is not waiting for is ignored.
 
-For now the worker is a plain subprocess (LocalSandbox), without any isolation: the
-program can still read and write your files and use the network. Step 1.8 of the plan
-adds the Docker sandbox.
+Two sandboxes start workers:
+- DockerSandbox, the default: a fresh container for each session, without network, with
+  a read-only file system except /tmp, and limited memory, CPUs and processes;
+- LocalSandbox: a plain subprocess without any isolation, for the tests and trusted code
+  only (--unsafe-local-sandbox).
 """
 
 import hashlib
+import math
+import os
 import queue
 import shutil
 import subprocess
@@ -24,12 +28,14 @@ import sys
 import tempfile
 import threading
 import time
+import uuid
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import IO, Any
 
 from my_evolve.evaluation_api import ProgramFailure, StageTimeout
+from my_evolve.problem import SandboxSettings
 from my_evolve.sandbox_protocol import Message, NotPlainData, decode, encode, receive, send
 
 # How long closing a session waits for the worker to end on its own, in seconds
@@ -45,6 +51,17 @@ DOCKERFILE_PATH = Path(__file__).parent / "evaluation.Dockerfile"
 IMAGE_NAME = "my-evolve-evaluation"
 # How much of a failed docker command's output an error message keeps, in characters
 DOCKER_ERROR_CHARS = 2000
+# The exit codes of `docker run` itself failing before the worker started: the daemon
+# refused (125), or the command could not be run (126, 127)
+DOCKER_RUN_EXIT_CODES = (125, 126, 127)
+# The variables that limit the threads of numeric libraries (numpy, scipy)
+THREAD_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+)
 
 
 class SandboxError(Exception):
@@ -83,10 +100,29 @@ def read_messages(stream: IO[str], messages: "queue.Queue[Message | None]") -> N
 class SandboxSession:
     """One worker process holding one loaded program, until its deadline."""
 
-    def __init__(self, command: list[str], code: str, stage_limit: float) -> None:
-        """Prepare a session; start() starts the worker and loads the program."""
+    def __init__(
+        self,
+        command: list[str],
+        code: str,
+        stage_limit: float,
+        environment: dict[str, str] | None = None,
+        stop: Callable[[], None] | None = None,
+        startup_exit_codes: tuple[int, ...] = (),
+    ) -> None:
+        """Prepare a session; start() starts the worker and loads the program.
+
+        environment is the worker's environment variables (None: this process's own);
+        stop stops what runs the worker besides its process (a container); a worker
+        ending with one of startup_exit_codes before loading means the sandbox failed.
+        """
         # How to start the worker
         self.command: list[str] = command
+        # The worker's environment variables; None for this process's own
+        self.environment: dict[str, str] | None = environment
+        # Stops what runs the worker besides its process, such as its container
+        self.stop: Callable[[], None] | None = stop
+        # Exit codes meaning the worker could not start: the sandbox's fault, not the program's
+        self.startup_exit_codes: tuple[int, ...] = startup_exit_codes
         # The program's code
         self.code: str = code
         # How long the session may last, in seconds, loading included
@@ -122,6 +158,7 @@ class SandboxSession:
                 stderr=self.error_file,
                 text=True,
                 encoding="utf-8",
+                env=self.environment,
             )
         except OSError as error:
             raise SandboxError(f"cannot start the worker: {error}") from error
@@ -130,7 +167,15 @@ class SandboxSession:
             target=read_messages, args=(self.process.stdout, self.messages), daemon=True
         )
         reader.start()
-        answer = self.exchange({"type": "load", "code": self.code}, {"loaded", "load_failed"})
+        try:
+            answer = self.exchange({"type": "load", "code": self.code}, {"loaded", "load_failed"})
+        except ProgramFailure:
+            if self.process.returncode in self.startup_exit_codes:
+                raise SandboxError(
+                    f"the worker could not start (exit code {self.process.returncode}): "
+                    f"{self.error_tail().strip()}"
+                ) from None
+            raise
         if answer["type"] == "load_failed":
             raise self.failure(answer["error"], answer["traceback"])
         self.names = answer["names"]
@@ -212,6 +257,8 @@ class SandboxSession:
     def kill(self) -> None:
         """Stop the worker at once, if it is still running."""
         if self.process is not None and self.process.poll() is None:
+            if self.stop is not None:
+                self.stop()
             self.process.kill()
             self.process.wait()
 
@@ -276,12 +323,29 @@ class ProgramNamespace(Mapping[str, Any]):
         return len(self.session.names)
 
 
+def thread_variables(cpus: float) -> dict[str, str]:
+    """Return the variables that limit numeric libraries to as many threads as there are CPUs."""
+    threads = str(max(1, math.floor(cpus)))
+    return {name: threads for name in THREAD_VARIABLES}
+
+
 class Sandbox(ABC):
     """Starts sessions: one worker process per program evaluated."""
 
     @abstractmethod
-    def command(self) -> list[str]:
-        """Return the command that starts a worker."""
+    def command(self, name: str) -> list[str]:
+        """Return the command that starts a worker; name identifies it (a container's name)."""
+
+    def environment(self) -> dict[str, str] | None:
+        """Return the worker process's environment variables; None for this process's own."""
+        return None
+
+    def stop(self, name: str) -> None:  # noqa: B027 - most sandboxes have nothing to stop
+        """Stop what runs the worker besides its process, such as its container."""
+
+    def startup_exit_codes(self) -> tuple[int, ...]:
+        """Return the exit codes meaning the worker could not start: not the program's fault."""
+        return ()
 
     def start(self, code: str, stage_limit: float) -> SandboxSession:
         """Start a worker, load the program into it, and give it stage_limit seconds in all.
@@ -289,7 +353,15 @@ class Sandbox(ABC):
         The caller must close the session. Raises ProgramFailure if the program fails to
         load, StageTimeout if loading takes too long, SandboxError if the sandbox fails.
         """
-        session = SandboxSession(self.command(), code, stage_limit)
+        name = f"my-evolve-{uuid.uuid4().hex[:12]}"
+        session = SandboxSession(
+            self.command(name),
+            code,
+            stage_limit,
+            environment=self.environment(),
+            stop=lambda: self.stop(name),
+            startup_exit_codes=self.startup_exit_codes(),
+        )
         try:
             session.start()
         except BaseException:
@@ -299,11 +371,76 @@ class Sandbox(ABC):
 
 
 class LocalSandbox(Sandbox):
-    """Runs the worker as a plain subprocess, with this Python: no isolation at all."""
+    """Runs the worker as a plain subprocess, with this Python: no isolation at all.
 
-    def command(self) -> list[str]:
+    The program can read and write your files, use the network, and read every
+    environment variable, API keys included. For the tests and trusted code only.
+    """
+
+    def __init__(self, cpus: float = 1.0) -> None:
+        # How many threads numeric libraries may use
+        self.cpus: float = cpus
+
+    def command(self, name: str) -> list[str]:
         """Return the command that starts a worker with this Python."""
         return [sys.executable, "-m", "my_evolve.sandbox_worker"]
+
+    def environment(self) -> dict[str, str]:
+        """Return this process's environment, with the numeric libraries' threads limited."""
+        return {**os.environ, **thread_variables(self.cpus)}
+
+
+class DockerSandbox(Sandbox):
+    """Runs each worker in a fresh Docker container, isolated from the host (D41).
+
+    The container has no network; its file system is read-only except a temporary
+    /tmp; its memory (without swap), CPUs and processes are limited; it runs as the
+    user nobody, without any capability; it sees no environment variable of the host.
+    The my_evolve package is mounted read-only: the worker needs nothing else.
+    """
+
+    def __init__(self, image: str, settings: SandboxSettings) -> None:
+        """Prepare to run workers in containers of image (see ensure_image)."""
+        # The evaluation image, with the problem's packages
+        self.image: str = image
+        # The containers' limits
+        self.settings: SandboxSettings = settings
+
+    def command(self, name: str) -> list[str]:
+        """Return the docker run command of a worker in a new container called name."""
+        package_folder = Path(__file__).resolve().parent
+        memory = self.settings.memory
+        environment = [
+            option
+            for variable, value in thread_variables(self.settings.cpus).items()
+            for option in ("--env", f"{variable}={value}")
+        ]
+        return [
+            "docker", "run", "--rm", "--interactive",
+            "--name", name,
+            "--network", "none",
+            "--read-only",
+            "--tmpfs", "/tmp",
+            "--memory", memory,
+            "--memory-swap", memory,
+            "--cpus", f"{self.settings.cpus:g}",
+            "--pids-limit", str(self.settings.max_processes),
+            "--cap-drop", "ALL",
+            "--security-opt", "no-new-privileges",
+            "--user", "65534:65534",
+            *environment,
+            "--mount", f"type=bind,source={package_folder},target=/app/my_evolve,readonly",
+            self.image,
+            "python", "-m", "my_evolve.sandbox_worker",
+        ]  # fmt: skip
+
+    def stop(self, name: str) -> None:
+        """Kill the container: killing the docker client alone would leave it running."""
+        run_docker(["kill", name], timeout=30)
+
+    def startup_exit_codes(self) -> tuple[int, ...]:
+        """Return the exit codes of docker run failing before the worker started."""
+        return DOCKER_RUN_EXIT_CODES
 
 
 def run_docker(

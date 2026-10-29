@@ -2,7 +2,9 @@
 
 Usage:
     python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE
-        --iterations N --output FOLDER [--seed S]
+        --iterations N --output FOLDER [--seed S] [--unsafe-local-sandbox]
+
+Programs run in Docker containers, so Docker must be installed and running.
 
 Example, from the repository root:
     python scripts/run.py examples/circle_packing/initial_program.py
@@ -18,7 +20,14 @@ from my_evolve.evaluator import EvaluationFileError, Evaluator
 from my_evolve.llm import OpenAICompatibleLLM
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem, ProblemError
-from my_evolve.sandbox import LocalSandbox
+from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, SandboxError, ensure_image
+
+# Shown when programs run without the Docker sandbox
+UNSAFE_WARNING = (
+    "WARNING: --unsafe-local-sandbox: the programs the LLM writes run as plain processes, "
+    "with your files, your network and your environment variables (API keys included). "
+    "Use it for tests and trusted code only."
+)
 
 
 def positive_integer(text: str) -> int:
@@ -47,11 +56,28 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         "--output", type=Path, required=True, help="the run folder, where programs are saved"
     )
     parser.add_argument("--seed", type=int, help="fixes the random draws (default: drawn)")
+    parser.add_argument(
+        "--unsafe-local-sandbox",
+        action="store_true",
+        help="run programs as plain processes, without Docker or any isolation (tests only)",
+    )
     parsed = parser.parse_args(arguments)
     for path in (parsed.initial_program, parsed.evaluation_file, parsed.config):
         if not path.is_file():
             parser.error(f"no such file: {path}")
     return parsed
+
+
+def make_sandbox(problem: Problem, unsafe_local: bool) -> Sandbox:
+    """Return the sandbox programs run in: Docker, unless the unsafe local one is asked for.
+
+    Builds the evaluation image on first use. Raises SandboxError if Docker fails.
+    """
+    if unsafe_local:
+        print(UNSAFE_WARNING, file=sys.stderr)
+        return LocalSandbox(problem.sandbox.cpus)
+    print("Preparing the Docker sandbox (the first time, its image is built)...")
+    return DockerSandbox(ensure_image(problem.packages), problem.sandbox)
 
 
 def main(arguments: list[str]) -> int:
@@ -60,13 +86,12 @@ def main(arguments: list[str]) -> int:
     try:
         problem = Problem.load(parsed.config)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        evaluator = Evaluator(
-            parsed.evaluation_file, LocalSandbox(), problem.evaluation.stage_time_limit
-        )
+        sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox)
+        evaluator = Evaluator(parsed.evaluation_file, sandbox, problem.evaluation.stage_time_limit)
         llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
         run(problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed)
-    except (ProblemError, EvaluationFileError, RunError) as error:
-        # A mistake in the user's files: one clear message, without a traceback.
+    except (ProblemError, EvaluationFileError, RunError, SandboxError) as error:
+        # A mistake in the user's files, or Docker failing: one clear message, no traceback.
         print(f"Error: {error}", file=sys.stderr)
         return 1
     except KeyboardInterrupt:

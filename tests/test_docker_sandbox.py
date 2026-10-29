@@ -1,10 +1,31 @@
-"""Checks the Docker sandbox: its image. Skipped when Docker is not installed or not running."""
+"""Checks the Docker sandbox: its image, and the isolation of its containers.
 
+Skipped when Docker is not installed or not running.
+"""
+
+import os
+import time
 import unittest
+from pathlib import Path
 
 from docker_check import docker_is_available
 
-from my_evolve.sandbox import ensure_image, image_tag, run_docker
+from my_evolve.evaluation_api import ProgramFailure, StageTimeout
+from my_evolve.evaluator import Evaluator
+from my_evolve.problem import Problem, SandboxSettings
+from my_evolve.program import Status
+from my_evolve.sandbox import (
+    DockerSandbox,
+    SandboxError,
+    SandboxSession,
+    ensure_image,
+    image_tag,
+    run_docker,
+)
+
+REPOSITORY_FOLDER = Path(__file__).parent.parent
+CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
+TOY_FOLDER = Path(__file__).parent / "toy"
 
 
 class ImageTagTest(unittest.TestCase):
@@ -24,6 +45,106 @@ class ImageTest(unittest.TestCase):
         self.assertEqual(tag, image_tag([]))
         self.assertEqual(run_docker(["image", "inspect", tag]).returncode, 0)
         self.assertEqual(ensure_image([]), tag)
+
+
+@unittest.skipUnless(docker_is_available(), "Docker is not available")
+class IsolationTest(unittest.TestCase):
+    """Programs run in containers built without packages, except where numpy is needed."""
+
+    def start(self, code: str, settings: SandboxSettings | None = None) -> SandboxSession:
+        """Start a session in a container without packages, closed at the end of the test."""
+        sandbox = DockerSandbox(ensure_image([]), settings or SandboxSettings())
+        session = sandbox.start(code, stage_limit=30.0)
+        self.addCleanup(session.close)
+        return session
+
+    def test_there_is_no_network(self) -> None:
+        """A connection to the outside fails."""
+        session = self.start(
+            "import socket\n"
+            "def connect():\n"
+            "    socket.create_connection(('1.1.1.1', 53), timeout=3)\n"
+        )
+        with self.assertRaisesRegex(ProgramFailure, "OSError|gaierror|unreachable"):
+            session.call("connect")
+
+    def test_only_tmp_is_writable(self) -> None:
+        """Writing to /tmp works; writing anywhere else, the package folder included, fails."""
+        session = self.start(
+            "def write(path):\n"
+            "    with open(path, 'w') as file:\n"
+            "        file.write('x')\n"
+            "    return path\n"
+        )
+        self.assertEqual(session.call("write", ("/tmp/note.txt",)), "/tmp/note.txt")
+        for path in ["/note.txt", "/app/my_evolve/note.txt", "/usr/note.txt"]:
+            with self.subTest(path=path), self.assertRaises(ProgramFailure):
+                session.call("write", (path,))
+
+    def test_the_program_runs_as_nobody_without_the_host_environment(self) -> None:
+        """The user is nobody, the host's variables are absent, threads are limited."""
+        os.environ["MY_EVOLVE_TEST_SECRET"] = "do-not-leak"
+        self.addCleanup(os.environ.pop, "MY_EVOLVE_TEST_SECRET")
+        session = self.start(
+            "import os\n"
+            "def who():\n"
+            "    variables = os.environ\n"
+            "    return os.getuid(), variables.get('MY_EVOLVE_TEST_SECRET'), "
+            "variables.get('OMP_NUM_THREADS')\n"
+        )
+        self.assertEqual(session.call("who"), (65534, None, "1"))
+
+    def test_the_memory_limit(self) -> None:
+        """A program using more memory than allowed is stopped, and the failure says why."""
+        session = self.start(
+            "def grow():\n    blocks = [bytearray(50_000_000) for _ in range(20)]\n",
+            SandboxSettings(memory="256m"),
+        )
+        with self.assertRaisesRegex(ProgramFailure, "most likely for using too much memory"):
+            session.call("grow")
+
+    def test_packages_not_listed_cannot_be_imported(self) -> None:
+        """The image without packages has no numpy."""
+        session = self.start("def check():\n    import numpy\n")
+        with self.assertRaisesRegex(ProgramFailure, "ModuleNotFoundError: No module named 'numpy'"):
+            session.call("check")
+
+    def test_a_timeout_kills_the_container(self) -> None:
+        """At the deadline the container is stopped and removed, with everything it started."""
+        sandbox = DockerSandbox(ensure_image([]), SandboxSettings())
+        session = sandbox.start("import time\ndef wait():\n    time.sleep(60)\n", stage_limit=5.0)
+        self.addCleanup(session.close)
+        started = time.monotonic()
+        with self.assertRaises(StageTimeout):
+            session.call("wait")
+        self.assertLess(time.monotonic() - started, 20.0)
+        # The container's name is the last word of its --name option.
+        name = session.command[session.command.index("--name") + 1]
+        listed = run_docker(["ps", "--all", "--quiet", "--filter", f"name={name}"]).stdout
+        self.assertEqual(listed.strip(), "")
+
+    def test_a_missing_image_is_the_sandbox_fault(self) -> None:
+        """docker run failing to start the worker is a SandboxError, not a program failure."""
+        sandbox = DockerSandbox("my-evolve-evaluation:no-such-tag", SandboxSettings())
+        with self.assertRaisesRegex(SandboxError, "the worker could not start"):
+            sandbox.start("x = 1\n", stage_limit=60.0)
+
+
+@unittest.skipUnless(docker_is_available(), "Docker is not available")
+class EvaluationInDockerTest(unittest.TestCase):
+    def test_the_initial_programs_score_as_before(self) -> None:
+        """Circle packing (with its packages) and the toy problem score the same in Docker."""
+        problem = Problem.load(CIRCLE_PACKING_FOLDER / "problem.yaml")
+        sandbox = DockerSandbox(ensure_image(problem.packages), problem.sandbox)
+        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", sandbox, 60.0)
+        result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
+        self.assertEqual(result.status, Status.OK, result.error)
+        self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)
+        evaluator = Evaluator(
+            TOY_FOLDER / "evaluation.py", DockerSandbox(ensure_image([]), SandboxSettings()), 60.0
+        )
+        result = evaluator.evaluate((TOY_FOLDER / "initial_program.py").read_text())
+        self.assertEqual((result.status, result.score), (Status.OK, 1.0))
 
 
 if __name__ == "__main__":
