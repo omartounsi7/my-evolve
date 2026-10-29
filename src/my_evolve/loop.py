@@ -23,11 +23,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from my_evolve.checks import MarkerError, same_outside_code, split_evolve_blocks
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLM, LLMError
 from my_evolve.problem import Problem
-from my_evolve.program import LLMUsage, Program
+from my_evolve.program import LLMUsage, Program, Result
 from my_evolve.prompt import PromptBuilder
 from my_evolve.reply_parser import parse_reply
 
@@ -108,8 +109,10 @@ def run(
     containers are labelled with it); without one, an id is made. An iteration whose
     LLM call fails is skipped.
 
-    Raises RunError if the output folder already holds a run, or if the initial
-    program does not work: evolution needs a working starting point.
+    A child that changes code outside the evolve blocks is rejected, not evaluated.
+
+    Raises RunError if the output folder already holds a run, if the initial program's
+    evolve blocks are broken, or if it does not work: evolution needs a working start.
     """
     if (output / PROGRAMS_FILE).exists():
         raise RunError(f"{output} already holds a run; choose another output folder")
@@ -117,6 +120,10 @@ def run(
         seed = random.SystemRandom().randrange(2**32)
     if run_id is None:
         run_id = uuid.uuid4().hex
+    try:
+        split_evolve_blocks(initial_code)
+    except MarkerError as error:
+        raise RunError(f"the initial program's evolve blocks are broken: {error}") from None
     print(f"Seed: {seed}")
 
     database = Database(random.Random(seed))
@@ -152,7 +159,8 @@ def run(
             print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
             continue
         parsed = parse_reply(reply.text, parent.code)
-        result = evaluator.evaluate(parsed.code)
+        reason = same_outside_code(parsed.code, initial_code)
+        result = Result.rejected(reason) if reason else evaluator.evaluate(parsed.code)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
         child = Program.new_child(parent, parsed.code, result, iteration, usage, parsed.description)
         store(child)

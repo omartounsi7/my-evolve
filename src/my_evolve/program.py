@@ -11,6 +11,8 @@ class Status(enum.Enum):
 
     # Evaluated, and its answer is legal: the only status with a score
     OK = "ok"
+    # Refused before evaluation by a check (D13), such as a change outside the evolve blocks
+    REJECTED = "rejected"
     # Raised an exception while loading or while one of its functions ran
     FAILED = "failed"
     # Ran out of time
@@ -49,6 +51,11 @@ class Result:
     def is_ok(self) -> bool:
         """True when the program works: the only meaning of "correct"."""
         return self.status is Status.OK
+
+    @classmethod
+    def rejected(cls, reason: str) -> "Result":
+        """Return the result of a child refused before evaluation, saying why."""
+        return cls(status=Status.REJECTED, error=reason)
 
     @classmethod
     def failure(

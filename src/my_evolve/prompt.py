@@ -23,6 +23,8 @@ Write a new version of the parent that solves the problem below better than it d
 {description}
 
 # Rules
+- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`. \
+Leave everything else, the markers included, exactly as it is. Return the whole file.
 - {packages_rule}
 - Higher scores are better.
 

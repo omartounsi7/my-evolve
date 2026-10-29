@@ -20,6 +20,7 @@ from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLMError
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem
+from my_evolve.program import Status
 from my_evolve.sandbox import LocalSandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
@@ -33,7 +34,8 @@ def reply_returning(value: str) -> str:
     """Return an LLM reply whose program's solve() returns that value, with a description."""
     return (
         f"<DESCRIPTION>Returns {value}.</DESCRIPTION>\n"
-        f"Here is a better program:\n\n```python\ndef solve():\n    return {value}\n```\n"
+        "Here is a better program:\n\n```python\n# EVOLVE-BLOCK-START\n"
+        f"def solve():\n    return {value}\n# EVOLVE-BLOCK-END\n```\n"
     )
 
 
@@ -66,7 +68,7 @@ class LoopTest(unittest.TestCase):
         replies: list[str | Exception] = [
             reply_returning("5"),
             reply_returning("1 / 0"),
-            "I cannot write that program.",
+            "```python\ndef solve():\n    return 9\n```",
             LLMError("fake-model", "the server is down"),
             reply_returning("7"),
         ]
@@ -78,7 +80,8 @@ class LoopTest(unittest.TestCase):
         scores = [program.result.score for program in programs]
         self.assertEqual(scores, [1.0, 5.0, None, None, 7.0])
         self.assertIn("ZeroDivisionError", programs[2].result.error or "")
-        self.assertIn("SyntaxError", programs[3].result.error or "")
+        self.assertEqual(programs[3].result.status, Status.REJECTED)
+        self.assertIn("evolve-block markers were changed", programs[3].result.error or "")
         self.assertEqual((programs[1].description, programs[3].description), ("Returns 5.", None))
         for child in programs[1:]:
             parent = database.programs[child.parent_id or ""]
@@ -164,7 +167,9 @@ class LoopTest(unittest.TestCase):
         ):
             run(
                 problem=Problem.load(TOY_FOLDER / "problem.yaml"),
-                initial_code="def solve():\n    return 11\n",
+                initial_code=(
+                    "# EVOLVE-BLOCK-START\ndef solve():\n    return 11\n# EVOLVE-BLOCK-END\n"
+                ),
                 llm=FakeLLM([]),
                 evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=1,
@@ -172,6 +177,21 @@ class LoopTest(unittest.TestCase):
                 seed=0,
             )
         self.assertFalse(self.output.exists())
+
+    def test_an_initial_program_without_evolve_blocks_is_refused(self) -> None:
+        """The blocks are what the LLM may change: the initial program must have them."""
+        with (
+            self.assertRaisesRegex(RunError, "evolve blocks are broken: no evolve block"),
+            contextlib.redirect_stdout(io.StringIO()),
+        ):
+            run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code="def solve():\n    return 1\n",
+                llm=FakeLLM([]),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=1,
+                output=self.output,
+            )
 
     def test_a_folder_holding_a_run_is_refused(self) -> None:
         """Continuing a run comes later: for now an existing run is never overwritten."""
