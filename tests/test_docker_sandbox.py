@@ -159,13 +159,18 @@ class LeftoverTest(unittest.TestCase):
         """
         sandbox = DockerSandbox(ensure_image([]), SandboxSettings(), uuid.uuid4().hex)
         self.addCleanup(sandbox.remove_leftovers)
-        session = sandbox.start("def spin():\n    while True:\n        pass\n", stage_limit=1.0)
+        program = "def spin():\n    print('spinning')\n    while True:\n        pass\n"
+        session = sandbox.start(program, stage_limit=1.0)
         assert session.process is not None and session.process.stdin is not None
         started = time.monotonic()
         send(
             session.process.stdin,
             {"type": "call", "id": 1, "name": "spin", "args": [], "kwargs": {"__dict__": {}}},
         )
+        # Kill the client only once the worker is busy: killed earlier, the client could
+        # lose the call, and the idle worker would end as soon as its input closes.
+        while "spinning" not in session.error_tail() and time.monotonic() < started + 10:
+            time.sleep(0.05)
         session.process.kill()
         session.process.wait()
         time.sleep(3)
