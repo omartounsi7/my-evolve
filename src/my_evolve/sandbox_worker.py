@@ -115,6 +115,8 @@ def main() -> None:
     os.dup2(empty_input, 0)
     os.close(empty_input)
     os.dup2(2, 1)
+    # Each line the program prints reaches the error output at once, even if it then crashes.
+    sys.stdout.reconfigure(line_buffering=True)  # type: ignore[union-attr]
     serve(requests, answers)
     # Anything the program printed and Python kept in a buffer.
     sys.stdout.flush()

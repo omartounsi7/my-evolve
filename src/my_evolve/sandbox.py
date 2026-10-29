@@ -8,7 +8,8 @@ same process as the code that computes its score.
 
 A session has a deadline: past it, the worker is killed and StageTimeout raised. A
 reader thread collects the worker's messages in a queue, so that waiting for an answer
-can stop at the deadline.
+can stop at the deadline. What the program prints goes to a temporary file, whose end
+is added to every failure; a message the host is not waiting for is ignored.
 
 For now the worker is a plain subprocess (LocalSandbox), without any isolation: the
 program can still read and write your files and use the network. Step 1.8 of the plan
@@ -18,6 +19,7 @@ adds the Docker sandbox.
 import queue
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -29,10 +31,27 @@ from my_evolve.sandbox_protocol import Message, receive, send, to_plain
 
 # How long closing a session waits for the worker to end on its own, in seconds
 CLOSE_WAIT_SECONDS = 5.0
+# How much of the end of the program's output a failure keeps, in characters
+ERROR_TAIL_CHARS = 2000
+# The exit codes of a process killed by SIGKILL, which is what running out of memory
+# usually brings: in Docker, and as a plain subprocess
+KILLED_EXIT_CODES = (137, -9)
 
 
 class SandboxError(Exception):
     """The sandbox itself failed, not the program: the program's status is error."""
+
+
+def describe_exit(exit_code: int) -> str:
+    """Return how the worker ended, in words."""
+    if exit_code in KILLED_EXIT_CODES:
+        return (
+            f"the program's process was stopped (exit code {exit_code}), "
+            "most likely for using too much memory"
+        )
+    if exit_code < 0:
+        return f"the program's process was stopped by signal {-exit_code}"
+    return f"the program's process ended (exit code {exit_code})"
 
 
 def read_messages(stream: IO[str], messages: "queue.Queue[Message | None]") -> None:
@@ -75,6 +94,8 @@ class SandboxSession:
         self.last_id: int = 0
         # True once the worker was killed because the deadline passed
         self.timed_out: bool = False
+        # Where the program's output goes (what it prints, and Python's own messages)
+        self.error_file: IO[bytes] = tempfile.TemporaryFile()
 
     def start(self) -> None:
         """Start the worker and load the program.
@@ -88,8 +109,8 @@ class SandboxSession:
                 self.command,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                # The program's own output is not kept yet (step 1.5).
-                stderr=subprocess.DEVNULL,
+                # A file, not a pipe: a program printing without end fills a file, not memory.
+                stderr=self.error_file,
                 text=True,
                 encoding="utf-8",
             )
@@ -100,14 +121,16 @@ class SandboxSession:
             target=read_messages, args=(self.process.stdout, self.messages), daemon=True
         )
         reader.start()
-        answer = self.exchange({"type": "load", "code": self.code})
+        answer = self.exchange({"type": "load", "code": self.code}, {"loaded", "load_failed"})
         if answer["type"] == "load_failed":
-            raise ProgramFailure(answer["error"], answer["traceback"])
+            raise self.failure(answer["error"], answer["traceback"])
         self.names = answer["names"]
 
-    def exchange(self, message: Message) -> Message:
-        """Send one message and return the worker's answer.
+    def exchange(self, message: Message, expected: set[str]) -> Message:
+        """Send one message and return the worker's answer: the next message of an expected
+        type that carries the message's id.
 
+        Any other message is ignored: a program writing forged answers gains nothing.
         Raises StageTimeout if the deadline passes first (the worker is then killed),
         ProgramFailure if the worker ends without answering.
         """
@@ -117,18 +140,32 @@ class SandboxSession:
         except OSError:
             # The worker has ended: its output tells how, below.
             pass
-        try:
-            answer = self.messages.get(timeout=max(0.0, self.deadline - time.monotonic()))
-        except queue.Empty:
-            self.timed_out = True
-            self.kill()
-            raise StageTimeout(
-                f"the evaluation ran over its time limit of {self.stage_limit:g} s"
-            ) from None
-        if answer is None:
-            exit_code = self.process.wait()
-            raise ProgramFailure(f"the program's process ended (exit code {exit_code})")
-        return answer
+        while True:
+            try:
+                answer = self.messages.get(timeout=max(0.0, self.deadline - time.monotonic()))
+            except queue.Empty:
+                self.timed_out = True
+                self.kill()
+                raise StageTimeout(
+                    f"the evaluation ran over its time limit of {self.stage_limit:g} s"
+                ) from None
+            if answer is None:
+                raise self.failure(describe_exit(self.process.wait()))
+            if answer.get("type") in expected and answer.get("id") == message.get("id"):
+                return answer
+
+    def failure(self, error: str, traceback: str = "") -> ProgramFailure:
+        """Return the ProgramFailure to raise, with the end of the program's output."""
+        return ProgramFailure(error, traceback, self.error_tail())
+
+    def error_tail(self) -> str:
+        """Return the end of what the program printed so far."""
+        self.error_file.seek(0, 2)
+        size = self.error_file.tell()
+        # Four bytes at most per character, in UTF-8.
+        self.error_file.seek(max(0, size - 4 * ERROR_TAIL_CHARS))
+        text = self.error_file.read().decode("utf-8", errors="replace")
+        return text[-ERROR_TAIL_CHARS:]
 
     def call(
         self, name: str, args: tuple[Any, ...] = (), kwargs: Mapping[str, Any] | None = None
@@ -146,17 +183,18 @@ class SandboxSession:
             "args": to_plain(list(args)),
             "kwargs": to_plain(dict(kwargs or {})),
         }
-        return self.value_of(self.exchange(message))
+        return self.value_of(self.exchange(message, {"return", "raised"}))
 
     def get(self, name: str) -> Any:
         """Return the value of one of the program's plain-data globals."""
         self.last_id += 1
-        return self.value_of(self.exchange({"type": "get", "id": self.last_id, "name": name}))
+        message = {"type": "get", "id": self.last_id, "name": name}
+        return self.value_of(self.exchange(message, {"return", "raised"}))
 
     def value_of(self, answer: Message) -> Any:
         """Return the value an answer carries. Raises ProgramFailure if it reports an error."""
         if answer["type"] == "raised":
-            raise ProgramFailure(answer["error"], answer["traceback"])
+            raise self.failure(answer["error"], answer["traceback"])
         return answer["value"]
 
     def kill(self) -> None:
@@ -178,6 +216,7 @@ class SandboxSession:
             self.process.wait(timeout=CLOSE_WAIT_SECONDS)
         except subprocess.TimeoutExpired:
             self.kill()
+        self.error_file.close()
 
 
 class RemoteFunction:

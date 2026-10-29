@@ -25,16 +25,21 @@ class InvalidProgram(Exception):
 class ProgramFailure(Exception):
     """Raised by the namespace when the program failed: it raised, or its process ended."""
 
-    def __init__(self, error: str, traceback: str = "") -> None:
+    def __init__(self, error: str, traceback: str = "", error_output: str = "") -> None:
         super().__init__(error)
         # What went wrong, in one line, such as "ZeroDivisionError: division by zero"
         self.error: str = error
         # Where in the program it went wrong, when known
         self.traceback: str = traceback
+        # The end of what the program printed, when it printed anything
+        self.error_output: str = error_output
 
     def describe(self) -> str:
-        """Return the error, then the traceback if there is one."""
-        return f"{self.error}\n\n{self.traceback}".rstrip() if self.traceback else self.error
+        """Return the error, then the traceback and the end of the program's output, if any."""
+        parts = [self.error, self.traceback.rstrip()]
+        if self.error_output.strip():
+            parts.append("The end of the program's output:\n" + self.error_output.rstrip())
+        return "\n\n".join(part for part in parts if part)
 
 
 class StageTimeout(Exception):
