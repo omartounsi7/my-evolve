@@ -60,9 +60,9 @@ The console shows one line per iteration. The run folder holds every program
 (`programs.jsonl`, one line of JSON each) and the best one (`best_program.py`).
 Ctrl+C stops the run; every program evaluated so far is already saved.
 
-**Warning.** For now the programs the LLM writes run inside the run's own process,
-with your files, your network and no time limit (a sandbox comes in Phase 1 of the
-plan). Keep runs short and watch them.
+**Warning.** For now the programs the LLM writes run in a process of their own, but
+with your files, your network and no time limit (the Docker sandbox comes later in
+Phase 1 of the plan). Keep runs short and watch them.
 
 ## Everyday commands
 

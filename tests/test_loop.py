@@ -20,6 +20,7 @@ from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLMError
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem
+from my_evolve.sandbox import LocalSandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
@@ -42,7 +43,7 @@ def run_toy(
             problem=Problem.load(TOY_FOLDER / "problem.yaml"),
             initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
             llm=llm,
-            evaluator=Evaluator(TOY_FOLDER / "evaluation.py"),
+            evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox()),
             iterations=iterations if iterations is not None else len(replies),
             output=output,
             seed=seed,
@@ -126,7 +127,7 @@ class LoopTest(unittest.TestCase):
                 problem=Problem.load(TOY_FOLDER / "problem.yaml"),
                 initial_code="def solve():\n    return 11\n",
                 llm=FakeLLM([]),
-                evaluator=Evaluator(TOY_FOLDER / "evaluation.py"),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox()),
                 iterations=1,
                 output=self.output,
                 seed=0,

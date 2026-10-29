@@ -11,26 +11,33 @@ the program's functions, and returns the program's score: a number, higher is be
 When the program's answer breaks a rule of the problem, evaluate raises InvalidProgram
 (from my_evolve.evaluation_api) with the reason.
 
-For now the program runs inside this very process, with exec: it has no time limit
-and no isolation, so it can read and write your files and use the network. Phase 1
-of the implementation plan moves it into a sandbox.
+The evaluation file runs here, on the host. The program runs in a worker process of
+its own (the sandbox), and the namespace evaluate receives stands in front of it.
+Whatever happens becomes a Result with a status:
+
+- ok: evaluate returned a finite number, the score;
+- invalid: evaluate raised InvalidProgram, the program's answer is illegal;
+- failed: the program failed (it raised, or its process ended): ProgramFailure;
+- error: not the program's fault: the sandbox failed, or the evaluation file raised.
 """
 
 import math
 import runpy
 import sys
-from collections.abc import Callable
+import traceback
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
-from my_evolve.evaluation_api import InvalidProgram
+from my_evolve.evaluation_api import InvalidProgram, ProgramFailure
 from my_evolve.program import Result, Status
+from my_evolve.sandbox import ProgramNamespace, Sandbox, SandboxError
 
 # The function every evaluation file must define
 EVALUATE_FUNCTION_NAME = "evaluate"
 
 # What an evaluation file's evaluate looks like: the program's names in, a score out
-EvaluateFunction = Callable[[dict[str, Any]], Any]
+EvaluateFunction = Callable[[Mapping[str, Any]], Any]
 
 
 class EvaluationFileError(ValueError):
@@ -75,21 +82,14 @@ def checked_score(score: Any) -> float:
     return float(score)
 
 
-def run_program(code: str) -> dict[str, Any]:
-    """Run a program's code and return the names it defines.
-
-    Its __name__ is "program", so its `if __name__ == "__main__":` part does not run.
-    """
-    namespace: dict[str, Any] = {"__name__": "program"}
-    exec(code, namespace)
-    return namespace
-
-
 class Evaluator:
     """Scores programs with one problem's evaluation file."""
 
-    def __init__(self, evaluation_path: Path) -> None:
-        """Load the evaluation file. Raises EvaluationFileError if it defines no evaluate."""
+    def __init__(self, evaluation_path: Path, sandbox: Sandbox) -> None:
+        """Load the evaluation file. Raises EvaluationFileError if it defines no evaluate.
+
+        sandbox runs the programs.
+        """
         names = load_evaluation_file(evaluation_path)
         function = names.get(EVALUATE_FUNCTION_NAME)
         if not callable(function):
@@ -98,20 +98,34 @@ class Evaluator:
             )
         # The evaluation file's evaluate function
         self.evaluate_function: EvaluateFunction = function
+        # Where the programs run
+        self.sandbox: Sandbox = sandbox
 
     def evaluate(self, code: str) -> Result:
-        """Run the program's code and score it.
+        """Load the program in a fresh sandbox session, and score it.
 
-        Never raises because of the program: an illegal answer gives the status
-        invalid, anything else that goes wrong the status failed, each with an error
-        saying what happened. Only Ctrl+C gets through.
+        Never raises: whatever happens becomes a result whose status and error say
+        what (see the top of this file). Only Ctrl+C gets through.
         """
         try:
-            namespace = run_program(code)
-            score = checked_score(self.evaluate_function(namespace))
-        except InvalidProgram as error:
-            return Result.failure(Status.INVALID, error.reason)
-        # SystemExit too: a program calling exit() must not end the run.
-        except (Exception, SystemExit) as error:
-            return Result.failure(Status.FAILED, describe_error(error))
+            session = self.sandbox.start(code)
+        except ProgramFailure as failure:
+            return Result.failure(Status.FAILED, failure.describe())
+        except SandboxError as error:
+            return Result.failure(Status.ERROR, f"sandbox: {error}")
+        try:
+            score = checked_score(self.evaluate_function(ProgramNamespace(session)))
+        except InvalidProgram as invalid:
+            return Result.failure(Status.INVALID, invalid.reason)
+        except ProgramFailure as failure:
+            return Result.failure(Status.FAILED, failure.describe())
+        except SandboxError as error:
+            return Result.failure(Status.ERROR, f"sandbox: {error}")
+        # The evaluation file raised, or returned something that is not a score.
+        except Exception as error:
+            return Result.failure(
+                Status.ERROR, f"evaluator: {describe_error(error)}\n\n{traceback.format_exc()}"
+            )
+        finally:
+            session.close()
         return Result(Status.OK, score=score)

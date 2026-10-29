@@ -18,6 +18,7 @@ from my_evolve.evaluator import EvaluationFileError, Evaluator
 from my_evolve.llm import OpenAICompatibleLLM
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem, ProblemError
+from my_evolve.sandbox import LocalSandbox
 
 
 def positive_integer(text: str) -> int:
@@ -59,7 +60,7 @@ def main(arguments: list[str]) -> int:
     try:
         problem = Problem.load(parsed.config)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        evaluator = Evaluator(parsed.evaluation_file)
+        evaluator = Evaluator(parsed.evaluation_file, LocalSandbox())
         llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
         run(problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed)
     except (ProblemError, EvaluationFileError, RunError) as error:

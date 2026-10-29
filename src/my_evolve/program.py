@@ -15,6 +15,8 @@ class Status(enum.Enum):
     FAILED = "failed"
     # Returned an answer the evaluation file judged illegal, such as overlapping circles
     INVALID = "invalid"
+    # Not the program's fault: the sandbox failed, or the evaluation file itself raised
+    ERROR = "error"
 
 
 @dataclass(frozen=True)

@@ -60,9 +60,16 @@ def evaluate(namespace: Mapping[str, Any]) -> float:
     namespace gives the names the program defines. Raises InvalidProgram if the packing
     breaks a rule of the problem.
     """
-    centers, radii, _ = namespace[ENTRY_FUNCTION]()
-    centers = np.asarray(centers, dtype=float)
-    radii = np.asarray(radii, dtype=float)
+    answer = namespace[ENTRY_FUNCTION]()
+    if not isinstance(answer, list | tuple) or len(answer) != 3:
+        raise InvalidProgram(
+            f"{ENTRY_FUNCTION}() must return (centers, radii, sum_of_radii), got {answer!r:.200}"
+        )
+    try:
+        centers = np.asarray(answer[0], dtype=float)
+        radii = np.asarray(answer[1], dtype=float)
+    except (TypeError, ValueError) as error:
+        raise InvalidProgram(f"the centers and radii must be arrays of numbers: {error}") from None
     check_packing(centers, radii)
     # The sum the program reports is ignored: it is recomputed from the radii.
     return float(np.sum(radii)) / TARGET_VALUE

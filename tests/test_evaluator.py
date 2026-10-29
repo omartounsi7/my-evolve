@@ -1,4 +1,4 @@
-"""Checks that the evaluator scores working programs and turns every failure into an error."""
+"""Checks that the evaluator scores programs through the sandbox, giving each outcome a status."""
 
 import sys
 import tempfile
@@ -6,52 +6,65 @@ import unittest
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
-from my_evolve.program import Status
+from my_evolve.program import Result, Status
+from my_evolve.sandbox import LocalSandbox, Sandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
 CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
 
 
+def evaluate_with(evaluation_code: str, program_code: str) -> Result:
+    """Score a program with an evaluation file written for the test."""
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / "evaluation.py"
+        path.write_text(evaluation_code)
+        return Evaluator(path, LocalSandbox()).evaluate(program_code)
+
+
 class EvaluatorTest(unittest.TestCase):
     def setUp(self) -> None:
-        self.evaluator = Evaluator(TOY_FOLDER / "evaluation.py")
+        self.evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox())
 
     def test_a_working_program_gets_its_score(self) -> None:
         """The toy initial program scores the number it returns."""
         result = self.evaluator.evaluate((TOY_FOLDER / "initial_program.py").read_text())
-        self.assertEqual(result.status, Status.OK)
-        self.assertEqual(result.score, 1.0)
-        self.assertIsNone(result.error)
+        self.assertEqual((result.status, result.score, result.error), (Status.OK, 1.0, None))
 
     def test_the_circle_packing_initial_program_scores(self) -> None:
-        """The example's initial program scores 0.364 through the evaluator."""
-        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py")
+        """The example's initial program scores 0.364 through the sandbox: numpy arrays travel."""
+        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox())
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
-        self.assertIsNotNone(result.score)
+        self.assertEqual(result.status, Status.OK, result.error)
         self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)
 
-    def test_failures_become_errors(self) -> None:
-        """Whatever goes wrong, the program fails: no score, and an error saying what."""
+    def test_a_failing_program_is_failed(self) -> None:
+        """When the program fails, while loading or in a function, its status is failed."""
         cases = {
             "def solve(:\n": "SyntaxError",
             "raise RuntimeError('boom')\n": "RuntimeError: boom",
-            "def solve():\n    return 1 / 0\n": "ZeroDivisionError: division by zero",
-            "x = 1\n": "KeyError: 'solve'",
             "import sys\nsys.exit(3)\n": "SystemExit: 3",
+            "def solve():\n    return 1 / 0\n": "ZeroDivisionError: division by zero",
+            "x = 1\n": "the program defines no 'solve'",
+            "import os\ndef solve():\n    os._exit(1)\n": "the program's process ended",
         }
         for code, error in cases.items():
             with self.subTest(error=error):
                 result = self.evaluator.evaluate(code)
                 self.assertEqual(result.status, Status.FAILED)
                 self.assertIsNone(result.score)
-                self.assertIn(error, result.error or "")
+                self.assertIn(error, (result.error or "").splitlines()[0])
+
+    def test_a_failure_shows_where_in_the_program(self) -> None:
+        """The error is followed by a traceback showing the program's line."""
+        result = self.evaluator.evaluate("def solve():\n    return [][1]\n")
+        self.assertTrue((result.error or "").startswith("IndexError: list index out of range\n"))
+        self.assertIn('File "<program>", line 2, in solve\n    return [][1]', result.error or "")
 
     def test_an_illegal_answer_is_invalid(self) -> None:
         """InvalidProgram from the evaluation file gives the status invalid, with the reason."""
         result = self.evaluator.evaluate("def solve():\n    return 11\n")
         self.assertEqual(result.status, Status.INVALID)
-        self.assertIsNone(result.score)
         self.assertEqual(result.error, "solve() returned 11, more than 10.0")
 
     def test_the_main_part_of_a_program_does_not_run(self) -> None:
@@ -59,22 +72,51 @@ class EvaluatorTest(unittest.TestCase):
         code = "def solve():\n    return 2\n\nif __name__ == '__main__':\n    raise SystemExit\n"
         self.assertEqual(self.evaluator.evaluate(code).score, 2.0)
 
+    def test_the_evaluation_file_sees_plain_data_only(self) -> None:
+        """Globals arrive as values, functions as stand-ins; modules are not reachable."""
+        evaluation = (
+            "def evaluate(namespace):\n"
+            "    assert 'np' in namespace and 'missing' not in namespace\n"
+            "    return namespace['solve'](namespace['N'])\n"
+        )
+        program = "import numpy as np\nN = 4\ndef solve(n):\n    return float(np.float64(n))\n"
+        self.assertEqual(evaluate_with(evaluation, program).score, 4.0)
+        evaluation = "def evaluate(namespace):\n    return namespace['np'].pi\n"
+        result = evaluate_with(evaluation, program)
+        self.assertEqual(result.status, Status.FAILED)
+        self.assertIn("'np' is neither a function nor plain data", result.error or "")
 
-class ScoreCheckTest(unittest.TestCase):
-    def test_scores_that_are_not_finite_numbers_are_refused(self) -> None:
+
+class ErrorStatusTest(unittest.TestCase):
+    def test_a_mistake_in_the_evaluation_file_is_an_error(self) -> None:
+        """The evaluation file raising is not the program's fault: status error."""
+        result = evaluate_with("def evaluate(namespace):\n    return {}['k']\n", "x = 1\n")
+        self.assertEqual(result.status, Status.ERROR)
+        self.assertTrue((result.error or "").startswith("evaluator: KeyError: 'k'"))
+
+    def test_scores_that_are_not_finite_numbers_are_errors(self) -> None:
         """evaluate must return a finite number: not a bool, text, or infinity."""
-        with tempfile.TemporaryDirectory() as folder:
-            for score, error in [
-                ("True", "must be a number, got bool"),
-                ("'high'", "must be a number, got str"),
-                ("float('inf')", "must be a finite number"),
-            ]:
-                path = Path(folder) / "evaluation.py"
-                path.write_text(f"def evaluate(namespace):\n    return {score}\n")
-                with self.subTest(score=score):
-                    result = Evaluator(path).evaluate("x = 1\n")
-                    self.assertIsNone(result.score)
-                    self.assertIn(error, result.error or "")
+        for score, error in [
+            ("True", "must be a number, got bool"),
+            ("'high'", "must be a number, got str"),
+            ("float('inf')", "must be a finite number"),
+        ]:
+            with self.subTest(score=score):
+                result = evaluate_with(f"def evaluate(namespace):\n    return {score}\n", "x = 1\n")
+                self.assertEqual(result.status, Status.ERROR)
+                self.assertIn(error, result.error or "")
+
+    def test_a_sandbox_that_cannot_start_is_an_error(self) -> None:
+        """When the worker cannot be started, the program is not to blame."""
+
+        class BrokenSandbox(Sandbox):
+            def command(self) -> list[str]:
+                return ["/no/such/python", "-m", "my_evolve.sandbox_worker"]
+
+        evaluator = Evaluator(TOY_FOLDER / "evaluation.py", BrokenSandbox())
+        result = evaluator.evaluate("def solve():\n    return 1\n")
+        self.assertEqual(result.status, Status.ERROR)
+        self.assertIn("sandbox: cannot start the worker", result.error or "")
 
 
 class EvaluationFileTest(unittest.TestCase):
@@ -84,9 +126,9 @@ class EvaluationFileTest(unittest.TestCase):
             path = Path(folder) / "evaluation.py"
             path.write_text("def score(namespace):\n    return 1\n")
             with self.assertRaisesRegex(EvaluationFileError, "must define a function"):
-                Evaluator(path)
+                Evaluator(path, LocalSandbox())
             with self.assertRaisesRegex(EvaluationFileError, "no such evaluation file"):
-                Evaluator(Path(folder) / "missing.py")
+                Evaluator(Path(folder) / "missing.py", LocalSandbox())
 
     def test_helper_files_are_imported_then_forgotten(self) -> None:
         """An evaluation file may import a helper next to it, which is forgotten afterwards."""
@@ -97,7 +139,7 @@ class EvaluationFileTest(unittest.TestCase):
                 "from my_evolve_test_helper import BONUS\n\n"
                 "def evaluate(namespace):\n    return namespace['solve']() + BONUS\n"
             )
-            evaluator = Evaluator(path)
+            evaluator = Evaluator(path, LocalSandbox())
             self.assertNotIn("my_evolve_test_helper", sys.modules)
             self.assertEqual(evaluator.evaluate("def solve():\n    return 1\n").score, 6.0)
 
