@@ -15,6 +15,7 @@ and the order in which it is built in
 |---|---|
 | `src/my_evolve/` | The package |
 | `examples/` | Ready-made problems, one folder each ([examples/README.md](examples/README.md)) |
+| `scripts/` | Files you launch directly: `run.py` |
 | `tests/` | Automatic checks |
 | `docs/` | The design and the plan |
 | `pyproject.toml` | Project description and tool settings |
@@ -36,6 +37,32 @@ Windows (PowerShell):
 python -m venv .venv
 .venv\Scripts\python.exe -m pip install -e ".[dev]"
 ```
+
+## Running a problem
+
+A run needs the problem file's model reachable: for the circle-packing example, a
+local [Ollama](https://ollama.com) server with `qwen3-coder:30b` pulled
+(`ollama pull qwen3-coder:30b`). Ollama silently cuts prompts longer than its context
+length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
+
+```bash
+.venv/bin/python scripts/run.py examples/circle_packing/initial_program.py examples/circle_packing/evaluation.py --config examples/circle_packing/problem.yaml --iterations 20 --output runs/circle_packing_1
+```
+
+| Flag | Meaning | Default |
+|---|---|---|
+| `--config` | The problem file: the problem's description and its LLM | required |
+| `--iterations` | How many children to ask the LLM for | required |
+| `--output` | The run folder; it must not hold a run already | required |
+| `--seed` | The seed of the run's random draws | drawn, and printed |
+
+The console shows one line per iteration. The run folder holds every program
+(`programs.jsonl`, one line of JSON each) and the best one (`best_program.py`).
+Ctrl+C stops the run; every program evaluated so far is already saved.
+
+**Warning.** For now the programs the LLM writes run inside the run's own process,
+with your files, your network and no time limit (a sandbox comes in Phase 1 of the
+plan). Keep runs short and watch them.
 
 ## Everyday commands
 

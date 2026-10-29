@@ -1,0 +1,131 @@
+"""The loop: AlphaEvolve's controller, which evolves the problem's program.
+
+Each iteration runs the six steps of the AlphaEvolve diagram:
+
+    parent, examples = database.sample()
+    prompt = prompt_builder.build(parent, examples)
+    reply = llm.complete(prompt)
+    code = extract_code(reply)
+    result = evaluator.evaluate(code)
+    database.add(Program.new_child(parent, code, result, iteration))
+
+For now iterations run one after another, and the run folder holds two files:
+programs.jsonl, one line per program, and best_program.py, the best program so far.
+"""
+
+import json
+import random
+from pathlib import Path
+
+from my_evolve.database import Database
+from my_evolve.evaluator import Evaluator
+from my_evolve.llm import LLM, LLMError
+from my_evolve.problem import Problem
+from my_evolve.program import Program
+from my_evolve.prompt import PromptBuilder
+from my_evolve.reply_parser import extract_code
+
+# The files of the run folder
+PROGRAMS_FILE = "programs.jsonl"
+BEST_PROGRAM_FILE = "best_program.py"
+
+# The longest error shown on the console, in characters (programs.jsonl keeps it whole)
+MAX_CONSOLE_ERROR = 200
+
+
+class RunError(Exception):
+    """Raised when a run cannot start; the message says why."""
+
+
+def append_program(folder: Path, program: Program) -> None:
+    """Add the program to programs.jsonl, as one line of JSON."""
+    # allow_nan=False: scores are finite numbers or null, so the file is plain JSON.
+    line = json.dumps(program.to_dict(), allow_nan=False)
+    with (folder / PROGRAMS_FILE).open("a", encoding="utf-8") as file:
+        file.write(line + "\n")
+
+
+def write_best_program(folder: Path, program: Program) -> None:
+    """Rewrite best_program.py: the program's code, under a comment saying what it is."""
+    header = (
+        f"# Best program of the run: score {program.result.score}, "
+        f"iteration {program.iteration}, id {program.id}\n\n"
+    )
+    (folder / BEST_PROGRAM_FILE).write_text(header + program.code, encoding="utf-8")
+
+
+def describe(program: Program) -> str:
+    """Return the program's score, or its error cut to one short line, for the console."""
+    if program.result.score is not None:
+        return f"score {program.result.score:.6f}"
+    lines = (program.result.error or "").splitlines()
+    error = lines[0] if lines else "no error message"
+    if len(error) > MAX_CONSOLE_ERROR:
+        error = error[:MAX_CONSOLE_ERROR] + "…"
+    return f"failed: {error}"
+
+
+def best_score_text(database: Database) -> str:
+    """Return the best score so far, for the console."""
+    best_score = database.best_score()
+    return f"{best_score:.6f}" if best_score is not None else "none"
+
+
+def run(
+    problem: Problem,
+    initial_code: str,
+    llm: LLM,
+    evaluator: Evaluator,
+    iterations: int,
+    output: Path,
+    seed: int | None = None,
+) -> Database:
+    """Evolve the initial program for that many iterations, and return the database.
+
+    Every program is saved in the output folder as soon as it exists. seed fixes the
+    random draws (with the same LLM replies, a run repeats exactly); without one, a
+    seed is drawn and printed. An iteration whose LLM call fails is skipped.
+
+    Raises RunError if the output folder already holds a run, or if the initial
+    program does not work: evolution needs a working starting point.
+    """
+    if (output / PROGRAMS_FILE).exists():
+        raise RunError(f"{output} already holds a run; choose another output folder")
+    if seed is None:
+        seed = random.SystemRandom().randrange(2**32)
+    print(f"Seed: {seed}")
+
+    database = Database(random.Random(seed))
+    prompt_builder = PromptBuilder(problem)
+
+    def store(program: Program) -> None:
+        """Add the program to the database and the run folder."""
+        database.add(program)
+        append_program(output, program)
+        if database.best_id == program.id:
+            write_best_program(output, program)
+
+    initial = Program(initial_code, evaluator.evaluate(initial_code))
+    if initial.result.score is None:
+        raise RunError(f"the initial program does not work: {initial.result.error}")
+    output.mkdir(parents=True, exist_ok=True)
+    store(initial)
+    print(f"Initial program: {describe(initial)}")
+
+    for iteration in range(1, iterations + 1):
+        parent, examples = database.sample()
+        prompt = prompt_builder.build(parent, examples)
+        try:
+            reply = llm.complete(prompt)
+        except LLMError as error:
+            print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
+            continue
+        code = extract_code(reply)
+        result = evaluator.evaluate(code)
+        child = Program.new_child(parent, code, result, iteration)
+        store(child)
+        print(
+            f"Iteration {iteration}/{iterations}: {describe(child)} "
+            f"(best {best_score_text(database)})"
+        )
+    return database

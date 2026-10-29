@@ -32,7 +32,7 @@ where = ["src"]
 
 [tool.mypy]
 # The folders mypy checks when run with no arguments
-files = ["src", "tests"]
+files = ["src", "scripts", "tests"]
 # Where mypy finds the my_evolve package when checking a single file
 mypy_path = "src"
 # Turn on every check, including "every function must have type hints"
