@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 
-from my_evolve.sandbox_protocol import Message, NotPlainData, receive, send, to_plain
+from my_evolve.sandbox_protocol import Message, decode, encode, receive, send
 
 PROGRAM = """\
 import math
@@ -78,8 +78,8 @@ class Worker:
     def call(self, name: str, *args: Any, **kwargs: Any) -> Message | None:
         """Call one of the program's functions; return the answer, return or raised."""
         self.next_id += 1
-        message = {"type": "call", "id": self.next_id, "name": name, "args": list(args)}
-        return self.exchange({**message, "kwargs": kwargs})
+        message = {"type": "call", "id": self.next_id, "name": name, "args": encode(list(args))}
+        return self.exchange({**message, "kwargs": encode(kwargs)})
 
     def close(self) -> str:
         """End the worker by closing its input, and return what it wrote on its error output.
@@ -94,21 +94,6 @@ class Worker:
             self.process.stdout.close()
             self.process.stderr.close()
         return self.error_output
-
-
-class ToPlainTest(unittest.TestCase):
-    def test_plain_data(self) -> None:
-        """Numbers, text, lists, tuples, dicts and numpy values become plain JSON data."""
-        value = {"a": (1, 2.5), "b": [None, True, "x"], "c": np.array([[1, 2]]), "d": np.int64(3)}
-        self.assertEqual(
-            to_plain(value), {"a": [1, 2.5], "b": [None, True, "x"], "c": [[1, 2]], "d": 3}
-        )
-
-    def test_other_values_are_refused(self) -> None:
-        """Objects, and dictionaries with keys that are not text, cannot travel."""
-        for value in [object(), {1: "one"}, [print]]:
-            with self.subTest(value=value), self.assertRaises(NotPlainData):
-                to_plain(value)
 
 
 class SandboxWorkerTest(unittest.TestCase):
@@ -129,18 +114,22 @@ class SandboxWorkerTest(unittest.TestCase):
         self.assertNotIn("__name__", names)
 
     def test_a_call_returns_its_value(self) -> None:
-        """Arguments go in, the value comes back, numpy values as lists and numbers."""
+        """Arguments go in, the value comes back encoded, numpy arrays included."""
         self.worker.load(PROGRAM)
         self.assertEqual(self.worker.call("add", 1, b=2), {"type": "return", "id": 1, "value": 3})
         answer = self.worker.call("packing")
         assert answer is not None
-        self.assertEqual(answer["value"], [[[0.0, 0.0], [0.0, 0.0]], [0.5, 0.25], 0.75])
+        centers, radii, total = decode(answer["value"])
+        np.testing.assert_array_equal(centers, np.zeros((2, 2)))
+        np.testing.assert_array_equal(radii, [0.5, 0.25])
+        self.assertEqual(total, 0.75)
 
     def test_get_returns_a_global(self) -> None:
         """A plain-data global can be read."""
         self.worker.load(PROGRAM)
         answer = self.worker.exchange({"type": "get", "id": 7, "name": "SETTINGS"})
-        self.assertEqual(answer, {"type": "return", "id": 7, "value": {"size": [2, 3]}})
+        assert answer is not None
+        self.assertEqual(decode(answer["value"]), {"size": (2, 3)})
 
     def test_an_exception_is_raised_with_its_traceback(self) -> None:
         """The error, and a traceback that shows the program's line."""

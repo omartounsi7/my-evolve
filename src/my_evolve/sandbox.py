@@ -27,7 +27,7 @@ from collections.abc import Iterator, Mapping
 from typing import IO, Any
 
 from my_evolve.evaluation_api import ProgramFailure, StageTimeout
-from my_evolve.sandbox_protocol import Message, receive, send, to_plain
+from my_evolve.sandbox_protocol import Message, NotPlainData, decode, encode, receive, send
 
 # How long closing a session waits for the worker to end on its own, in seconds
 CLOSE_WAIT_SECONDS = 5.0
@@ -180,8 +180,8 @@ class SandboxSession:
             "type": "call",
             "id": self.last_id,
             "name": name,
-            "args": to_plain(list(args)),
-            "kwargs": to_plain(dict(kwargs or {})),
+            "args": encode(list(args)),
+            "kwargs": encode(dict(kwargs or {})),
         }
         return self.value_of(self.exchange(message, {"return", "raised"}))
 
@@ -195,7 +195,10 @@ class SandboxSession:
         """Return the value an answer carries. Raises ProgramFailure if it reports an error."""
         if answer["type"] == "raised":
             raise self.failure(answer["error"], answer["traceback"])
-        return answer["value"]
+        try:
+            return decode(answer["value"])
+        except NotPlainData as error:
+            raise self.failure(f"the program's answer cannot be read: {error}") from None
 
     def kill(self) -> None:
         """Stop the worker at once, if it is still running."""

@@ -17,7 +17,7 @@ import traceback
 from types import TracebackType
 from typing import IO, Any
 
-from my_evolve.sandbox_protocol import Message, NotPlainData, receive, send, to_plain
+from my_evolve.sandbox_protocol import Message, NotPlainData, decode, encode, receive, send
 
 # The file name the program's code gets in tracebacks
 PROGRAM_FILE_NAME = "<program>"
@@ -42,7 +42,7 @@ def kind_of(value: Any) -> str:
     if callable(value) and not isinstance(value, type):
         return "function"
     try:
-        to_plain(value)
+        encode(value)
     except NotPlainData:
         return "other"
     return "data"
@@ -68,10 +68,10 @@ def answer(namespace: dict[str, Any], message: Message) -> Message:
             raise NameError(f"the program defines no {name!r}")
         value = namespace[name]
         if message["type"] == "call":
-            value = value(*message.get("args", []), **message.get("kwargs", {}))
+            value = value(*decode(message["args"]), **decode(message["kwargs"]))
         elif message["type"] != "get":
             raise ValueError(f"unknown message type {message['type']!r}")
-        return {"type": "return", "id": message.get("id"), "value": to_plain(value)}
+        return {"type": "return", "id": message.get("id"), "value": encode(value)}
     # BaseException: a function calling exit() is an error of the program, not of the worker.
     except BaseException as error:
         return {

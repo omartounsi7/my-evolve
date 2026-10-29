@@ -92,6 +92,21 @@ class EvaluatorTest(unittest.TestCase):
         self.assertIn("'np' is neither a function nor plain data", result.error or "")
 
 
+class ExactDataTest(unittest.TestCase):
+    def test_the_evaluation_file_receives_arrays_and_tuples(self) -> None:
+        """A program's (array, tuple) answer reaches the evaluation file as it was returned."""
+        evaluation = (
+            "import numpy as np\n"
+            "def evaluate(namespace):\n"
+            "    centers, pair = namespace['f']()\n"
+            "    assert isinstance(centers, np.ndarray) and centers.shape == (26, 2)\n"
+            "    assert isinstance(pair, tuple)\n"
+            "    return float(centers.sum()) + sum(pair)\n"
+        )
+        program = "import numpy as np\ndef f():\n    return np.ones((26, 2)), (1, 2)\n"
+        self.assertEqual(evaluate_with(evaluation, program).score, 55.0)
+
+
 class TimeoutTest(unittest.TestCase):
     def test_a_program_that_never_returns_times_out(self) -> None:
         """A function that never returns is stopped at the time limit: status timeout."""
