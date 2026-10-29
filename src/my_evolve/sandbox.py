@@ -51,6 +51,11 @@ DOCKERFILE_PATH = Path(__file__).parent / "evaluation.Dockerfile"
 IMAGE_NAME = "my-evolve-evaluation"
 # How much of a failed docker command's output an error message keeps, in characters
 DOCKER_ERROR_CHARS = 2000
+# The label every container of a run carries, with the run's id as its value
+RUN_LABEL = "my-evolve.run"
+# How much longer than its stage a worker may live in its container, in seconds: it then
+# stops on its own, even if the host process that started it died
+CONTAINER_GRACE_SECONDS = 10
 # The exit codes of `docker run` itself failing before the worker started: the daemon
 # refused (125), or the command could not be run (126, 127)
 DOCKER_RUN_EXIT_CODES = (125, 126, 127)
@@ -333,7 +338,7 @@ class Sandbox(ABC):
     """Starts sessions: one worker process per program evaluated."""
 
     @abstractmethod
-    def command(self, name: str) -> list[str]:
+    def command(self, name: str, stage_limit: float) -> list[str]:
         """Return the command that starts a worker; name identifies it (a container's name)."""
 
     def environment(self) -> dict[str, str] | None:
@@ -347,6 +352,9 @@ class Sandbox(ABC):
         """Return the exit codes meaning the worker could not start: not the program's fault."""
         return ()
 
+    def remove_leftovers(self) -> None:  # noqa: B027 - most sandboxes leave nothing behind
+        """Remove whatever the run's workers left behind, such as containers still running."""
+
     def start(self, code: str, stage_limit: float) -> SandboxSession:
         """Start a worker, load the program into it, and give it stage_limit seconds in all.
 
@@ -355,7 +363,7 @@ class Sandbox(ABC):
         """
         name = f"my-evolve-{uuid.uuid4().hex[:12]}"
         session = SandboxSession(
-            self.command(name),
+            self.command(name, stage_limit),
             code,
             stage_limit,
             environment=self.environment(),
@@ -381,7 +389,7 @@ class LocalSandbox(Sandbox):
         # How many threads numeric libraries may use
         self.cpus: float = cpus
 
-    def command(self, name: str) -> list[str]:
+    def command(self, name: str, stage_limit: float) -> list[str]:
         """Return the command that starts a worker with this Python."""
         return [sys.executable, "-m", "my_evolve.sandbox_worker"]
 
@@ -397,16 +405,22 @@ class DockerSandbox(Sandbox):
     /tmp; its memory (without swap), CPUs and processes are limited; it runs as the
     user nobody, without any capability; it sees no environment variable of the host.
     The my_evolve package is mounted read-only: the worker needs nothing else.
+
+    No container outlives the run (D42): each is labelled with the run's id, so that
+    remove_leftovers finds them, and its worker runs under a time limit of its own, a
+    little longer than the stage's, so that it stops even if this process dies.
     """
 
-    def __init__(self, image: str, settings: SandboxSettings) -> None:
-        """Prepare to run workers in containers of image (see ensure_image)."""
+    def __init__(self, image: str, settings: SandboxSettings, run_id: str) -> None:
+        """Prepare to run workers in containers of image (see ensure_image) for one run."""
         # The evaluation image, with the problem's packages
         self.image: str = image
         # The containers' limits
         self.settings: SandboxSettings = settings
+        # The run's id, the value of every container's label
+        self.run_id: str = run_id
 
-    def command(self, name: str) -> list[str]:
+    def command(self, name: str, stage_limit: float) -> list[str]:
         """Return the docker run command of a worker in a new container called name."""
         package_folder = Path(__file__).resolve().parent
         memory = self.settings.memory
@@ -418,6 +432,7 @@ class DockerSandbox(Sandbox):
         return [
             "docker", "run", "--rm", "--interactive",
             "--name", name,
+            "--label", f"{RUN_LABEL}={self.run_id}",
             "--network", "none",
             "--read-only",
             "--tmpfs", "/tmp",
@@ -431,6 +446,7 @@ class DockerSandbox(Sandbox):
             *environment,
             "--mount", f"type=bind,source={package_folder},target=/app/my_evolve,readonly",
             self.image,
+            "timeout", "--signal=KILL", f"{math.ceil(stage_limit) + CONTAINER_GRACE_SECONDS}",
             "python", "-m", "my_evolve.sandbox_worker",
         ]  # fmt: skip
 
@@ -441,6 +457,18 @@ class DockerSandbox(Sandbox):
     def startup_exit_codes(self) -> tuple[int, ...]:
         """Return the exit codes of docker run failing before the worker started."""
         return DOCKER_RUN_EXIT_CODES
+
+    def remove_leftovers(self) -> None:
+        """Remove every container labelled with this run's id, running or not.
+
+        Called when the run starts and when it stops, so that nothing outlives it.
+        """
+        listed = run_docker(
+            ["ps", "--all", "--quiet", "--filter", f"label={RUN_LABEL}={self.run_id}"], timeout=60
+        )
+        containers = listed.stdout.split()
+        if containers:
+            run_docker(["rm", "--force", *containers], timeout=60)
 
 
 def run_docker(

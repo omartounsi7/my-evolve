@@ -160,7 +160,7 @@ class ErrorStatusTest(unittest.TestCase):
         """When the worker cannot be started, the program is not to blame."""
 
         class BrokenSandbox(Sandbox):
-            def command(self, name: str) -> list[str]:
+            def command(self, name: str, stage_limit: float) -> list[str]:
                 return ["/no/such/python", "-m", "my_evolve.sandbox_worker"]
 
         evaluator = Evaluator(TOY_FOLDER / "evaluation.py", BrokenSandbox(), STAGE_TIME_LIMIT)

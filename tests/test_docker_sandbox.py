@@ -6,6 +6,7 @@ Skipped when Docker is not installed or not running.
 import os
 import time
 import unittest
+import uuid
 from pathlib import Path
 
 from docker_check import docker_is_available
@@ -22,6 +23,7 @@ from my_evolve.sandbox import (
     image_tag,
     run_docker,
 )
+from my_evolve.sandbox_protocol import send
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
@@ -53,7 +55,7 @@ class IsolationTest(unittest.TestCase):
 
     def start(self, code: str, settings: SandboxSettings | None = None) -> SandboxSession:
         """Start a session in a container without packages, closed at the end of the test."""
-        sandbox = DockerSandbox(ensure_image([]), settings or SandboxSettings())
+        sandbox = DockerSandbox(ensure_image([]), settings or SandboxSettings(), "test")
         session = sandbox.start(code, stage_limit=30.0)
         self.addCleanup(session.close)
         return session
@@ -111,7 +113,7 @@ class IsolationTest(unittest.TestCase):
 
     def test_a_timeout_kills_the_container(self) -> None:
         """At the deadline the container is stopped and removed, with everything it started."""
-        sandbox = DockerSandbox(ensure_image([]), SandboxSettings())
+        sandbox = DockerSandbox(ensure_image([]), SandboxSettings(), "test")
         session = sandbox.start("import time\ndef wait():\n    time.sleep(60)\n", stage_limit=5.0)
         self.addCleanup(session.close)
         started = time.monotonic()
@@ -125,9 +127,55 @@ class IsolationTest(unittest.TestCase):
 
     def test_a_missing_image_is_the_sandbox_fault(self) -> None:
         """docker run failing to start the worker is a SandboxError, not a program failure."""
-        sandbox = DockerSandbox("my-evolve-evaluation:no-such-tag", SandboxSettings())
+        sandbox = DockerSandbox("my-evolve-evaluation:no-such-tag", SandboxSettings(), "test")
         with self.assertRaisesRegex(SandboxError, "the worker could not start"):
             sandbox.start("x = 1\n", stage_limit=60.0)
+
+
+@unittest.skipUnless(docker_is_available(), "Docker is not available")
+class LeftoverTest(unittest.TestCase):
+    def containers_of(self, run_id: str) -> list[str]:
+        """Return the ids of the containers labelled with that run id."""
+        filter_ = f"label=my-evolve.run={run_id}"
+        return run_docker(["ps", "--all", "--quiet", "--filter", filter_]).stdout.split()
+
+    def test_leftovers_of_the_run_are_removed_and_no_others(self) -> None:
+        """remove_leftovers removes the run's containers, still running or not, and only those."""
+        ours = DockerSandbox(ensure_image([]), SandboxSettings(), uuid.uuid4().hex)
+        theirs = DockerSandbox(ensure_image([]), SandboxSettings(), uuid.uuid4().hex)
+        program = "import time\ndef wait():\n    time.sleep(60)\n"
+        sessions = [ours.start(program, 60.0), theirs.start(program, 60.0)]
+        for session in sessions:
+            self.addCleanup(session.close)
+        self.addCleanup(theirs.remove_leftovers)
+        self.assertEqual(len(self.containers_of(ours.run_id)), 1)
+        ours.remove_leftovers()
+        self.assertEqual(self.containers_of(ours.run_id), [])
+        self.assertEqual(len(self.containers_of(theirs.run_id)), 1)
+
+    def test_a_container_stops_on_its_own_when_its_host_process_dies(self) -> None:
+        """Killing only the docker client leaves a busy container, which stops at its own limit.
+
+        The worker is kept busy, so that it does not notice its input closing: only its
+        own time limit, 1 + 10 s, stops it.
+        """
+        sandbox = DockerSandbox(ensure_image([]), SandboxSettings(), uuid.uuid4().hex)
+        self.addCleanup(sandbox.remove_leftovers)
+        session = sandbox.start("def spin():\n    while True:\n        pass\n", stage_limit=1.0)
+        assert session.process is not None and session.process.stdin is not None
+        started = time.monotonic()
+        send(
+            session.process.stdin,
+            {"type": "call", "id": 1, "name": "spin", "args": [], "kwargs": {"__dict__": {}}},
+        )
+        session.process.kill()
+        session.process.wait()
+        time.sleep(3)
+        self.assertEqual(len(self.containers_of(sandbox.run_id)), 1)
+        while self.containers_of(sandbox.run_id) and time.monotonic() < started + 30:
+            time.sleep(1)
+        self.assertEqual(self.containers_of(sandbox.run_id), [])
+        self.assertGreater(time.monotonic() - started, 8)
 
 
 @unittest.skipUnless(docker_is_available(), "Docker is not available")
@@ -135,13 +183,15 @@ class EvaluationInDockerTest(unittest.TestCase):
     def test_the_initial_programs_score_as_before(self) -> None:
         """Circle packing (with its packages) and the toy problem score the same in Docker."""
         problem = Problem.load(CIRCLE_PACKING_FOLDER / "problem.yaml")
-        sandbox = DockerSandbox(ensure_image(problem.packages), problem.sandbox)
+        sandbox = DockerSandbox(ensure_image(problem.packages), problem.sandbox, "test")
         evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", sandbox, 60.0)
         result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
         self.assertEqual(result.status, Status.OK, result.error)
         self.assertAlmostEqual(result.score or 0.0, 0.3642, places=3)
         evaluator = Evaluator(
-            TOY_FOLDER / "evaluation.py", DockerSandbox(ensure_image([]), SandboxSettings()), 60.0
+            TOY_FOLDER / "evaluation.py",
+            DockerSandbox(ensure_image([]), SandboxSettings(), "test"),
+            60.0,
         )
         result = evaluator.evaluate((TOY_FOLDER / "initial_program.py").read_text())
         self.assertEqual((result.status, result.score), (Status.OK, 1.0))

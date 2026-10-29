@@ -14,6 +14,7 @@ Example, from the repository root:
 
 import argparse
 import sys
+import uuid
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
@@ -68,7 +69,7 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     return parsed
 
 
-def make_sandbox(problem: Problem, unsafe_local: bool) -> Sandbox:
+def make_sandbox(problem: Problem, unsafe_local: bool, run_id: str) -> Sandbox:
     """Return the sandbox programs run in: Docker, unless the unsafe local one is asked for.
 
     Builds the evaluation image on first use. Raises SandboxError if Docker fails.
@@ -77,7 +78,7 @@ def make_sandbox(problem: Problem, unsafe_local: bool) -> Sandbox:
         print(UNSAFE_WARNING, file=sys.stderr)
         return LocalSandbox(problem.sandbox.cpus)
     print("Preparing the Docker sandbox (the first time, its image is built)...")
-    return DockerSandbox(ensure_image(problem.packages), problem.sandbox)
+    return DockerSandbox(ensure_image(problem.packages), problem.sandbox, run_id)
 
 
 def main(arguments: list[str]) -> int:
@@ -86,10 +87,19 @@ def main(arguments: list[str]) -> int:
     try:
         problem = Problem.load(parsed.config)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox)
+        # Identifies the run's containers. Saved in the run folder from step 2.1 of the plan.
+        run_id = uuid.uuid4().hex
+        sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox, run_id)
         evaluator = Evaluator(parsed.evaluation_file, sandbox, problem.evaluation.stage_time_limit)
         llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
-        run(problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed)
+        sandbox.remove_leftovers()
+        try:
+            run(
+                problem, initial_code, llm, evaluator, parsed.iterations, parsed.output, parsed.seed
+            )
+        finally:
+            # Whatever happened, no container of the run outlives it.
+            sandbox.remove_leftovers()
     except (ProblemError, EvaluationFileError, RunError, SandboxError) as error:
         # A mistake in the user's files, or Docker failing: one clear message, no traceback.
         print(f"Error: {error}", file=sys.stderr)
