@@ -10,6 +10,13 @@ The problem file is written in YAML. For now it holds:
     llm:
       model: qwen3-coder:30b               # the model's name, as its server knows it
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
+      api_key: ${ANTHROPIC_API_KEY}        # optional: the variable holding the key
+      max_tokens: 16384                    # optional: the longest reply, in tokens
+      temperature: 0.7                     # optional; not for reasoning models
+      reasoning_effort: medium             # optional; reasoning models only
+      reasoning: false                     # optional; guessed from the name if absent
+      timeout: 300                         # optional: seconds to wait for a reply
+      retries: 2                           # optional: retries of a failed request
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
@@ -35,6 +42,11 @@ import yaml
 
 # An amount of memory in Docker's notation, such as "1g" or "512m"
 MEMORY_PATTERN = re.compile(r"[0-9]+(\.[0-9]+)?[bkmg]?")
+# A key written as the variable holding it, such as ${ANTHROPIC_API_KEY}
+KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# The beginnings of the names of OpenAI's reasoning models, which refuse max_tokens and
+# temperature and need max_completion_tokens (as openevolve guesses them)
+REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 # A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
 PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
 
@@ -44,13 +56,27 @@ class ProblemError(ValueError):
 
 
 @dataclass(frozen=True)
-class LLMSettings:
-    """Which model writes the programs, and where to reach it."""
+class ModelSettings:
+    """A model that writes programs: where to reach it, and how to ask it (D32, D33)."""
 
     # The model's name, as its server knows it
-    model: str
+    name: str
     # The address of the server's OpenAI-compatible interface
     api_base: str
+    # The environment variable holding the API key; None for a server that needs none
+    api_key_env: str | None = None
+    # The longest reply, in tokens: enough for a reasoning model's thinking and its reply
+    max_tokens: int = 16_384
+    # The sampling temperature; None to leave it to the server
+    temperature: float | None = None
+    # How hard a reasoning model thinks ("low", "medium", "high", ...); None for its default
+    reasoning_effort: str | None = None
+    # True for a reasoning model, which takes max_completion_tokens and no temperature
+    reasoning: bool = False
+    # How long to wait for one reply, in seconds
+    timeout: float = 300.0
+    # How many times the openai package retries a failed request: the only layer of retries
+    retries: int = 2
 
 
 @dataclass(frozen=True)
@@ -96,7 +122,7 @@ class Problem:
     # What the program must do, including the contract of its entry functions
     description: str
     # The LLM that writes the programs
-    llm: LLMSettings
+    llm: ModelSettings
     # The packages programs may import besides the standard library, such as "numpy==2.5.4"
     packages: tuple[str, ...] = ()
     # The functions every program must define at its top level, such as ("run_packing",)
@@ -130,7 +156,6 @@ class Problem:
             required={"name", "description", "entry_functions", "llm"},
             optional={"packages", "evaluation", "sandbox", "prompt"},
         )
-        llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
         evaluation = checked_section(
             top.get("evaluation", {}),
             "the evaluation section",
@@ -153,10 +178,7 @@ class Problem:
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
             entry_functions=checked_entry_functions(top["entry_functions"]),
-            llm=LLMSettings(
-                model=checked_text(llm, "model", "the llm section"),
-                api_base=checked_text(llm, "api_base", "the llm section"),
-            ),
+            llm=build_model(top["llm"]),
             packages=checked_packages(top.get("packages", [])),
             evaluation=EvaluationSettings(
                 stage_time_limit=checked_positive_number(
@@ -225,6 +247,90 @@ def checked_positive_number(section: dict[str, Any], key: str, where: str, defau
     if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
         raise ProblemError(f"{key!r} in {where} must be a number above 0, got {value!r}")
     return float(value)
+
+
+def is_reasoning_model(name: str) -> bool:
+    """Guess from its name whether a model is one of OpenAI's reasoning models.
+
+    The name is read without any provider prefix, such as "openai/".
+    """
+    return name.rsplit("/", 1)[-1].lower().startswith(REASONING_MODEL_PREFIXES)
+
+
+def parse_key(value: Any) -> str | None:
+    """Return the name of the environment variable holding the API key (D46).
+
+    No value: no key, for a local server. "${NAME}": the variable NAME. Anything else is
+    refused, so that a key is never written in a problem file.
+    """
+    if value is None:
+        return None
+    found = KEY_VARIABLE_PATTERN.fullmatch(value) if isinstance(value, str) else None
+    if found is None:
+        raise ProblemError(
+            "'api_key' must name the environment variable holding the key, such as "
+            "${ANTHROPIC_API_KEY}; never write the key itself in the problem file"
+        )
+    return found.group(1)
+
+
+def checked_optional_number(section: dict[str, Any], key: str, where: str) -> float | None:
+    """Return the value of a key that may hold a finite number, or None if it is absent."""
+    value = section.get(key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float) or not math.isfinite(value):
+        raise ProblemError(f"{key!r} in {where} must be a number, got {value!r}")
+    return float(value)
+
+
+def build_model(section: Any) -> ModelSettings:
+    """Build a model's settings from the llm section, checking every value."""
+    where = "the llm section"
+    llm = checked_section(
+        section,
+        where,
+        required={"model", "api_base"},
+        optional={
+            "api_key",
+            "max_tokens",
+            "temperature",
+            "reasoning_effort",
+            "reasoning",
+            "timeout",
+            "retries",
+        },
+    )
+    defaults = ModelSettings(name="", api_base="")
+    name = checked_text(llm, "model", where)
+    reasoning = llm.get("reasoning", is_reasoning_model(name))
+    if not isinstance(reasoning, bool):
+        raise ProblemError(f"'reasoning' in {where} must be true or false, got {reasoning!r}")
+    temperature = checked_optional_number(llm, "temperature", where)
+    effort = llm.get("reasoning_effort")
+    if effort is not None and not (isinstance(effort, str) and effort.strip()):
+        raise ProblemError(f"'reasoning_effort' in {where} must be some text, got {effort!r}")
+    if reasoning and temperature is not None:
+        raise ProblemError(
+            f"{name} is a reasoning model, which refuses a temperature: remove 'temperature', "
+            "or set 'reasoning: false' if it is not one"
+        )
+    if not reasoning and effort is not None:
+        raise ProblemError(
+            f"'reasoning_effort' is for reasoning models only, and {name} is not one "
+            "(set 'reasoning: true' if it is)"
+        )
+    return ModelSettings(
+        name=name,
+        api_base=checked_text(llm, "api_base", where),
+        api_key_env=parse_key(llm.get("api_key")),
+        max_tokens=checked_count(llm, "max_tokens", where, defaults.max_tokens),
+        temperature=temperature,
+        reasoning_effort=effort,
+        reasoning=reasoning,
+        timeout=checked_positive_number(llm, "timeout", where, defaults.timeout),
+        retries=checked_count(llm, "retries", where, defaults.retries, minimum=0),
+    )
 
 
 def checked_entry_functions(value: Any) -> tuple[str, ...]:

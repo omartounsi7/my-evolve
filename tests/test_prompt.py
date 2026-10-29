@@ -2,14 +2,14 @@
 
 import unittest
 
-from my_evolve.problem import LLMSettings, Problem, PromptSettings
+from my_evolve.problem import ModelSettings, Problem, PromptSettings
 from my_evolve.program import Program, Result, Status
 from my_evolve.prompt import PromptBuilder
 
 PROBLEM = Problem(
     name="toy",
     description="Write solve(), which returns a number up to 10.\n",
-    llm=LLMSettings(model="some-model", api_base="http://localhost:11434/v1"),
+    llm=ModelSettings(name="some-model", api_base="http://localhost:11434/v1"),
     packages=("numpy==2.5.4", "scipy==1.18.1"),
 )
 

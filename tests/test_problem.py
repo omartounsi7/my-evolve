@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +27,7 @@ class ProblemTest(unittest.TestCase):
         problem = Problem.from_dict(valid_data())
         self.assertEqual(problem.name, "toy")
         self.assertEqual(problem.description, "Return a number.")
-        self.assertEqual(problem.llm.model, "some-model")
+        self.assertEqual(problem.llm.name, "some-model")
         self.assertEqual(problem.llm.api_base, "http://localhost:11434/v1")
 
     def test_the_example_problem_files_load(self) -> None:
@@ -45,9 +46,65 @@ class ProblemTest(unittest.TestCase):
         with self.assertRaisesRegex(ProblemError, "unknown key 'descripton' in the problem file"):
             Problem.from_dict(data)
         data = valid_data()
-        data["llm"]["temperature"] = 0.7
-        with self.assertRaisesRegex(ProblemError, "unknown key 'temperature' in the llm section"):
+        data["llm"]["temprature"] = 0.7
+        with self.assertRaisesRegex(ProblemError, "unknown key 'temprature' in the llm section"):
             Problem.from_dict(data)
+
+    def test_the_model_settings_and_their_defaults(self) -> None:
+        """Unset settings are None (not sent); max_tokens, timeout and retries have defaults."""
+        llm = Problem.from_dict(valid_data()).llm
+        self.assertEqual(
+            (llm.api_key_env, llm.temperature, llm.reasoning_effort, llm.reasoning),
+            (None, None, None, False),
+        )
+        self.assertEqual((llm.max_tokens, llm.timeout, llm.retries), (16_384, 300.0, 2))
+        data = valid_data()
+        data["llm"].update(api_key="${MY_KEY}", temperature=0.7, max_tokens=4096, retries=0)
+        llm = Problem.from_dict(data).llm
+        self.assertEqual((llm.api_key_env, llm.temperature, llm.max_tokens), ("MY_KEY", 0.7, 4096))
+        self.assertEqual(llm.retries, 0)
+
+    def test_a_key_written_in_the_file_is_refused(self) -> None:
+        """Only ${VARIABLE}: problem files can be shared without leaking a key."""
+        for key in ["sk-ant-123", "$MY_KEY", "${}", 3]:
+            data = valid_data()
+            data["llm"]["api_key"] = key
+            with self.subTest(key=key), self.assertRaisesRegex(ProblemError, "never write"):
+                Problem.from_dict(data)
+
+    def test_reasoning_models(self) -> None:
+        """Guessed from the name, without a provider prefix; they refuse a temperature."""
+        for name, reasoning in [
+            ("o3-mini", True),
+            ("openai/gpt-5-mini", True),
+            ("gpt-oss:20b", True),
+            ("gpt-4o", False),
+            ("qwen3-coder:30b", False),
+        ]:
+            data = valid_data()
+            data["llm"]["model"] = name
+            with self.subTest(name=name):
+                self.assertEqual(Problem.from_dict(data).llm.reasoning, reasoning)
+        data = valid_data()
+        data["llm"].update(model="o4-mini", temperature=0.5)
+        with self.assertRaisesRegex(ProblemError, "reasoning model, which refuses a temperature"):
+            Problem.from_dict(data)
+        data["llm"].update(model="qwen3:8b", temperature=None, reasoning_effort="high")
+        with self.assertRaisesRegex(ProblemError, "for reasoning models only"):
+            Problem.from_dict(data)
+        data["llm"]["reasoning"] = True
+        self.assertEqual(Problem.from_dict(data).llm.reasoning_effort, "high")
+
+    def test_the_example_problem_files_for_claude(self) -> None:
+        """problem_claude.yaml differs only in its llm section."""
+        for name in ("circle_packing", "function_minimization"):
+            folder = REPOSITORY_FOLDER / "examples" / name
+            with self.subTest(name=name):
+                local = Problem.load(folder / "problem.yaml")
+                claude = Problem.load(folder / "problem_claude.yaml")
+                self.assertEqual(claude.llm.name, "claude-haiku-5-5")
+                self.assertEqual(claude.llm.api_key_env, "ANTHROPIC_API_KEY")
+                self.assertEqual(replace(claude, llm=local.llm), local)
 
     def test_entry_functions(self) -> None:
         """Required: a list of one or more function names."""

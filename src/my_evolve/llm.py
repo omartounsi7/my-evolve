@@ -5,22 +5,24 @@ Ollama and most cloud providers offer. Step 2.9 of the implementation plan bring
 ensemble of several models.
 """
 
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Any
 
+from my_evolve.problem import ModelSettings
 from my_evolve.prompt import Prompt
 
 # The openai package is imported inside OpenAICompatibleLLM, not here: it takes about a
 # second to import, which the tests using a fake LLM need not pay.
 
-# How long to wait for one reply, in seconds
-TIMEOUT_SECONDS = 300.0
-# How many times the openai package retries a request that failed for a passing reason
-# (network, busy server). This is the only layer of retries.
-RETRIES = 2
 # Sent when no API key is needed: local servers ignore it, but the openai package requires one
 PLACEHOLDER_API_KEY = "no-key-needed"
+
+
+class MissingKeyError(ValueError):
+    """Raised when the environment variable a model's key should be in is not set."""
 
 
 @dataclass(frozen=True)
@@ -60,21 +62,52 @@ class LLM(ABC):
 
 
 class OpenAICompatibleLLM(LLM):
-    """A model reached through the OpenAI-compatible interface, such as a local Ollama server."""
+    """A model reached through the OpenAI-compatible interface, such as a local Ollama server.
 
-    def __init__(self, name: str, api_base: str) -> None:
-        """Prepare to talk to one model on one server. Nothing is sent yet."""
-        super().__init__(name)
+    OpenAI's reasoning models get their token limit as max_completion_tokens, and a
+    reasoning effort if one is set; the others get max_tokens, and a temperature if one
+    is set (D32, D33). Settings left unset are not sent.
+    """
+
+    def __init__(self, settings: ModelSettings) -> None:
+        """Prepare to talk to one model. Nothing is sent yet.
+
+        Raises MissingKeyError if the variable holding the model's key is not set.
+        """
+        super().__init__(settings.name)
         # Imported here, not at the top of the file: see the note there.
         import openai
 
-        # Sends the requests, with the timeout and the retries
+        # How to ask this model
+        self.settings: ModelSettings = settings
+        key = PLACEHOLDER_API_KEY
+        if settings.api_key_env is not None:
+            key = os.environ.get(settings.api_key_env, "")
+            if not key:
+                raise MissingKeyError(
+                    f"the API key of {settings.name} should be in the environment variable "
+                    f"{settings.api_key_env}, which is not set"
+                )
+        # Sends the requests, with the timeout and the retries; the only holder of the key
         self.client: openai.OpenAI = openai.OpenAI(
-            base_url=api_base,
-            api_key=PLACEHOLDER_API_KEY,
-            timeout=TIMEOUT_SECONDS,
-            max_retries=RETRIES,
+            base_url=settings.api_base,
+            api_key=key,
+            timeout=settings.timeout,
+            max_retries=settings.retries,
         )
+
+    def generation_settings(self) -> dict[str, Any]:
+        """Return the settings sent with every request, leaving out those not set."""
+        settings = self.settings
+        if settings.reasoning:
+            sent: dict[str, Any] = {"max_completion_tokens": settings.max_tokens}
+            if settings.reasoning_effort is not None:
+                sent["reasoning_effort"] = settings.reasoning_effort
+        else:
+            sent = {"max_tokens": settings.max_tokens}
+            if settings.temperature is not None:
+                sent["temperature"] = settings.temperature
+        return sent
 
     def complete(self, prompt: Prompt) -> LLMReply:
         """Send the system and user messages to the model and return its reply.
@@ -92,6 +125,7 @@ class OpenAICompatibleLLM(LLM):
                     {"role": "system", "content": prompt.system},
                     {"role": "user", "content": prompt.user},
                 ],
+                **self.generation_settings(),
             )
         except openai.OpenAIError as error:
             raise LLMError(self.name, f"{type(error).__name__}: {error}") from error

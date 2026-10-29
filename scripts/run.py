@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
-from my_evolve.llm import OpenAICompatibleLLM
+from my_evolve.llm import MissingKeyError, OpenAICompatibleLLM
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem, ProblemError
 from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, SandboxError, ensure_image
@@ -96,7 +96,7 @@ def main(arguments: list[str]) -> int:
             problem.evaluation.stage_time_limit,
             problem.evaluation.thresholds,
         )
-        llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
+        llm = OpenAICompatibleLLM(problem.llm)
         sandbox.remove_leftovers()
         try:
             run(
@@ -112,7 +112,7 @@ def main(arguments: list[str]) -> int:
         finally:
             # Whatever happened, no container of the run outlives it.
             sandbox.remove_leftovers()
-    except (ProblemError, EvaluationFileError, RunError, SandboxError) as error:
+    except (ProblemError, EvaluationFileError, RunError, SandboxError, MissingKeyError) as error:
         # A mistake in the user's files, or Docker failing: one clear message, no traceback.
         print(f"Error: {error}", file=sys.stderr)
         return 1
