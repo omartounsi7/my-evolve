@@ -3,7 +3,7 @@
 import random
 import unittest
 
-from my_evolve.database import EXAMPLE_PROGRAMS, Database
+from my_evolve.database import Database
 from my_evolve.program import Program, Result, Status
 
 
@@ -50,8 +50,8 @@ class DatabaseTest(unittest.TestCase):
         """Failed programs are never drawn; the examples are other, distinct programs."""
         database = filled_database()
         for _ in range(200):
-            parent, examples = database.sample()
-            self.assertEqual(len(examples), EXAMPLE_PROGRAMS)
+            parent, examples = database.sample(2)
+            self.assertEqual(len(examples), 2)
             drawn = [parent, *examples]
             self.assertTrue(all(program.result.is_ok for program in drawn))
             self.assertEqual(len({program.id for program in drawn}), len(drawn))
@@ -62,14 +62,14 @@ class DatabaseTest(unittest.TestCase):
         initial = working(1.0)
         database.add(initial)
         database.add(failed())
-        self.assertEqual(database.sample(), (initial, []))
+        self.assertEqual(database.sample(2), (initial, []))
 
     def test_the_same_seed_draws_the_same(self) -> None:
         """Two databases with the same seed and programs make the same draws."""
         first, second = filled_database(seed=7), filled_database(seed=7)
         # The programs differ only by id: compare their scores.
         for _ in range(20):
-            (parent_1, examples_1), (parent_2, examples_2) = first.sample(), second.sample()
+            (parent_1, examples_1), (parent_2, examples_2) = first.sample(2), second.sample(2)
             self.assertEqual(
                 [p.result.score for p in [parent_1, *examples_1]],
                 [p.result.score for p in [parent_2, *examples_2]],
@@ -78,15 +78,22 @@ class DatabaseTest(unittest.TestCase):
     def test_every_working_program_can_be_drawn(self) -> None:
         """The draw is not stuck on the best: every working program is drawn sometimes."""
         database = filled_database()
-        parents = {database.sample()[0].result.score for _ in range(200)}
+        parents = {database.sample(2)[0].result.score for _ in range(200)}
         self.assertEqual(parents, {0.0, 1.0, 2.0, 3.0, 4.0})
+
+    def test_the_number_of_examples_is_a_setting(self) -> None:
+        """No examples with a count of 0; as many as asked, while there are enough."""
+        database = filled_database()
+        self.assertEqual(database.sample(0)[1], [])
+        self.assertEqual(len(database.sample(4)[1]), 4)
+        self.assertEqual(len(database.sample(9)[1]), 4)
 
     def test_sampling_an_empty_database_is_refused(self) -> None:
         """Without a working program, there is nothing to build on."""
         database = Database(random.Random(0))
         database.add(failed())
         with self.assertRaisesRegex(ValueError, "no working program"):
-            database.sample()
+            database.sample(2)
 
 
 class FingerprintTest(unittest.TestCase):

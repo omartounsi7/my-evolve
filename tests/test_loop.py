@@ -94,7 +94,7 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(len(llm.prompts), 5)
         self.assertNotIn("Previous attempts", llm.prompts[0].user)
         self.assertIn(
-            "score 1.0\nFeedback: solve() returned 1.0.\n```python\n# EVOLVE-BLOCK-START\n",
+            "score 1.0; best score so far in this run: 1.0\nFeedback: solve() returned 1.0.\n",
             llm.prompts[0].user,
         )
 

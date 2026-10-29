@@ -10,8 +10,6 @@ import random
 
 from my_evolve.program import Program, Status
 
-# How many example programs the prompt shows besides the parent (fewer if there are fewer)
-EXAMPLE_PROGRAMS = 2
 # The statuses whose programs count for the duplicate check: they were run. Rejected ones
 # never were, and an error is not the program's fault: an identical child may be tried.
 FINGERPRINTED_STATUSES = (Status.OK, Status.FAILED, Status.TIMEOUT, Status.INVALID)
@@ -60,11 +58,11 @@ class Database:
         """Return the programs whose status is ok, in the order they were added."""
         return [program for program in self.programs.values() if program.result.is_ok]
 
-    def sample(self) -> tuple[Program, list[Program]]:
+    def sample(self, example_count: int) -> tuple[Program, list[Program]]:
         """Draw the parent of the next child, and the example programs shown beside it.
 
         The parent is drawn uniformly among the working programs; the examples are up
-        to EXAMPLE_PROGRAMS other working programs, drawn uniformly, in the order drawn.
+        to example_count other working programs, drawn uniformly, in the order drawn.
         Failed programs are never drawn. Raises ValueError if no program works.
         """
         candidates = self.working_programs()
@@ -72,5 +70,5 @@ class Database:
             raise ValueError("no working program to build on")
         parent = self.rng.choice(candidates)
         others = [program for program in candidates if program.id != parent.id]
-        examples = self.rng.sample(others, min(EXAMPLE_PROGRAMS, len(others)))
+        examples = self.rng.sample(others, min(example_count, len(others)))
         return parent, examples

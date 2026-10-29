@@ -80,19 +80,28 @@ class ProblemTest(unittest.TestCase):
     def test_the_prompt_and_sandbox_sections(self) -> None:
         """Their defaults, and values that are refused."""
         problem = Problem.from_dict(valid_data())
-        self.assertEqual(problem.prompt.max_feedback_chars, 2000)
+        self.assertEqual(
+            (
+                problem.prompt.example_programs,
+                problem.prompt.max_chars,
+                problem.prompt.max_feedback_chars,
+            ),
+            (2, 60_000, 2000),
+        )
         self.assertEqual(
             (problem.sandbox.memory, problem.sandbox.cpus, problem.sandbox.max_processes),
             ("1g", 1.0, 64),
         )
         data = valid_data()
-        data["prompt"] = {"max_feedback_chars": 500}
+        data["prompt"] = {"max_feedback_chars": 500, "example_programs": 0}
         data["sandbox"] = {"memory": "512m", "cpus": 2, "max_processes": 32}
         problem = Problem.from_dict(data)
         self.assertEqual(problem.prompt.max_feedback_chars, 500)
         self.assertEqual(problem.sandbox.memory, "512m")
         for section, wrong in [
             ("prompt", {"max_feedback_chars": 0}),
+            ("prompt", {"example_programs": -1}),
+            ("prompt", {"max_chars": 0}),
             ("sandbox", {"memory": "lots"}),
             ("sandbox", {"cpus": -1}),
             ("sandbox", {"max_processes": 1.5}),

@@ -2,8 +2,8 @@
 
 Each iteration runs the six steps of the AlphaEvolve diagram:
 
-    parent, examples = database.sample()
-    prompt = prompt_builder.build(parent, examples)
+    parent, examples = database.sample(example_count)
+    prompt = prompt_builder.build(parent, examples, best_score)
     reply = llm.complete(prompt)
     parsed = parse_reply(reply)          # the program and its description
     result = evaluator.evaluate(parsed.code)
@@ -155,8 +155,8 @@ def run(
     print(f"Initial program: {describe(initial)}")
 
     for iteration in range(1, iterations + 1):
-        parent, examples = database.sample()
-        prompt = prompt_builder.build(parent, examples)
+        parent, examples = database.sample(problem.prompt.example_programs)
+        prompt = prompt_builder.build(parent, examples, database.best_score())
         call: dict[str, Any] = {"iteration": iteration, "user_message": prompt.user}
         try:
             reply = llm.complete(prompt)

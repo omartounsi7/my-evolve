@@ -14,6 +14,8 @@ The problem file is written in YAML. For now it holds:
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
     prompt:                                # optional
+      example_programs: 2                  # other programs shown besides the parent
+      max_chars: 60000                     # the longest prompt, in characters
       max_feedback_chars: 2000             # feedback and errors are cut to this length
     sandbox:                               # optional: the limits of the Docker sandbox
       memory: 1g                           # memory, without swap (Docker's notation)
@@ -77,6 +79,10 @@ class SandboxSettings:
 class PromptSettings:
     """What the prompt shows."""
 
+    # How many example programs the prompt shows besides the parent (D26)
+    example_programs: int = 2
+    # The longest prompt, both messages together, in characters (D30)
+    max_chars: int = 60_000
     # The longest feedback or error shown for one program, in characters
     max_feedback_chars: int = 2000
 
@@ -136,8 +142,11 @@ class Problem:
             optional={"memory", "cpus", "max_processes"},
         )
         prompt = checked_section(
-            top.get("prompt", {}), "the prompt section", optional={"max_feedback_chars"}
+            top.get("prompt", {}),
+            "the prompt section",
+            optional={"example_programs", "max_chars", "max_feedback_chars"},
         )
+        prompt_defaults = PromptSettings()
         defaults = EvaluationSettings()
         sandbox_defaults = SandboxSettings()
         return cls(
@@ -159,11 +168,21 @@ class Problem:
                 thresholds=checked_thresholds(evaluation.get("thresholds", [])),
             ),
             prompt=PromptSettings(
+                example_programs=checked_count(
+                    prompt,
+                    "example_programs",
+                    "the prompt section",
+                    prompt_defaults.example_programs,
+                    minimum=0,
+                ),
+                max_chars=checked_count(
+                    prompt, "max_chars", "the prompt section", prompt_defaults.max_chars
+                ),
                 max_feedback_chars=checked_count(
                     prompt,
                     "max_feedback_chars",
                     "the prompt section",
-                    PromptSettings().max_feedback_chars,
+                    prompt_defaults.max_feedback_chars,
                 ),
             ),
             sandbox=SandboxSettings(
@@ -234,11 +253,15 @@ def checked_thresholds(value: Any) -> tuple[float, ...]:
     return tuple(float(item) for item in value)
 
 
-def checked_count(section: dict[str, Any], key: str, where: str, default: int) -> int:
-    """Return the value of a key that must hold a whole number of 1 or more, or the default."""
+def checked_count(
+    section: dict[str, Any], key: str, where: str, default: int, minimum: int = 1
+) -> int:
+    """Return the value of a key holding a whole number of at least minimum, or the default."""
     value = section.get(key, default)
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ProblemError(f"{key!r} in {where} must be a whole number of 1 or more, got {value!r}")
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise ProblemError(
+            f"{key!r} in {where} must be a whole number of {minimum} or more, got {value!r}"
+        )
     return value
 
 
