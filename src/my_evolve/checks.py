@@ -9,11 +9,16 @@ The checks, in this order (check_child):
 2. it keeps the evolve blocks where the initial program has them (D12): the LLM may
    change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`; the
    code outside them, and the markers, must stay as they are;
-3. it defines, at the top level, every entry function the problem file names.
+3. it defines, at the top level, every entry function the problem file names;
+4. it is not a duplicate of an earlier program: no earlier program has the same syntax
+   tree (D13, D24). Each program's tree is kept as a hash, its fingerprint, so the check
+   is instant; comments and spacing are not part of the tree, so they do not count.
 """
 
 import ast
-from collections.abc import Sequence
+import hashlib
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
 # The lines that open and close an evolve block, without the spaces around them
 START_MARKER = "# EVOLVE-BLOCK-START"
@@ -102,6 +107,24 @@ def same_outside_code(child_code: str, initial_code: str) -> str | None:
     return None
 
 
+@dataclass(frozen=True)
+class ChildChecks:
+    """What the checks found about a child."""
+
+    # Why the child is rejected; None if it passed every check
+    reason: str | None
+    # The hash of its syntax tree; None if it does not compile
+    fingerprint: str | None
+
+
+def fingerprint(tree: ast.Module) -> str:
+    """Return the SHA-256 hash of a syntax tree, written out without line numbers.
+
+    Comments and spacing are not part of the tree, so they do not change it.
+    """
+    return hashlib.sha256(ast.dump(tree).encode("utf-8")).hexdigest()
+
+
 def defined_functions(tree: ast.Module) -> set[str]:
     """Return the names of the functions defined at the top level of a program."""
     return {
@@ -109,23 +132,34 @@ def defined_functions(tree: ast.Module) -> set[str]:
     }
 
 
-def check_child(code: str, initial_code: str, entry_functions: Sequence[str]) -> str | None:
-    """Run the checks of D13 on a child, in order; return the reason it is rejected, or None.
+def check_child(
+    code: str,
+    initial_code: str,
+    entry_functions: Sequence[str],
+    known_fingerprints: Mapping[str, str],
+) -> ChildChecks:
+    """Run the checks of D13 on a child, in order, and return what they found.
 
-    Raises MarkerError if the initial program's own markers are broken.
+    known_fingerprints gives, for each fingerprint of an earlier program, that program's
+    id. Raises MarkerError if the initial program's own markers are broken.
     """
     if not code.strip():
-        return "no code in the reply"
+        return ChildChecks("no code in the reply", None)
     try:
         tree = ast.parse(code)
     except (SyntaxError, ValueError) as error:
         line = f" (line {error.lineno})" if isinstance(error, SyntaxError) and error.lineno else ""
         message = error.msg if isinstance(error, SyntaxError) else str(error)
-        return f"the program does not compile: {message}{line}"
+        return ChildChecks(f"the program does not compile: {message}{line}", None)
+    tree_hash = fingerprint(tree)
     difference = same_outside_code(code, initial_code)
     if difference is not None:
-        return difference
+        return ChildChecks(difference, tree_hash)
     missing = [name for name in entry_functions if name not in defined_functions(tree)]
     if missing:
-        return f"the program must define the function {missing[0]}() at its top level"
-    return None
+        return ChildChecks(
+            f"the program must define the function {missing[0]}() at its top level", tree_hash
+        )
+    if tree_hash in known_fingerprints:
+        return ChildChecks(f"same program as {known_fingerprints[tree_hash]}", tree_hash)
+    return ChildChecks(None, tree_hash)

@@ -1,9 +1,16 @@
 """Checks the checks before evaluation: evolve blocks kept where the initial program has them."""
 
+import ast
 import unittest
 from pathlib import Path
 
-from my_evolve.checks import MarkerError, check_child, same_outside_code, split_evolve_blocks
+from my_evolve.checks import (
+    MarkerError,
+    check_child,
+    fingerprint,
+    same_outside_code,
+    split_evolve_blocks,
+)
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 INITIAL_PROGRAMS = {
@@ -110,7 +117,7 @@ class SameOutsideCodeTest(unittest.TestCase):
 class CheckChildTest(unittest.TestCase):
     def test_a_good_child_passes(self) -> None:
         child = TWO_BLOCKS.replace("    return 1", "    return 10")
-        self.assertIsNone(check_child(child, TWO_BLOCKS, ["a", "middle"]))
+        self.assertIsNone(check_child(child, TWO_BLOCKS, ["a", "middle"], {}).reason)
 
     def test_each_rejection_with_its_reason(self) -> None:
         for child, reason in [
@@ -125,25 +132,47 @@ class CheckChildTest(unittest.TestCase):
             (TWO_BLOCKS + "\nx = 1\n", "'x = 1' was added"),
         ]:
             with self.subTest(reason=reason):
-                self.assertIn(reason, check_child(child, TWO_BLOCKS, ["a"]) or "")
+                self.assertIn(reason, check_child(child, TWO_BLOCKS, ["a"], {}).reason or "")
 
     def test_the_checks_come_in_order(self) -> None:
         """A program that fails several checks gets the reason of the first."""
         no_markers_and_no_function = "def b():\n    return 1\n"
-        reason = check_child(no_markers_and_no_function, TWO_BLOCKS, ["a"]) or ""
+        reason = check_child(no_markers_and_no_function, TWO_BLOCKS, ["a"], {}).reason or ""
         self.assertIn("evolve-block markers", reason)
 
     def test_entry_functions_must_be_at_the_top_level(self) -> None:
         """A function of that name inside a class does not count."""
         in_a_class = "class K:\n    def a(self):\n        return 1"
         child = TWO_BLOCKS.replace("def a():\n    return 1", in_a_class)
-        self.assertIn("define the function a()", check_child(child, TWO_BLOCKS, ["a"]) or "")
+        self.assertIn(
+            "define the function a()", check_child(child, TWO_BLOCKS, ["a"], {}).reason or ""
+        )
 
     def test_the_initial_programs_pass_against_themselves(self) -> None:
         entry = {"circle_packing": ["run_packing"], "function_minimization": ["run_search"]}
         for name, code in INITIAL_PROGRAMS.items():
             with self.subTest(name=name):
-                self.assertIsNone(check_child(code, code, entry[name]))
+                self.assertIsNone(check_child(code, code, entry[name], {}).reason)
+
+
+class FingerprintTest(unittest.TestCase):
+    def test_comments_and_spacing_do_not_change_the_fingerprint(self) -> None:
+        code = "def f(x):\n    return x + 1\n"
+        reformatted = "# A comment\ndef f( x ):\n\n    return x+1  # another\n"
+        self.assertEqual(fingerprint(ast.parse(code)), fingerprint(ast.parse(reformatted)))
+        changed = "def f(x):\n    return x + 2\n"
+        self.assertNotEqual(fingerprint(ast.parse(code)), fingerprint(ast.parse(changed)))
+
+    def test_a_known_program_is_rejected_with_the_id_of_the_first(self) -> None:
+        child = TWO_BLOCKS.replace("    return 1", "    return 10  # better")
+        checks = check_child(child, TWO_BLOCKS, ["a"], {})
+        self.assertIsNone(checks.reason)
+        assert checks.fingerprint is not None
+        repeat = check_child(child + "\n\n", TWO_BLOCKS, ["a"], {checks.fingerprint: "abc"})
+        self.assertEqual(repeat.reason, "same program as abc")
+
+    def test_a_program_that_does_not_compile_has_no_fingerprint(self) -> None:
+        self.assertIsNone(check_child("def (", TWO_BLOCKS, ["a"], {}).fingerprint)
 
 
 if __name__ == "__main__":

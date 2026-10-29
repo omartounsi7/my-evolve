@@ -89,5 +89,22 @@ class DatabaseTest(unittest.TestCase):
             database.sample()
 
 
+class FingerprintTest(unittest.TestCase):
+    def test_only_programs_that_ran_count_for_duplicates(self) -> None:
+        """ok, failed, timeout and invalid programs are recorded; rejected and error ones not."""
+        database = Database(random.Random(0))
+        for status in Status:
+            result = Result(status, score=1.0) if status is Status.OK else Result(status, error="x")
+            database.add(Program("x = 1\n", result, fingerprint=status.value))
+        self.assertEqual(set(database.fingerprints), {"ok", "failed", "timeout", "invalid"})
+
+    def test_the_first_program_with_a_fingerprint_keeps_it(self) -> None:
+        database = Database(random.Random(0))
+        first = Program("x = 1\n", Result(Status.OK, score=1.0), fingerprint="same")
+        database.add(first)
+        database.add(Program("x = 1\n", Result(Status.OK, score=2.0), fingerprint="same"))
+        self.assertEqual(database.fingerprints, {"same": first.id})
+
+
 if __name__ == "__main__":
     unittest.main()

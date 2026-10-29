@@ -115,6 +115,24 @@ class LoopTest(unittest.TestCase):
         self.assertTrue(best_file.startswith("# Best program of the run: score 4.0, iteration 1"))
         self.assertIn("    return 4\n", best_file)
 
+    def test_a_duplicate_costs_no_evaluation(self) -> None:
+        """A child identical to an earlier program (comments aside) is rejected."""
+        initial = (TOY_FOLDER / "initial_program.py").read_text()
+        replies: list[str | Exception] = [
+            reply_returning("5"),
+            "```python\n" + initial.replace("return 1.0", "return 1.0  # unchanged") + "```",
+            reply_returning("5"),
+        ]
+        database, _, _ = run_toy(replies, self.output)
+        programs = list(database.programs.values())
+        self.assertEqual(
+            [program.result.status for program in programs[1:]],
+            [Status.OK, Status.REJECTED, Status.REJECTED],
+        )
+        self.assertEqual(programs[2].result.error, f"same program as {programs[0].id}")
+        self.assertEqual(programs[3].result.error, f"same program as {programs[1].id}")
+        self.assertEqual(programs[2].result.duration, 0.0)
+
     def test_every_llm_call_is_saved(self) -> None:
         """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""
         replies: list[str | Exception] = [

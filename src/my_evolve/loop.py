@@ -110,7 +110,8 @@ def run(
     LLM call fails is skipped.
 
     A child that fails a check (it does not compile, changes code outside the evolve
-    blocks, or lacks an entry function) is rejected, not evaluated.
+    blocks, lacks an entry function, or repeats an earlier program) is rejected, and
+    costs no evaluation.
 
     Raises RunError if the output folder already holds a run, if the initial program
     fails the checks, or if it does not work: evolution needs a working start.
@@ -125,9 +126,9 @@ def run(
         split_evolve_blocks(initial_code)
     except MarkerError as error:
         raise RunError(f"the initial program's evolve blocks are broken: {error}") from None
-    reason = check_child(initial_code, initial_code, problem.entry_functions)
-    if reason is not None:
-        raise RunError(f"the initial program fails the checks: {reason}")
+    checks = check_child(initial_code, initial_code, problem.entry_functions, {})
+    if checks.reason is not None:
+        raise RunError(f"the initial program fails the checks: {checks.reason}")
     print(f"Seed: {seed}")
 
     database = Database(random.Random(seed))
@@ -140,7 +141,9 @@ def run(
         if database.best_id == program.id:
             write_best_program(output, program)
 
-    initial = Program(initial_code, evaluator.evaluate(initial_code))
+    initial = Program(
+        initial_code, evaluator.evaluate(initial_code), fingerprint=checks.fingerprint
+    )
     if not initial.result.is_ok:
         raise RunError(
             f"the initial program does not work ({initial.result.status.value}): "
@@ -163,10 +166,23 @@ def run(
             print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
             continue
         parsed = parse_reply(reply.text, parent.code)
-        reason = check_child(parsed.code, initial_code, problem.entry_functions)
-        result = Result.rejected(reason) if reason else evaluator.evaluate(parsed.code)
+        checks = check_child(
+            parsed.code, initial_code, problem.entry_functions, database.fingerprints
+        )
+        if checks.reason is not None:
+            result = Result.rejected(checks.reason)
+        else:
+            result = evaluator.evaluate(parsed.code)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
-        child = Program.new_child(parent, parsed.code, result, iteration, usage, parsed.description)
+        child = Program.new_child(
+            parent,
+            parsed.code,
+            result,
+            iteration,
+            usage,
+            parsed.description,
+            checks.fingerprint,
+        )
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
         append_line(output / LLM_CALLS_FILE, call)

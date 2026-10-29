@@ -8,10 +8,13 @@ islands and MAP-Elites grids.
 
 import random
 
-from my_evolve.program import Program
+from my_evolve.program import Program, Status
 
 # How many example programs the prompt shows besides the parent (fewer if there are fewer)
 EXAMPLE_PROGRAMS = 2
+# The statuses whose programs count for the duplicate check: they were run. Rejected ones
+# never were, and an error is not the program's fault: an identical child may be tried.
+FINGERPRINTED_STATUSES = (Status.OK, Status.FAILED, Status.TIMEOUT, Status.INVALID)
 
 
 class Database:
@@ -24,6 +27,8 @@ class Database:
         """
         # Every program of the run, by id, in the order added
         self.programs: dict[str, Program] = {}
+        # For each fingerprint of a program run so far, the id of the first that had it
+        self.fingerprints: dict[str, str] = {}
         # The id of the program with the highest score; the earliest one on a tie
         self.best_id: str | None = None
         # The run's random generator
@@ -32,6 +37,8 @@ class Database:
     def add(self, program: Program) -> None:
         """Store a program; if it works and beats the best score, it becomes the best."""
         self.programs[program.id] = program
+        if program.fingerprint is not None and program.result.status in FINGERPRINTED_STATUSES:
+            self.fingerprints.setdefault(program.fingerprint, program.id)
         score = program.result.score
         if not program.result.is_ok or score is None:
             return

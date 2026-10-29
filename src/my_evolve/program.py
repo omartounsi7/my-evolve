@@ -125,6 +125,8 @@ class Program:
     llm: LLMUsage | None = None
     # How it solves the problem, in the words of the LLM that wrote it; None if unknown
     description: str | None = None
+    # The hash of its syntax tree (D13); None if it does not compile
+    fingerprint: str | None = None
     # Identifies the program everywhere: in the database and in the saved files
     id: str = field(default_factory=new_id)
 
@@ -137,6 +139,7 @@ class Program:
         iteration: int,
         llm: LLMUsage | None = None,
         description: str | None = None,
+        fingerprint: str | None = None,
     ) -> "Program":
         """Return a program the LLM wrote from parent, one generation further."""
         return cls(
@@ -147,6 +150,7 @@ class Program:
             iteration=iteration,
             llm=llm,
             description=description,
+            fingerprint=fingerprint,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -159,5 +163,6 @@ class Program:
             "result": self.result.to_dict(),
             "llm": self.llm.to_dict() if self.llm else None,
             "description": self.description,
+            "fingerprint": self.fingerprint,
             "code": self.code,
         }
