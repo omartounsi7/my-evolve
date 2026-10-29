@@ -9,18 +9,21 @@ code only; step 2.7 of the implementation plan gives the prompt its final text.
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from my_evolve.problem import Problem
+from my_evolve.problem import Problem, package_name
 from my_evolve.program import Program
 
-# The system message, with a blank for the problem's description
+# The system message, with blanks for the problem's description and the allowed packages
 SYSTEM_TEMPLATE = """\
 You are an expert software engineer tasked with improving a program. You will see a \
 program to improve, the parent, and other programs tried before, with their scores. \
-Write a new version of the parent that solves the problem below better than it does. \
-Higher scores are better.
+Write a new version of the parent that solves the problem below better than it does.
 
 # Problem
 {description}
+
+# Rules
+- {packages_rule}
+- Higher scores are better.
 
 # Reply format
 Reply with the complete new program in a single ```python code block.
@@ -38,6 +41,14 @@ class Prompt:
     system: str
     # What changes every iteration
     user: str
+
+
+def packages_rule(packages: Sequence[str]) -> str:
+    """Return the rule saying what the program may import: package names, without versions."""
+    if not packages:
+        return "You may import Python's standard library only. Nothing else is installed."
+    names = ", ".join(package_name(package) for package in packages)
+    return f"You may import Python's standard library and: {names}. Nothing else is installed."
 
 
 def score_of(program: Program) -> float:
@@ -58,7 +69,9 @@ class PromptBuilder:
 
     def __init__(self, problem: Problem) -> None:
         """Write the system message, which stays the same for the whole run."""
-        self.system_message: str = SYSTEM_TEMPLATE.format(description=problem.description.strip())
+        self.system_message: str = SYSTEM_TEMPLATE.format(
+            description=problem.description.strip(), packages_rule=packages_rule(problem.packages)
+        )
 
     def build(self, parent: Program, examples: Sequence[Program]) -> Prompt:
         """Return the prompt asking the LLM to improve parent, the example programs shown first.

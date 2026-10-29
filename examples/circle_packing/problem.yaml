@@ -24,6 +24,12 @@ description: |
   sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
   and no two circles may overlap, up to a tolerance of 1e-6; no radius may be negative.
 
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - matplotlib==3.11.2
+  - numpy==2.5.4
+  - scipy==1.18.1
+
 # The LLM: Appendix B's main model of batch 1, on a local Ollama server.
 llm:
   model: qwen3-coder:30b

@@ -16,14 +16,17 @@ program can still read and write your files and use the network. Step 1.8 of the
 adds the Docker sandbox.
 """
 
+import hashlib
 import queue
+import shutil
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
+from pathlib import Path
 from typing import IO, Any
 
 from my_evolve.evaluation_api import ProgramFailure, StageTimeout
@@ -36,6 +39,12 @@ ERROR_TAIL_CHARS = 2000
 # The exit codes of a process killed by SIGKILL, which is what running out of memory
 # usually brings: in Docker, and as a plain subprocess
 KILLED_EXIT_CODES = (137, -9)
+
+# The image definition the Docker sandbox builds from, and the name of its images
+DOCKERFILE_PATH = Path(__file__).parent / "evaluation.Dockerfile"
+IMAGE_NAME = "my-evolve-evaluation"
+# How much of a failed docker command's output an error message keeps, in characters
+DOCKER_ERROR_CHARS = 2000
 
 
 class SandboxError(Exception):
@@ -295,3 +304,49 @@ class LocalSandbox(Sandbox):
     def command(self) -> list[str]:
         """Return the command that starts a worker with this Python."""
         return [sys.executable, "-m", "my_evolve.sandbox_worker"]
+
+
+def run_docker(
+    arguments: Sequence[str], timeout: float | None = None
+) -> "subprocess.CompletedProcess[str]":
+    """Run a docker command and return how it went. Raises SandboxError if Docker is missing."""
+    if shutil.which("docker") is None:
+        raise SandboxError("Docker is not installed")
+    try:
+        return subprocess.run(
+            ["docker", *arguments], capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SandboxError(f"docker {arguments[0]} failed: {error}") from error
+
+
+def image_tag(packages: Sequence[str]) -> str:
+    """Return the evaluation image's name and tag: a hash of the Dockerfile and the packages.
+
+    Changing either changes the tag, so that the image is rebuilt.
+    """
+    content = DOCKERFILE_PATH.read_bytes() + "\n".join(packages).encode("utf-8")
+    return f"{IMAGE_NAME}:{hashlib.sha256(content).hexdigest()[:12]}"
+
+
+def ensure_image(packages: Sequence[str]) -> str:
+    """Build the evaluation image with these packages unless it exists; return its tag.
+
+    The build sees a folder holding only the Dockerfile and the package list. Raises
+    SandboxError if Docker is missing or stopped, or if the build fails.
+    """
+    tag = image_tag(packages)
+    if run_docker(["image", "inspect", tag]).returncode == 0:
+        return tag
+    info = run_docker(["info"])
+    if info.returncode != 0:
+        raise SandboxError(f"Docker is not running: {info.stderr.strip()[-DOCKER_ERROR_CHARS:]}")
+    with tempfile.TemporaryDirectory() as folder:
+        shutil.copyfile(DOCKERFILE_PATH, Path(folder) / "Dockerfile")
+        requirements = "".join(f"{package}\n" for package in packages)
+        (Path(folder) / "requirements.txt").write_text(requirements, encoding="utf-8")
+        build = run_docker(["build", "--tag", tag, folder])
+    if build.returncode != 0:
+        output = (build.stdout + build.stderr).strip()[-DOCKER_ERROR_CHARS:]
+        raise SandboxError(f"building the image {tag} failed:\n{output}")
+    return tag

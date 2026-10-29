@@ -62,6 +62,20 @@ class ProblemTest(unittest.TestCase):
         with self.assertRaisesRegex(ProblemError, "unknown key 'time_limit' in the evaluation"):
             Problem.from_dict(data)
 
+    def test_packages_need_exact_versions(self) -> None:
+        """Only name==version entries: no ranges, no pip options, no duplicates."""
+        data = valid_data()
+        self.assertEqual(Problem.from_dict(data).packages, ())
+        data["packages"] = ["numpy==2.5.4", "scikit-learn==1.8.0"]
+        self.assertEqual(Problem.from_dict(data).packages, ("numpy==2.5.4", "scikit-learn==1.8.0"))
+        for wrong in [["numpy"], ["numpy>=2"], ["--index-url=http://x"], ["-e ."], [3], "numpy"]:
+            data["packages"] = wrong
+            with self.subTest(packages=wrong), self.assertRaises(ProblemError):
+                Problem.from_dict(data)
+        data["packages"] = ["numpy==2.5.4", "NumPy==2.5.3"]
+        with self.assertRaisesRegex(ProblemError, "listed twice"):
+            Problem.from_dict(data)
+
     def test_a_missing_key_is_refused(self) -> None:
         """Each required key must be there."""
         data = valid_data()

@@ -26,8 +26,23 @@ class PromptTest(unittest.TestCase):
         system = PromptBuilder(PROBLEM).system_message
         self.assertTrue(system.startswith("You are an expert software engineer"))
         self.assertIn("# Problem\nWrite solve(), which returns a number up to 10.\n\n", system)
-        self.assertIn("Higher scores are better.", system)
+        self.assertIn(
+            "# Rules\n- You may import Python's standard library only. Nothing else is installed.\n"
+            "- Higher scores are better.\n",
+            system,
+        )
         self.assertTrue(system.endswith("in a single ```python code block.\n"))
+
+    def test_the_allowed_packages_are_named_without_versions(self) -> None:
+        """The rules name each package the program may import."""
+        problem = Problem(
+            PROBLEM.name, PROBLEM.description, PROBLEM.llm, ("numpy==2.5.4", "scipy==1")
+        )
+        self.assertIn(
+            "- You may import Python's standard library and: numpy, scipy. "
+            "Nothing else is installed.",
+            PromptBuilder(problem).system_message,
+        )
 
     def test_the_user_message_with_examples(self) -> None:
         """The examples come first, in the order given, then the parent, then the request."""

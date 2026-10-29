@@ -5,6 +5,7 @@ The problem file is written in YAML. For now it holds:
     name: circle_packing
     description: |
       What the program must do, shown to the LLM in every prompt.
+    packages: [numpy==2.5.4]               # optional: what programs may import, exact versions
     llm:
       model: qwen3-coder:30b               # the model's name, as its server knows it
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
@@ -14,11 +15,15 @@ The problem file is written in YAML. For now it holds:
 Every key is checked, and an unknown key is an error rather than silently ignored.
 """
 
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+# A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
+PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
 
 
 class ProblemError(ValueError):
@@ -53,6 +58,8 @@ class Problem:
     description: str
     # The LLM that writes the programs
     llm: LLMSettings
+    # The packages programs may import besides the standard library, such as "numpy==2.5.4"
+    packages: tuple[str, ...] = ()
     # How programs are evaluated
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
 
@@ -76,7 +83,7 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "llm"},
-            optional={"evaluation"},
+            optional={"packages", "evaluation"},
         )
         llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
         evaluation = checked_section(
@@ -90,6 +97,7 @@ class Problem:
                 model=checked_text(llm, "model", "the llm section"),
                 api_base=checked_text(llm, "api_base", "the llm section"),
             ),
+            packages=checked_packages(top.get("packages", [])),
             evaluation=EvaluationSettings(
                 stage_time_limit=checked_positive_number(
                     evaluation,
@@ -129,6 +137,32 @@ def checked_positive_number(section: dict[str, Any], key: str, where: str, defau
     if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
         raise ProblemError(f"{key!r} in {where} must be a number above 0, got {value!r}")
     return float(value)
+
+
+def package_name(package: str) -> str:
+    """Return a package's name without its version: "numpy==2.5.4" gives "numpy"."""
+    return package.split("==", 1)[0]
+
+
+def checked_packages(value: Any) -> tuple[str, ...]:
+    """Return the package list if every entry is a name with an exact version.
+
+    Only "name==version" is accepted: no version ranges, and no pip options, which
+    could make pip install from anywhere.
+    """
+    if not isinstance(value, list):
+        raise ProblemError("'packages' must be a list, such as [numpy==2.5.4]")
+    names = set()
+    for package in value:
+        if not isinstance(package, str) or not PACKAGE_PATTERN.fullmatch(package):
+            raise ProblemError(
+                f"'packages' entries must be a name with an exact version, such as "
+                f"numpy==2.5.4; got {package!r}"
+            )
+        if package_name(package).lower() in names:
+            raise ProblemError(f"the package {package_name(package)!r} is listed twice")
+        names.add(package_name(package).lower())
+    return tuple(value)
 
 
 def checked_text(section: dict[str, Any], key: str, where: str) -> str:
