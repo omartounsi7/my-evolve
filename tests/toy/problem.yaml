@@ -1,0 +1,8 @@
+# The tests' toy problem: return a number as big as possible, up to 10.
+name: toy
+description: |
+  Write solve(), which takes no arguments and returns a number. The bigger the
+  number, the better, but it must not be more than 10.
+llm:
+  model: fake-model
+  api_base: http://localhost:1/v1

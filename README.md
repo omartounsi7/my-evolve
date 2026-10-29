@@ -14,6 +14,7 @@ and the order in which it is built in
 | Path | Contents |
 |---|---|
 | `src/my_evolve/` | The package |
+| `examples/` | Ready-made problems, one folder each ([examples/README.md](examples/README.md)) |
 | `tests/` | Automatic checks |
 | `docs/` | The design and the plan |
 | `pyproject.toml` | Project description and tool settings |
@@ -45,8 +46,9 @@ with `.venv\Scripts\python.exe`.
 # Run the tests
 .venv/bin/python -m unittest discover tests
 
-# Check the types
+# Check the types, then each example's evaluation file on its own (their names are the same)
 .venv/bin/python -m mypy
+.venv/bin/python -m mypy examples/circle_packing/evaluation.py
 
 # Check for common mistakes and style problems
 .venv/bin/python -m ruff check
