@@ -1,8 +1,9 @@
 """What evaluation files import from my-evolve.
 
-An evaluation file defines evaluate(namespace), which returns the program's score. The
-namespace gives the program's names: calling one of its functions runs that function
-in the program's own process (the sandbox), and returns its value as plain data.
+An evaluation file defines evaluate(namespace), which returns a StageResult: the
+program's score, and optionally named metrics and feedback for the LLM. The namespace
+gives the program's names: calling one of its functions runs that function in the
+program's own process (the sandbox), and returns its value as plain data.
 
 - When the program's answer breaks a rule of the problem (overlapping circles, a
   negative radius), evaluate raises InvalidProgram with the reason: status invalid.
@@ -12,14 +13,30 @@ in the program's own process (the sandbox), and returns its value as plain data.
   evaluate lets through too: status timeout.
 """
 
+from dataclasses import dataclass, field
+
+
+@dataclass(frozen=True)
+class StageResult:
+    """What an evaluation file's evaluate returns for a program whose answer is legal."""
+
+    # How good the program is: a finite number, higher is better
+    score: float
+    # Named numbers about the run, saved but not shown to the LLM, such as the sum of radii
+    metrics: dict[str, float] = field(default_factory=dict)
+    # What the LLM should know about the program, such as "Circles 3 and 7 nearly touch"
+    feedback: str = ""
+
 
 class InvalidProgram(Exception):
     """Raised by an evaluation file when the program's answer breaks a rule of the problem."""
 
-    def __init__(self, reason: str) -> None:
+    def __init__(self, reason: str, feedback: str = "") -> None:
         super().__init__(reason)
         # Why the answer is illegal, in words the LLM will read
         self.reason: str = reason
+        # Anything else the LLM should know about the program
+        self.feedback: str = feedback
 
 
 class ProgramFailure(Exception):

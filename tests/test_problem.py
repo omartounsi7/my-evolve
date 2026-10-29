@@ -62,6 +62,32 @@ class ProblemTest(unittest.TestCase):
         with self.assertRaisesRegex(ProblemError, "unknown key 'time_limit' in the evaluation"):
             Problem.from_dict(data)
 
+    def test_the_prompt_and_sandbox_sections(self) -> None:
+        """Their defaults, and values that are refused."""
+        problem = Problem.from_dict(valid_data())
+        self.assertEqual(problem.prompt.max_feedback_chars, 2000)
+        self.assertEqual(
+            (problem.sandbox.memory, problem.sandbox.cpus, problem.sandbox.max_processes),
+            ("1g", 1.0, 64),
+        )
+        data = valid_data()
+        data["prompt"] = {"max_feedback_chars": 500}
+        data["sandbox"] = {"memory": "512m", "cpus": 2, "max_processes": 32}
+        problem = Problem.from_dict(data)
+        self.assertEqual(problem.prompt.max_feedback_chars, 500)
+        self.assertEqual(problem.sandbox.memory, "512m")
+        for section, wrong in [
+            ("prompt", {"max_feedback_chars": 0}),
+            ("sandbox", {"memory": "lots"}),
+            ("sandbox", {"cpus": -1}),
+            ("sandbox", {"max_processes": 1.5}),
+            ("sandbox", {"network": "none"}),
+        ]:
+            data = valid_data()
+            data[section] = wrong
+            with self.subTest(section=section, value=wrong), self.assertRaises(ProblemError):
+                Problem.from_dict(data)
+
     def test_packages_need_exact_versions(self) -> None:
         """Only name==version entries: no ranges, no pip options, no duplicates."""
         data = valid_data()

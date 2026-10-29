@@ -38,7 +38,7 @@ class CirclePackingTest(unittest.TestCase):
 
     def test_the_initial_program_scores_as_in_openevolve(self) -> None:
         """The initial program's radii add up to about 0.959, a score of 0.364."""
-        score = self.evaluate(run_program(CIRCLE_PACKING_FOLDER / "initial_program.py"))
+        score = self.evaluate(run_program(CIRCLE_PACKING_FOLDER / "initial_program.py")).score
         self.assertAlmostEqual(score * 2.635, 0.9598, places=3)
         self.assertAlmostEqual(score, 0.3642, places=3)
 
@@ -67,7 +67,7 @@ class ToyProblemTest(unittest.TestCase):
 
     def test_the_initial_program_scores_its_number(self) -> None:
         """The toy initial program returns 1, its score."""
-        self.assertEqual(self.evaluate(run_program(TOY_FOLDER / "initial_program.py")), 1.0)
+        self.assertEqual(self.evaluate(run_program(TOY_FOLDER / "initial_program.py")).score, 1.0)
 
     def test_a_number_above_the_limit_is_refused(self) -> None:
         """Returning more than 10 breaks the toy problem's rule."""

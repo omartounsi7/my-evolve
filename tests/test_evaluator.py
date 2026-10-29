@@ -18,10 +18,10 @@ CIRCLE_PACKING_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing"
 
 
 def evaluate_with(evaluation_code: str, program_code: str) -> Result:
-    """Score a program with an evaluation file written for the test."""
+    """Score a program with an evaluation file written for the test (StageResult imported)."""
     with tempfile.TemporaryDirectory() as folder:
         path = Path(folder) / "evaluation.py"
-        path.write_text(evaluation_code)
+        path.write_text("from my_evolve.evaluation_api import StageResult\n" + evaluation_code)
         return Evaluator(path, LocalSandbox(), STAGE_TIME_LIMIT).evaluate(program_code)
 
 
@@ -30,9 +30,29 @@ class EvaluatorTest(unittest.TestCase):
         self.evaluator = Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT)
 
     def test_a_working_program_gets_its_score(self) -> None:
-        """The toy initial program scores the number it returns."""
+        """The toy initial program scores the number it returns, with feedback and a duration."""
         result = self.evaluator.evaluate((TOY_FOLDER / "initial_program.py").read_text())
         self.assertEqual((result.status, result.score, result.error), (Status.OK, 1.0, None))
+        self.assertEqual(result.feedback, "solve() returned 1.0.")
+        self.assertGreater(result.duration, 0.0)
+
+    def test_metrics_and_feedback_reach_the_result(self) -> None:
+        """The circle-packing evaluation reports the sum of radii and describes the packing."""
+        evaluator = Evaluator(CIRCLE_PACKING_FOLDER / "evaluation.py", LocalSandbox(), 30.0)
+        result = evaluator.evaluate((CIRCLE_PACKING_FOLDER / "initial_program.py").read_text())
+        self.assertAlmostEqual(result.metrics["sum_radii"], 0.9598, places=3)
+        self.assertIn("Valid packing", result.feedback or "")
+
+    def test_an_invalid_program_keeps_the_feedback_given(self) -> None:
+        """InvalidProgram may carry feedback beside its reason."""
+        evaluation = (
+            "from my_evolve.evaluation_api import InvalidProgram\n"
+            "def evaluate(namespace):\n"
+            "    raise InvalidProgram('too big', feedback='Try a smaller number.')\n"
+        )
+        result = evaluate_with(evaluation, "x = 1\n")
+        self.assertEqual((result.status, result.error), (Status.INVALID, "too big"))
+        self.assertEqual(result.feedback, "Try a smaller number.")
 
     def test_the_circle_packing_initial_program_scores(self) -> None:
         """The example's initial program scores 0.364 through the sandbox: numpy arrays travel."""
@@ -82,7 +102,7 @@ class EvaluatorTest(unittest.TestCase):
         evaluation = (
             "def evaluate(namespace):\n"
             "    assert 'np' in namespace and 'missing' not in namespace\n"
-            "    return namespace['solve'](namespace['N'])\n"
+            "    return StageResult(namespace['solve'](namespace['N']))\n"
         )
         program = "import numpy as np\nN = 4\ndef solve(n):\n    return float(np.float64(n))\n"
         self.assertEqual(evaluate_with(evaluation, program).score, 4.0)
@@ -101,7 +121,7 @@ class ExactDataTest(unittest.TestCase):
             "    centers, pair = namespace['f']()\n"
             "    assert isinstance(centers, np.ndarray) and centers.shape == (26, 2)\n"
             "    assert isinstance(pair, tuple)\n"
-            "    return float(centers.sum()) + sum(pair)\n"
+            "    return StageResult(float(centers.sum()) + sum(pair))\n"
         )
         program = "import numpy as np\ndef f():\n    return np.ones((26, 2)), (1, 2)\n"
         self.assertEqual(evaluate_with(evaluation, program).score, 55.0)
@@ -144,15 +164,20 @@ class ErrorStatusTest(unittest.TestCase):
         self.assertEqual(result.status, Status.ERROR)
         self.assertTrue((result.error or "").startswith("evaluator: KeyError: 'k'"))
 
-    def test_scores_that_are_not_finite_numbers_are_errors(self) -> None:
-        """evaluate must return a finite number: not a bool, text, or infinity."""
-        for score, error in [
-            ("True", "must be a number, got bool"),
-            ("'high'", "must be a number, got str"),
-            ("float('inf')", "must be a finite number"),
+    def test_results_that_cannot_be_saved_are_errors(self) -> None:
+        """evaluate must return a StageResult with a finite score, finite metrics, text feedback."""
+        for outcome, error in [
+            ("1.0", "evaluate must return a StageResult, got float"),
+            ("StageResult(True)", "the score must be a number, got bool"),
+            ("StageResult('high')", "the score must be a number, got str"),
+            ("StageResult(float('inf'))", "the score must be a finite number"),
+            ("StageResult(1.0, metrics={'m': float('nan')})", "the metric 'm' must be a finite"),
+            ("StageResult(1.0, metrics={3: 1.0})", "the metrics must be a dictionary with text"),
+            ("StageResult(1.0, feedback=3)", "the feedback must be text, got int"),
         ]:
-            with self.subTest(score=score):
-                result = evaluate_with(f"def evaluate(namespace):\n    return {score}\n", "x = 1\n")
+            with self.subTest(outcome=outcome):
+                evaluation = f"def evaluate(namespace):\n    return {outcome}\n"
+                result = evaluate_with(evaluation, "x = 1\n")
                 self.assertEqual(result.status, Status.ERROR)
                 self.assertIn(error, result.error or "")
 
@@ -186,8 +211,9 @@ class EvaluationFileTest(unittest.TestCase):
             Path(folder, "my_evolve_test_helper.py").write_text("BONUS = 5\n")
             path = Path(folder) / "evaluation.py"
             path.write_text(
-                "from my_evolve_test_helper import BONUS\n\n"
-                "def evaluate(namespace):\n    return namespace['solve']() + BONUS\n"
+                "from my_evolve_test_helper import BONUS\n"
+                "from my_evolve.evaluation_api import StageResult\n\n"
+                "def evaluate(namespace):\n    return StageResult(namespace['solve']() + BONUS)\n"
             )
             evaluator = Evaluator(path, LocalSandbox(), STAGE_TIME_LIMIT)
             self.assertNotIn("my_evolve_test_helper", sys.modules)

@@ -11,6 +11,8 @@ The problem file is written in YAML. For now it holds:
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds a program's evaluation may take
+    prompt:                                # optional
+      max_feedback_chars: 2000             # feedback and errors are cut to this length
     sandbox:                               # optional: the limits of the Docker sandbox
       memory: 1g                           # memory, without swap (Docker's notation)
       cpus: 1                              # CPUs
@@ -67,6 +69,14 @@ class SandboxSettings:
 
 
 @dataclass(frozen=True)
+class PromptSettings:
+    """What the prompt shows."""
+
+    # The longest feedback or error shown for one program, in characters
+    max_feedback_chars: int = 2000
+
+
+@dataclass(frozen=True)
 class Problem:
     """A problem to solve, and every setting of its runs."""
 
@@ -82,6 +92,8 @@ class Problem:
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
     # The limits of the Docker sandbox
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
+    # What the prompt shows
+    prompt: PromptSettings = field(default_factory=PromptSettings)
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -103,7 +115,7 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "llm"},
-            optional={"packages", "evaluation", "sandbox"},
+            optional={"packages", "evaluation", "sandbox", "prompt"},
         )
         llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
         evaluation = checked_section(
@@ -113,6 +125,9 @@ class Problem:
             top.get("sandbox", {}),
             "the sandbox section",
             optional={"memory", "cpus", "max_processes"},
+        )
+        prompt = checked_section(
+            top.get("prompt", {}), "the prompt section", optional={"max_feedback_chars"}
         )
         defaults = EvaluationSettings()
         sandbox_defaults = SandboxSettings()
@@ -130,6 +145,14 @@ class Problem:
                     "stage_time_limit",
                     "the evaluation section",
                     defaults.stage_time_limit,
+                ),
+            ),
+            prompt=PromptSettings(
+                max_feedback_chars=checked_count(
+                    prompt,
+                    "max_feedback_chars",
+                    "the prompt section",
+                    PromptSettings().max_feedback_chars,
                 ),
             ),
             sandbox=SandboxSettings(

@@ -2,7 +2,7 @@
 
 import unittest
 
-from my_evolve.problem import LLMSettings, Problem
+from my_evolve.problem import LLMSettings, Problem, PromptSettings
 from my_evolve.program import Program, Result, Status
 from my_evolve.prompt import PromptBuilder
 
@@ -68,6 +68,20 @@ class PromptTest(unittest.TestCase):
             "# Program to improve (the parent): score 0.5\n```python\nx = 1\n```\n\n"
             "Write the improved program.\n",
         )
+
+    def test_feedback_is_shown_and_truncated(self) -> None:
+        """Each program's feedback follows its heading, cut to the size limit."""
+        problem = Problem(
+            PROBLEM.name,
+            PROBLEM.description,
+            PROBLEM.llm,
+            prompt=PromptSettings(max_feedback_chars=10),
+        )
+        parent = Program("x = 1\n", Result(Status.OK, score=0.5, feedback="  Short.  "))
+        example = Program("x = 2\n", Result(Status.OK, score=0.4, feedback="A" * 11))
+        user = PromptBuilder(problem).build(parent, [example]).user
+        self.assertIn("## Attempt 1: score 0.4\nFeedback: AAAAAAAAAA… (truncated)\n```python", user)
+        self.assertIn("score 0.5\nFeedback: Short.\n```python\nx = 1\n```", user)
 
     def test_braces_are_kept_as_written(self) -> None:
         """Code and descriptions containing braces reach the prompt unchanged."""

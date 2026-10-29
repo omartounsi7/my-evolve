@@ -86,7 +86,10 @@ class LoopTest(unittest.TestCase):
         # The first prompt shows the initial program alone; every call got a prompt.
         self.assertEqual(len(llm.prompts), 5)
         self.assertNotIn("Previous attempts", llm.prompts[0].user)
-        self.assertIn("score 1.0\n```python\n# EVOLVE-BLOCK-START\n", llm.prompts[0].user)
+        self.assertIn(
+            "score 1.0\nFeedback: solve() returned 1.0.\n```python\n# EVOLVE-BLOCK-START\n",
+            llm.prompts[0].user,
+        )
 
         # The console has one line per iteration.
         self.assertIn("Initial program: score 1.000000", console)

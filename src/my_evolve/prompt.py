@@ -2,8 +2,9 @@
 
 The system message is the same for the whole run: the instruction, the problem, the
 reply format. The user message changes every iteration: the example programs, then the
-parent, the program to improve. For now each program is shown with its score and its
-code only; step 2.7 of the implementation plan gives the prompt its final text.
+parent, the program to improve. Each program is shown with its score, the feedback the
+evaluation file wrote about it (cut to a size limit), and its code; step 2.7 of the
+implementation plan gives the prompt its final text.
 """
 
 from collections.abc import Sequence
@@ -58,6 +59,11 @@ def score_of(program: Program) -> float:
     return program.result.score
 
 
+def truncated(text: str, limit: int) -> str:
+    """Return the text if it fits in limit characters, otherwise its beginning and a mark."""
+    return text if len(text) <= limit else text[:limit] + "… (truncated)"
+
+
 def code_block(program: Program) -> str:
     """Return a program's code in a Python code block, without blank lines around it."""
     code = program.code.strip("\n")
@@ -72,6 +78,17 @@ class PromptBuilder:
         self.system_message: str = SYSTEM_TEMPLATE.format(
             description=problem.description.strip(), packages_rule=packages_rule(problem.packages)
         )
+        # The longest feedback shown for one program, in characters
+        self.max_feedback_chars: int = problem.prompt.max_feedback_chars
+
+    def program_section(self, program: Program, heading: str) -> str:
+        """Return one program's part of the user message: its heading, feedback and code."""
+        lines = [heading]
+        if program.result.feedback:
+            feedback = truncated(program.result.feedback.strip(), self.max_feedback_chars)
+            lines.append(f"Feedback: {feedback}")
+        lines.append(code_block(program))
+        return "\n".join(lines)
 
     def build(self, parent: Program, examples: Sequence[Program]) -> Prompt:
         """Return the prompt asking the LLM to improve parent, the example programs shown first.
@@ -83,11 +100,9 @@ class PromptBuilder:
         if examples:
             sections.append("# Previous attempts")
             for number, example in enumerate(examples, start=1):
-                sections.append(
-                    f"## Attempt {number}: score {score_of(example)}\n{code_block(example)}"
-                )
-        sections.append(
-            f"# Program to improve (the parent): score {score_of(parent)}\n{code_block(parent)}"
-        )
+                heading = f"## Attempt {number}: score {score_of(example)}"
+                sections.append(self.program_section(example, heading))
+        heading = f"# Program to improve (the parent): score {score_of(parent)}"
+        sections.append(self.program_section(parent, heading))
         sections.append(REQUEST)
         return Prompt(system=self.system_message, user="\n\n".join(sections) + "\n")

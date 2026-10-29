@@ -30,6 +30,12 @@ class Result:
     score: float | None = None
     # Why the program failed, such as "ZeroDivisionError: division by zero"; None when ok
     error: str | None = None
+    # Named numbers about the run, from the evaluation file; saved, not shown to the LLM
+    metrics: dict[str, float] = field(default_factory=dict)
+    # What the evaluation file wants the LLM to know about the program; None if nothing
+    feedback: str | None = None
+    # How long the evaluation took, in seconds
+    duration: float = 0.0
 
     def __post_init__(self) -> None:
         """Refuse a result that contradicts itself: a score belongs to ok programs only."""
@@ -42,13 +48,22 @@ class Result:
         return self.status is Status.OK
 
     @classmethod
-    def failure(cls, status: Status, error: str) -> "Result":
+    def failure(
+        cls, status: Status, error: str, feedback: str | None = None, duration: float = 0.0
+    ) -> "Result":
         """Return the result of a program that did not work, saying why."""
-        return cls(status=status, error=error)
+        return cls(status=status, error=error, feedback=feedback, duration=duration)
 
     def to_dict(self) -> dict[str, Any]:
         """Return the result as plain JSON values; a missing score is None (null in JSON)."""
-        return {"status": self.status.value, "score": self.score, "error": self.error}
+        return {
+            "status": self.status.value,
+            "score": self.score,
+            "error": self.error,
+            "metrics": self.metrics,
+            "feedback": self.feedback,
+            "duration": self.duration,
+        }
 
 
 def new_id() -> str:

@@ -12,7 +12,15 @@ class ResultTest(unittest.TestCase):
         result = Result.failure(Status.FAILED, "ValueError: bad")
         line = json.dumps(result.to_dict(), allow_nan=False)
         self.assertEqual(
-            json.loads(line), {"status": "failed", "score": None, "error": "ValueError: bad"}
+            json.loads(line),
+            {
+                "status": "failed",
+                "score": None,
+                "error": "ValueError: bad",
+                "metrics": {},
+                "feedback": None,
+                "duration": 0.0,
+            },
         )
         self.assertFalse(result.is_ok)
 
@@ -54,7 +62,7 @@ class ProgramTest(unittest.TestCase):
         data = program.to_dict()
         self.assertEqual(json.loads(json.dumps(data, allow_nan=False)), data)
         self.assertEqual(data["id"], program.id)
-        self.assertEqual(data["result"], {"status": "ok", "score": 0.5, "error": None})
+        self.assertEqual((data["result"]["status"], data["result"]["score"]), ("ok", 0.5))
         self.assertEqual(data["code"], "x = 1\n")
 
 

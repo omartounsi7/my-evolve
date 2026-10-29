@@ -12,7 +12,7 @@ from typing import Any
 
 import numpy as np
 
-from my_evolve.evaluation_api import InvalidProgram
+from my_evolve.evaluation_api import InvalidProgram, StageResult
 
 # The function every program must define, and how many circles it must place
 ENTRY_FUNCTION = "run_packing"
@@ -54,7 +54,7 @@ def check_packing(centers: np.ndarray[Any, Any], radii: np.ndarray[Any, Any]) ->
                 )
 
 
-def evaluate(namespace: Mapping[str, Any]) -> float:
+def evaluate(namespace: Mapping[str, Any]) -> StageResult:
     """Return the program's score: the sum of its radii divided by 2.635 (higher is better).
 
     namespace gives the names the program defines. Raises InvalidProgram if the packing
@@ -72,4 +72,12 @@ def evaluate(namespace: Mapping[str, Any]) -> float:
         raise InvalidProgram(f"the centers and radii must be arrays of numbers: {error}") from None
     check_packing(centers, radii)
     # The sum the program reports is ignored: it is recomputed from the radii.
-    return float(np.sum(radii)) / TARGET_VALUE
+    sum_radii = float(np.sum(radii))
+    return StageResult(
+        score=sum_radii / TARGET_VALUE,
+        metrics={"sum_radii": sum_radii},
+        feedback=(
+            f"Valid packing: all {NUMBER_OF_CIRCLES} circles lie in the unit square without "
+            f"overlapping. Sum of radii: {sum_radii:.6f} (the target, {TARGET_VALUE}, scores 1)."
+        ),
+    )
