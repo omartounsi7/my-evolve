@@ -20,6 +20,7 @@ import json
 import os
 import subprocess
 import sys
+import types
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +33,7 @@ THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"
 # Each problem's evaluator in the openevolve checkout, and its cascade threshold
 PROBLEMS: dict[str, tuple[str, float]] = {
     "circle_packing": ("examples/circle_packing/evaluator.py", 0.5),
+    "function_minimization": ("examples/function_minimization/evaluator.py", 1.3),
 }
 
 
@@ -41,8 +43,22 @@ def set_threads(count: int) -> None:
         os.environ[variable] = str(count)
 
 
-def load_evaluator(path: Path) -> Any:
-    """Load one of OpenEvolve's evaluator files as a module."""
+def load_evaluator(openevolve: Path, path: Path) -> Any:
+    """Load one of OpenEvolve's evaluator files as a module.
+
+    The function-minimization evaluator imports openevolve.evaluation_result; that one
+    file is loaded on its own, so that OpenEvolve's other dependencies are not needed.
+    """
+    package = types.ModuleType("openevolve")
+    package.__path__ = [str(openevolve / "openevolve")]
+    sys.modules.setdefault("openevolve", package)
+    result_spec = importlib.util.spec_from_file_location(
+        "openevolve.evaluation_result", openevolve / "openevolve" / "evaluation_result.py"
+    )
+    assert result_spec is not None and result_spec.loader is not None
+    result_module = importlib.util.module_from_spec(result_spec)
+    sys.modules["openevolve.evaluation_result"] = result_module
+    result_spec.loader.exec_module(result_module)
     spec = importlib.util.spec_from_file_location("evaluator", path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -63,6 +79,11 @@ def fitness(metrics: dict[str, Any]) -> float:
     return sum(numbers) / len(numbers) if numbers else 0.0
 
 
+def metrics_of(outcome: Any) -> dict[str, Any]:
+    """Return the metrics of a dict or of an EvaluationResult."""
+    return dict(outcome) if isinstance(outcome, dict) else dict(outcome.metrics)
+
+
 def numbers_only(metrics: dict[str, Any]) -> dict[str, Any]:
     """Return the metrics without the error text OpenEvolve sometimes adds."""
     return {name: value for name, value in metrics.items() if not isinstance(value, str)}
@@ -70,11 +91,11 @@ def numbers_only(metrics: dict[str, Any]) -> dict[str, Any]:
 
 def cascade_score(evaluator: Any, program: Path, threshold: float) -> float:
     """Return the score OpenEvolve's cascade gives a program."""
-    metrics = dict(evaluator.evaluate_stage1(str(program)))
+    metrics = metrics_of(evaluator.evaluate_stage1(str(program)))
     if fitness(metrics) < threshold:
         return fitness(metrics)
     merged = numbers_only(metrics)
-    merged.update(numbers_only(dict(evaluator.evaluate_stage2(str(program)))))
+    merged.update(numbers_only(metrics_of(evaluator.evaluate_stage2(str(program)))))
     return fitness(merged)
 
 
@@ -88,11 +109,14 @@ def main(arguments: list[str]) -> None:
     ).stdout.strip()
     recorded: dict[str, Any] = {"openevolve_commit": commit}
     for problem, (evaluator_path, threshold) in PROBLEMS.items():
-        evaluator = load_evaluator(openevolve / evaluator_path)
+        evaluator = load_evaluator(openevolve, openevolve / evaluator_path)
         programs = {"initial_program": REPOSITORY / "examples" / problem / "initial_program.py"}
         programs.update({path.stem: path for path in sorted((PROGRAMS / problem).glob("*.py"))})
         scores: dict[str, float] = {}
         for name, path in programs.items():
+            # The function-minimization initial program searches at random: not comparable.
+            if problem == "function_minimization" and name == "initial_program":
+                continue
             thread_counts = (1, 8) if name == "best_program" else (1,)
             for threads in thread_counts:
                 set_threads(threads)

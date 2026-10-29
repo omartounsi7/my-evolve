@@ -1,0 +1,30 @@
+# Function minimization: find the global minimum of a function with many local minima.
+#
+# The description is the system message of OpenEvolve's
+# examples/function_minimization/config.yaml (commit da3d701), followed by the
+# contract of the entry function (D4).
+
+name: function_minimization
+description: |
+  You are an expert programmer specializing in optimization algorithms. Your task is to improve a function minimization algorithm to find the global minimum of a complex function with many local minima. The function is f(x, y) = sin(x) * cos(y) + sin(x*y) + (x^2 + y^2)/20. Focus on improving the search_algorithm function to reliably find the global minimum, escaping local minima that might trap simple algorithms.
+
+  The program must keep run_search(), which takes no arguments and returns a tuple
+  (x, y) or (x, y, value): the point found, and optionally the function's value there
+  (the evaluation recomputes it from x and y). Each call of run_search() must finish
+  within 5 seconds; it is called once, then, if that point is good enough, 10 times
+  more, and how reliably it finds the minimum counts too.
+
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - numpy==2.5.4
+  - scipy==1.18.1
+
+# The LLM: Appendix B's main model of batch 1, on a local Ollama server.
+llm:
+  model: qwen3-coder:30b
+  api_base: http://localhost:11434/v1
+
+# OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 1.3.
+evaluation:
+  stage_time_limit: 60
+  thresholds: [1.3]

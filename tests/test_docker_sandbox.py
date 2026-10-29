@@ -120,9 +120,7 @@ class IsolationTest(unittest.TestCase):
         with self.assertRaises(StageTimeout):
             session.call("wait")
         self.assertLess(time.monotonic() - started, 20.0)
-        # The container's name is the last word of its --name option.
-        name = session.command[session.command.index("--name") + 1]
-        listed = run_docker(["ps", "--all", "--quiet", "--filter", f"name={name}"]).stdout
+        listed = run_docker(["ps", "--all", "--quiet", "--filter", f"name={session.name}"]).stdout
         self.assertEqual(listed.strip(), "")
 
     def test_a_missing_image_is_the_sandbox_fault(self) -> None:

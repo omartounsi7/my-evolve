@@ -21,7 +21,8 @@ Whatever happens becomes a Result with a status:
 - ok: evaluate returned a StageResult, with a finite score;
 - invalid: evaluate raised InvalidProgram, the program's answer is illegal;
 - failed: the program failed (it raised, or its process ended): ProgramFailure;
-- timeout: the first stage ran over its time limit: StageTimeout;
+- timeout: the first stage ran over its time limit (StageTimeout), or a call over its own
+  limit that the evaluation file did not catch (CallTimeout);
 - error: not the program's fault: the sandbox failed, or the evaluation file raised.
 """
 
@@ -35,7 +36,13 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from my_evolve.evaluation_api import InvalidProgram, ProgramFailure, StageResult, StageTimeout
+from my_evolve.evaluation_api import (
+    CallTimeout,
+    InvalidProgram,
+    ProgramFailure,
+    StageResult,
+    StageTimeout,
+)
 from my_evolve.program import Result, Status
 from my_evolve.sandbox import ProgramNamespace, Sandbox, SandboxError
 
@@ -244,7 +251,7 @@ class Evaluator:
             outcome = Result.failure(Status.INVALID, invalid.reason, invalid.feedback or None)
         except ProgramFailure as failure:
             outcome = Result.failure(Status.FAILED, failure.describe())
-        except StageTimeout as timeout:
+        except (StageTimeout, CallTimeout) as timeout:
             outcome = Result.failure(Status.TIMEOUT, str(timeout))
         except SandboxError as error:
             outcome = Result.failure(Status.ERROR, f"sandbox: {error}")

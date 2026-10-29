@@ -6,6 +6,7 @@ initial program, its evaluation file, and the problem file.
 | Problem | Folder |
 |---|---|
 | Circle packing: 26 circles in the unit square, maximizing the sum of their radii | `circle_packing/` |
+| Function minimization: the global minimum of a function with many local minima | `function_minimization/` |
 
 The problems are OpenEvolve's, so that runs start from the same baseline as
 OpenEvolve's and can be compared with them (D3).
@@ -19,9 +20,10 @@ What is the same as in OpenEvolve:
   included.
 - **The problem description**: the `system_message` of OpenEvolve's config file,
   followed by the contract of the entry function, in the problem file's `description`.
-- **The scores**: `evaluation.py` is a port of OpenEvolve's evaluator, with the same
-  cascade (two stages, threshold 0.5): every program OpenEvolve scores above 0 gets
-  exactly the same score. `tests/parity/` checks this on a set of programs.
+- **The scores**: each `evaluation.py` is a port of OpenEvolve's evaluator, with the same
+  cascade (two stages; threshold 0.5 for circle packing, 1.3 for function minimization):
+  every program OpenEvolve scores above 0 gets exactly the same score. `tests/parity/`
+  checks this on a set of programs.
 - **The packages** programs may import (`packages` in the problem file).
 
 What changed:
@@ -29,6 +31,10 @@ What changed:
 - The stage functions receive the program's names (`namespace`) and return a
   `StageResult` (score, metrics, feedback), instead of receiving a file path and
   returning a dictionary of metrics.
-- Where OpenEvolve scores a program 0, the evaluation says why: an illegal packing
-  raises `InvalidProgram` (status `invalid`), an answer that breaks the contract of
-  `run_packing` raises `ProgramFailure` (status `failed`).
+- Where OpenEvolve scores a program 0, the evaluation says why: an illegal answer
+  raises `InvalidProgram` (status `invalid`), an answer that breaks the contract of the
+  entry function raises `ProgramFailure` (status `failed`), and a stage-1 search over its
+  5 s raises `CallTimeout` (status `timeout`).
+- Function minimization limits each call of `run_search` to 5 s with `call_with_timeout`,
+  as OpenEvolve's `run_with_timeout` does, and always recomputes the function's value
+  from the point returned.

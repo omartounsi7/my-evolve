@@ -7,6 +7,7 @@ OpenEvolve's score (D3). `tests/test_parity.py` runs the comparison.
 | Path | Contents |
 |---|---|
 | `programs/circle_packing/` | Valid packings, packings breaking each rule, answers that cannot be read |
+| `programs/function_minimization/` | Fixed points near and far from the minimum, wrong answers, slow and flaky searches |
 | `openevolve_scores.json` | The scores OpenEvolve's evaluators gave them, after their cascade |
 | `record_openevolve_scores.py` | The script that recorded them, from the openevolve checkout |
 

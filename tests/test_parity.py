@@ -5,7 +5,8 @@ by OpenEvolve's own evaluators once, by tests/parity/record_openevolve_scores.py
 program must get exactly OpenEvolve's score; a program OpenEvolve scores 0 must be
 invalid or failed here, with the status given below.
 
-Programs run in the local sandbox with one thread, as the Docker sandbox runs them. Slow
+Programs run in the local sandbox with one thread, as the Docker sandbox runs them. The
+function-minimization initial program searches at random, so it is not compared. Slow
 tests (OpenEvolve's best circle packing takes about 12 s per stage) run only when the
 environment variable MY_EVOLVE_SLOW_TESTS is set to 1.
 """
@@ -40,6 +41,14 @@ NOT_OK = {
         "too_few_circles": Status.INVALID,
         "two_values": Status.FAILED,
     },
+    "function_minimization": {
+        "crash": Status.FAILED,
+        "four_values": Status.FAILED,
+        "list_answer": Status.FAILED,
+        "not_finite": Status.INVALID,
+        "text_coordinates": Status.INVALID,
+        "too_slow": Status.TIMEOUT,
+    },
 }
 # The programs too slow for every test run
 SLOW_PROGRAMS = {"best_program_1_threads", "best_program_8_threads"}
@@ -67,8 +76,10 @@ def program_code(problem_name: str, program: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-class CirclePackingParityTest(unittest.TestCase):
-    problem = "circle_packing"
+class ParityTestCase(unittest.TestCase):
+    """Compares a problem's results with OpenEvolve's scores."""
+
+    problem = ""
 
     def assert_parity(self, program: str, result: Result) -> None:
         """Check one program's result against OpenEvolve's score for it."""
@@ -80,7 +91,7 @@ class CirclePackingParityTest(unittest.TestCase):
         else:
             self.assertEqual(expected_score, 0.0)
 
-    def test_every_program_scores_as_in_openevolve(self) -> None:
+    def check_every_fast_program(self) -> None:
         """Each fast parity program: the same score, or a status saying why it is 0."""
         evaluator = make_evaluator(self.problem, LocalSandbox(cpus=1))
         for program in OPENEVOLVE_SCORES[self.problem]:
@@ -89,6 +100,13 @@ class CirclePackingParityTest(unittest.TestCase):
             with self.subTest(program=program):
                 result = evaluator.evaluate(program_code(self.problem, program))
                 self.assert_parity(program, result)
+
+
+class CirclePackingParityTest(ParityTestCase):
+    problem = "circle_packing"
+
+    def test_every_program_scores_as_in_openevolve(self) -> None:
+        self.check_every_fast_program()
 
     def test_both_stages_run_for_a_good_packing(self) -> None:
         """A packing scoring at least 0.5 goes through stage 2; a weaker one stops at stage 1."""
@@ -118,6 +136,23 @@ class CirclePackingParityTest(unittest.TestCase):
         )
         self.assert_parity("best_program_1_threads", result)
         self.assertLess(result.duration, 60.0)
+
+
+class FunctionMinimizationParityTest(ParityTestCase):
+    problem = "function_minimization"
+
+    def test_every_program_scores_as_in_openevolve(self) -> None:
+        self.check_every_fast_program()
+
+    def test_flaky_and_slow_trials(self) -> None:
+        """Failed trials are skipped in stage 2 and named in the feedback."""
+        evaluator = make_evaluator(self.problem, LocalSandbox(cpus=1))
+        flaky = evaluator.evaluate(program_code(self.problem, "fails_every_other_call"))
+        self.assertEqual((flaky.stage_reached, flaky.metrics["reliability_score"]), (2, 0.5))
+        self.assertIn("5 of 10 trials succeeded", flaky.feedback or "")
+        self.assertIn("Trial 2 of 10 failed: IndexError", flaky.feedback or "")
+        slow = evaluator.evaluate(program_code(self.problem, "too_slow"))
+        self.assertEqual(slow.error, "run_search() ran over its time limit of 5 s")
 
 
 if __name__ == "__main__":

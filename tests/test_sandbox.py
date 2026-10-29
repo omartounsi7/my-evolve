@@ -3,7 +3,12 @@
 import time
 import unittest
 
-from my_evolve.evaluation_api import ProgramFailure, StageTimeout
+from my_evolve.evaluation_api import (
+    CallTimeout,
+    ProgramFailure,
+    StageTimeout,
+    call_with_timeout,
+)
 from my_evolve.sandbox import LocalSandbox, ProgramNamespace, RemoteFunction, SandboxSession
 
 PROGRAM = """\
@@ -19,6 +24,24 @@ def add(a, b):
 def wait(seconds):
     time.sleep(seconds)
     return seconds
+"""
+
+# A program whose count() counts its calls since the program was loaded
+COUNTER_PROGRAM = """\
+import os
+import time
+
+calls = []
+
+
+def count(seconds=0):
+    time.sleep(seconds)
+    calls.append(1)
+    return len(calls)
+
+
+def end():
+    os._exit(7)
 """
 
 
@@ -54,6 +77,46 @@ class SessionTest(unittest.TestCase):
         for _ in range(3):
             self.assertEqual(session.call("wait", (0.1,)), 0.1)
         self.assertFalse(session.timed_out)
+
+
+class CallTimeLimitTest(unittest.TestCase):
+    def test_a_call_over_its_own_limit_raises_call_timeout(self) -> None:
+        """The worker is killed; the next call gets a fresh one, with the program reloaded."""
+        session = LocalSandbox().start(COUNTER_PROGRAM, stage_limit=30.0)
+        self.addCleanup(session.close)
+        count = ProgramNamespace(session)["count"]
+        self.assertEqual((count(), count()), (1, 2))
+        started = time.monotonic()
+        with self.assertRaisesRegex(CallTimeout, r"count\(\) ran over its time limit of 0.5 s"):
+            count.with_timeout(0.5)(30)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertFalse(session.alive)
+        # A fresh worker: the program's state starts over.
+        self.assertEqual(call_with_timeout(count, 5.0), 1)
+        self.assertFalse(session.timed_out)
+
+    def test_the_stage_limit_still_applies_and_is_not_a_call_timeout(self) -> None:
+        """A call's limit past the stage's deadline gives StageTimeout, which is no CallTimeout."""
+        self.assertFalse(issubclass(StageTimeout, CallTimeout))
+        session = LocalSandbox().start(COUNTER_PROGRAM, stage_limit=1.0)
+        self.addCleanup(session.close)
+        with self.assertRaises(StageTimeout):
+            call_with_timeout(ProgramNamespace(session)["count"], 10.0, 30)
+        self.assertTrue(session.timed_out)
+
+    def test_a_worker_that_died_is_replaced_at_the_next_call(self) -> None:
+        """After the process ends, the next call loads the program again."""
+        session = LocalSandbox().start(COUNTER_PROGRAM, stage_limit=30.0)
+        self.addCleanup(session.close)
+        self.assertEqual(session.call("count"), 1)
+        with self.assertRaisesRegex(ProgramFailure, "exit code 7"):
+            session.call("end")
+        self.assertEqual(session.call("count"), 1)
+
+    def test_call_with_timeout_needs_a_function_of_the_program(self) -> None:
+        """A plain Python function has no sandbox to limit."""
+        with self.assertRaisesRegex(TypeError, "one of the program's functions"):
+            call_with_timeout(print, 1.0)
 
 
 class MisbehavingProgramTest(unittest.TestCase):
