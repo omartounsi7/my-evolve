@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from my_evolve.checks import MarkerError, same_outside_code, split_evolve_blocks
+from my_evolve.checks import MarkerError, check_child, same_outside_code, split_evolve_blocks
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 INITIAL_PROGRAMS = {
@@ -105,6 +105,45 @@ class SameOutsideCodeTest(unittest.TestCase):
         for name, code in INITIAL_PROGRAMS.items():
             with self.subTest(name=name):
                 self.assertIsNone(same_outside_code(code, code))
+
+
+class CheckChildTest(unittest.TestCase):
+    def test_a_good_child_passes(self) -> None:
+        child = TWO_BLOCKS.replace("    return 1", "    return 10")
+        self.assertIsNone(check_child(child, TWO_BLOCKS, ["a", "middle"]))
+
+    def test_each_rejection_with_its_reason(self) -> None:
+        for child, reason in [
+            ("", "no code in the reply"),
+            ("  \n", "no code in the reply"),
+            (TWO_BLOCKS.replace("def a():", "def a(:"), "does not compile: invalid syntax"),
+            (TWO_BLOCKS.replace("import math", "import mat h"), "does not compile"),
+            (
+                TWO_BLOCKS.replace("def a():\n    return 1", "a = lambda: 1"),
+                "define the function a()",
+            ),
+            (TWO_BLOCKS + "\nx = 1\n", "'x = 1' was added"),
+        ]:
+            with self.subTest(reason=reason):
+                self.assertIn(reason, check_child(child, TWO_BLOCKS, ["a"]) or "")
+
+    def test_the_checks_come_in_order(self) -> None:
+        """A program that fails several checks gets the reason of the first."""
+        no_markers_and_no_function = "def b():\n    return 1\n"
+        reason = check_child(no_markers_and_no_function, TWO_BLOCKS, ["a"]) or ""
+        self.assertIn("evolve-block markers", reason)
+
+    def test_entry_functions_must_be_at_the_top_level(self) -> None:
+        """A function of that name inside a class does not count."""
+        in_a_class = "class K:\n    def a(self):\n        return 1"
+        child = TWO_BLOCKS.replace("def a():\n    return 1", in_a_class)
+        self.assertIn("define the function a()", check_child(child, TWO_BLOCKS, ["a"]) or "")
+
+    def test_the_initial_programs_pass_against_themselves(self) -> None:
+        entry = {"circle_packing": ["run_packing"], "function_minimization": ["run_search"]}
+        for name, code in INITIAL_PROGRAMS.items():
+            with self.subTest(name=name):
+                self.assertIsNone(check_child(code, code, entry[name]))
 
 
 if __name__ == "__main__":

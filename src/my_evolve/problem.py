@@ -5,6 +5,7 @@ The problem file is written in YAML. For now it holds:
     name: circle_packing
     description: |
       What the program must do, shown to the LLM in every prompt.
+    entry_functions: [run_packing]         # the functions every program must define
     packages: [numpy==2.5.4]               # optional: what programs may import, exact versions
     llm:
       model: qwen3-coder:30b               # the model's name, as its server knows it
@@ -92,6 +93,8 @@ class Problem:
     llm: LLMSettings
     # The packages programs may import besides the standard library, such as "numpy==2.5.4"
     packages: tuple[str, ...] = ()
+    # The functions every program must define at its top level, such as ("run_packing",)
+    entry_functions: tuple[str, ...] = ()
     # How programs are evaluated
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
     # The limits of the Docker sandbox
@@ -118,7 +121,7 @@ class Problem:
         top = checked_section(
             data,
             "the problem file",
-            required={"name", "description", "llm"},
+            required={"name", "description", "entry_functions", "llm"},
             optional={"packages", "evaluation", "sandbox", "prompt"},
         )
         llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
@@ -140,6 +143,7 @@ class Problem:
         return cls(
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
+            entry_functions=checked_entry_functions(top["entry_functions"]),
             llm=LLMSettings(
                 model=checked_text(llm, "model", "the llm section"),
                 api_base=checked_text(llm, "api_base", "the llm section"),
@@ -202,6 +206,20 @@ def checked_positive_number(section: dict[str, Any], key: str, where: str, defau
     if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
         raise ProblemError(f"{key!r} in {where} must be a number above 0, got {value!r}")
     return float(value)
+
+
+def checked_entry_functions(value: Any) -> tuple[str, ...]:
+    """Return the entry functions' names: a list of one or more Python names."""
+    if (
+        not isinstance(value, list)
+        or not value
+        or not all(isinstance(name, str) and name.isidentifier() for name in value)
+    ):
+        raise ProblemError(
+            f"'entry_functions' must be a list of function names, such as [run_packing]; "
+            f"got {value!r}"
+        )
+    return tuple(value)
 
 
 def checked_thresholds(value: Any) -> tuple[float, ...]:

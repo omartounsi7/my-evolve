@@ -68,7 +68,7 @@ class LoopTest(unittest.TestCase):
         replies: list[str | Exception] = [
             reply_returning("5"),
             reply_returning("1 / 0"),
-            "```python\ndef solve():\n    return 9\n```",
+            "```python\n# EVOLVE-BLOCK-START\ndef answer():\n    return 9\n# EVOLVE-BLOCK-END\n```",
             LLMError("fake-model", "the server is down"),
             reply_returning("7"),
         ]
@@ -81,7 +81,7 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(scores, [1.0, 5.0, None, None, 7.0])
         self.assertIn("ZeroDivisionError", programs[2].result.error or "")
         self.assertEqual(programs[3].result.status, Status.REJECTED)
-        self.assertIn("evolve-block markers were changed", programs[3].result.error or "")
+        self.assertIn("must define the function solve()", programs[3].result.error or "")
         self.assertEqual((programs[1].description, programs[3].description), ("Returns 5.", None))
         for child in programs[1:]:
             parent = database.programs[child.parent_id or ""]

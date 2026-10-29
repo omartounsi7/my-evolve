@@ -24,6 +24,9 @@ description: |
   sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
   and no two circles may overlap, up to a tolerance of 1e-6; no radius may be negative.
 
+# The function every program must define, which the evaluation calls.
+entry_functions: [run_packing]
+
 # The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
 packages:
   - matplotlib==3.11.2

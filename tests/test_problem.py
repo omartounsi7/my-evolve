@@ -15,6 +15,7 @@ def valid_data() -> dict[str, Any]:
     return {
         "name": "toy",
         "description": "Return a number.",
+        "entry_functions": ["solve"],
         "llm": {"model": "some-model", "api_base": "http://localhost:11434/v1"},
     }
 
@@ -47,6 +48,15 @@ class ProblemTest(unittest.TestCase):
         data["llm"]["temperature"] = 0.7
         with self.assertRaisesRegex(ProblemError, "unknown key 'temperature' in the llm section"):
             Problem.from_dict(data)
+
+    def test_entry_functions(self) -> None:
+        """Required: a list of one or more function names."""
+        self.assertEqual(Problem.from_dict(valid_data()).entry_functions, ("solve",))
+        for wrong in [[], "solve", ["solve()"], ["two words"], [3]]:
+            data = valid_data()
+            data["entry_functions"] = wrong
+            with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, "function names"):
+                Problem.from_dict(data)
 
     def test_the_stage_time_limit(self) -> None:
         """60 s by default; any number above 0 may be set."""

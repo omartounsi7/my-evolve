@@ -4,10 +4,16 @@ They run on the host, without running the program. A child that fails one is sto
 with the status rejected and the reason, and never evaluated, so the mistake costs no
 evaluation and can be shown to the LLM later.
 
-For now one check: the child keeps the evolve blocks where the initial program has
-them (D12). The LLM may change only the code between `# EVOLVE-BLOCK-START` and
-`# EVOLVE-BLOCK-END`; the code outside them, and the markers, must stay as they are.
+The checks, in this order (check_child):
+1. the child compiles (a reply without code fails here);
+2. it keeps the evolve blocks where the initial program has them (D12): the LLM may
+   change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`; the
+   code outside them, and the markers, must stay as they are;
+3. it defines, at the top level, every entry function the problem file names.
 """
+
+import ast
+from collections.abc import Sequence
 
 # The lines that open and close an evolve block, without the spaces around them
 START_MARKER = "# EVOLVE-BLOCK-START"
@@ -93,4 +99,33 @@ def same_outside_code(child_code: str, initial_code: str) -> str | None:
         if len(child_lines) < len(initial_lines):
             removed = initial_lines[len(child_lines)].strip()
             return f"the code outside the evolve blocks was changed: {removed!r} was removed"
+    return None
+
+
+def defined_functions(tree: ast.Module) -> set[str]:
+    """Return the names of the functions defined at the top level of a program."""
+    return {
+        node.name for node in tree.body if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+
+
+def check_child(code: str, initial_code: str, entry_functions: Sequence[str]) -> str | None:
+    """Run the checks of D13 on a child, in order; return the reason it is rejected, or None.
+
+    Raises MarkerError if the initial program's own markers are broken.
+    """
+    if not code.strip():
+        return "no code in the reply"
+    try:
+        tree = ast.parse(code)
+    except (SyntaxError, ValueError) as error:
+        line = f" (line {error.lineno})" if isinstance(error, SyntaxError) and error.lineno else ""
+        message = error.msg if isinstance(error, SyntaxError) else str(error)
+        return f"the program does not compile: {message}{line}"
+    difference = same_outside_code(code, initial_code)
+    if difference is not None:
+        return difference
+    missing = [name for name in entry_functions if name not in defined_functions(tree)]
+    if missing:
+        return f"the program must define the function {missing[0]}() at its top level"
     return None

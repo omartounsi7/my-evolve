@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from my_evolve.checks import MarkerError, same_outside_code, split_evolve_blocks
+from my_evolve.checks import MarkerError, check_child, split_evolve_blocks
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLM, LLMError
@@ -109,10 +109,11 @@ def run(
     containers are labelled with it); without one, an id is made. An iteration whose
     LLM call fails is skipped.
 
-    A child that changes code outside the evolve blocks is rejected, not evaluated.
+    A child that fails a check (it does not compile, changes code outside the evolve
+    blocks, or lacks an entry function) is rejected, not evaluated.
 
-    Raises RunError if the output folder already holds a run, if the initial program's
-    evolve blocks are broken, or if it does not work: evolution needs a working start.
+    Raises RunError if the output folder already holds a run, if the initial program
+    fails the checks, or if it does not work: evolution needs a working start.
     """
     if (output / PROGRAMS_FILE).exists():
         raise RunError(f"{output} already holds a run; choose another output folder")
@@ -124,6 +125,9 @@ def run(
         split_evolve_blocks(initial_code)
     except MarkerError as error:
         raise RunError(f"the initial program's evolve blocks are broken: {error}") from None
+    reason = check_child(initial_code, initial_code, problem.entry_functions)
+    if reason is not None:
+        raise RunError(f"the initial program fails the checks: {reason}")
     print(f"Seed: {seed}")
 
     database = Database(random.Random(seed))
@@ -159,7 +163,7 @@ def run(
             print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
             continue
         parsed = parse_reply(reply.text, parent.code)
-        reason = same_outside_code(parsed.code, initial_code)
+        reason = check_child(parsed.code, initial_code, problem.entry_functions)
         result = Result.rejected(reason) if reason else evaluator.evaluate(parsed.code)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
         child = Program.new_child(parent, parsed.code, result, iteration, usage, parsed.description)
