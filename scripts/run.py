@@ -90,7 +90,12 @@ def main(arguments: list[str]) -> int:
         # Identifies the run's containers. Saved in the run folder from step 2.1 of the plan.
         run_id = uuid.uuid4().hex
         sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox, run_id)
-        evaluator = Evaluator(parsed.evaluation_file, sandbox, problem.evaluation.stage_time_limit)
+        evaluator = Evaluator(
+            parsed.evaluation_file,
+            sandbox,
+            problem.evaluation.stage_time_limit,
+            problem.evaluation.thresholds,
+        )
         llm = OpenAICompatibleLLM(problem.llm.model, problem.llm.api_base)
         sandbox.remove_leftovers()
         try:

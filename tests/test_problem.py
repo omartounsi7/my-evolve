@@ -58,6 +58,11 @@ class ProblemTest(unittest.TestCase):
             data["evaluation"] = {"stage_time_limit": wrong}
             with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, "above 0"):
                 Problem.from_dict(data)
+        data["evaluation"] = {"thresholds": [0.5, 1]}
+        self.assertEqual(Problem.from_dict(data).evaluation.thresholds, (0.5, 1.0))
+        data["evaluation"] = {"thresholds": [0.5, "high"]}
+        with self.assertRaisesRegex(ProblemError, "list of numbers"):
+            Problem.from_dict(data)
         data["evaluation"] = {"time_limit": 5}
         with self.assertRaisesRegex(ProblemError, "unknown key 'time_limit' in the evaluation"):
             Problem.from_dict(data)

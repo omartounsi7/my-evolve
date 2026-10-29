@@ -36,9 +36,12 @@ class Result:
     feedback: str | None = None
     # How long the evaluation took, in seconds
     duration: float = 0.0
+    # The last cascade stage the program completed; 0 if none
+    stage_reached: int = 0
 
     def __post_init__(self) -> None:
         """Refuse a result that contradicts itself: a score belongs to ok programs only."""
+        # An ok program may have an error too: that of a later stage it did not pass.
         if (self.status is Status.OK) != (self.score is not None):
             raise ValueError(f"status {self.status.value} cannot go with the score {self.score}")
 
@@ -63,6 +66,7 @@ class Result:
             "metrics": self.metrics,
             "feedback": self.feedback,
             "duration": self.duration,
+            "stage_reached": self.stage_reached,
         }
 
 

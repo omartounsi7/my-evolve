@@ -20,6 +20,7 @@ class ResultTest(unittest.TestCase):
                 "metrics": {},
                 "feedback": None,
                 "duration": 0.0,
+                "stage_reached": 0,
             },
         )
         self.assertFalse(result.is_ok)

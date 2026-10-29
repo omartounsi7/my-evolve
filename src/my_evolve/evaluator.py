@@ -1,6 +1,7 @@
 """The Evaluator class: runs a program and scores it with the problem's evaluation file.
 
 The evaluation file is Python code written for the problem. It defines a function
+(or several stages: evaluate_stage1, evaluate_stage2, ..., the cascade)
 
     from my_evolve.evaluation_api import InvalidProgram, StageResult
 
@@ -20,7 +21,7 @@ Whatever happens becomes a Result with a status:
 - ok: evaluate returned a StageResult, with a finite score;
 - invalid: evaluate raised InvalidProgram, the program's answer is illegal;
 - failed: the program failed (it raised, or its process ended): ProgramFailure;
-- timeout: the evaluation ran over its time limit: StageTimeout;
+- timeout: the first stage ran over its time limit: StageTimeout;
 - error: not the program's fault: the sandbox failed, or the evaluation file raised.
 """
 
@@ -29,7 +30,7 @@ import runpy
 import sys
 import time
 import traceback
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -38,8 +39,10 @@ from my_evolve.evaluation_api import InvalidProgram, ProgramFailure, StageResult
 from my_evolve.program import Result, Status
 from my_evolve.sandbox import ProgramNamespace, Sandbox, SandboxError
 
-# The function every evaluation file must define
+# The function an evaluation file with a single stage defines
 EVALUATE_FUNCTION_NAME = "evaluate"
+# The beginning of the names of the stage functions: evaluate_stage1, evaluate_stage2, ...
+STAGE_FUNCTION_PREFIX = "evaluate_stage"
 
 # What an evaluation file's evaluate looks like: the program's names in, a StageResult out
 EvaluateFunction = Callable[[Mapping[str, Any]], Any]
@@ -107,40 +110,125 @@ def checked(outcome: Any) -> StageResult:
     return StageResult(checked_number(outcome.score, "the score"), metrics, outcome.feedback)
 
 
+def join_feedback(*parts: str | None) -> str | None:
+    """Return the non-empty pieces of feedback, one paragraph each; None if there is none."""
+    kept = [part.strip() for part in parts if part and part.strip()]
+    return "\n\n".join(kept) or None
+
+
+def find_stages(names: Mapping[str, Any], path: Path) -> list[EvaluateFunction]:
+    """Return an evaluation file's stage functions, in order.
+
+    evaluate_stage1, evaluate_stage2, ... as long as they exist; otherwise evaluate alone,
+    a single stage. Raises EvaluationFileError if there is neither.
+    """
+    stages: list[EvaluateFunction] = []
+    while callable(names.get(f"{STAGE_FUNCTION_PREFIX}{len(stages) + 1}")):
+        stages.append(names[f"{STAGE_FUNCTION_PREFIX}{len(stages) + 1}"])
+    if not stages and callable(names.get(EVALUATE_FUNCTION_NAME)):
+        stages.append(names[EVALUATE_FUNCTION_NAME])
+    if not stages:
+        raise EvaluationFileError(
+            f"{path} must define a function called {EVALUATE_FUNCTION_NAME}, "
+            f"or {STAGE_FUNCTION_PREFIX}1, {STAGE_FUNCTION_PREFIX}2, ..."
+        )
+    return stages
+
+
 class Evaluator:
-    """Scores programs with one problem's evaluation file."""
+    """Scores programs with one problem's evaluation file, stage after stage (the cascade)."""
 
-    def __init__(self, evaluation_path: Path, sandbox: Sandbox, stage_time_limit: float) -> None:
-        """Load the evaluation file. Raises EvaluationFileError if it defines no evaluate.
+    def __init__(
+        self,
+        evaluation_path: Path,
+        sandbox: Sandbox,
+        stage_time_limit: float,
+        thresholds: Sequence[float] = (),
+    ) -> None:
+        """Load the evaluation file and find its stages.
 
-        sandbox runs the programs; an evaluation may last stage_time_limit seconds.
+        sandbox runs the programs; each stage may last stage_time_limit seconds; stage
+        k + 1 runs only if stage k's score reaches thresholds[k - 1]. Raises
+        EvaluationFileError if the file has no stage, or if the thresholds are not one
+        per stage after the first.
         """
-        names = load_evaluation_file(evaluation_path)
-        function = names.get(EVALUATE_FUNCTION_NAME)
-        if not callable(function):
+        # The evaluation file's stage functions, in order
+        self.stages: list[EvaluateFunction] = find_stages(
+            load_evaluation_file(evaluation_path), evaluation_path
+        )
+        if len(thresholds) != len(self.stages) - 1:
             raise EvaluationFileError(
-                f"{evaluation_path} must define a function called {EVALUATE_FUNCTION_NAME}"
+                f"{evaluation_path} has {len(self.stages)} stage(s), so the problem file needs "
+                f"{len(self.stages) - 1} threshold(s), one per stage after the first; "
+                f"it lists {len(thresholds)}"
             )
-        # The evaluation file's evaluate function
-        self.evaluate_function: EvaluateFunction = function
+        # The score stage k must reach for stage k + 1 to run, at index k - 1
+        self.thresholds: list[float] = list(thresholds)
         # Where the programs run
         self.sandbox: Sandbox = sandbox
-        # How long an evaluation may last, in seconds, loading the program included
+        # How long one stage may last, in seconds, loading the program included
         self.stage_time_limit: float = stage_time_limit
 
     def evaluate(self, code: str) -> Result:
-        """Load the program in a fresh sandbox session, and score it.
+        """Run the program through the cascade, each stage in a fresh sandbox session.
 
         Never raises: whatever happens becomes a result whose status and error say
         what (see the top of this file). Only Ctrl+C gets through.
         """
         started = time.monotonic()
-        result = self.run_stage(code)
+        result = self.run_cascade(code)
         return replace(result, duration=time.monotonic() - started)
 
-    def run_stage(self, code: str) -> Result:
-        """Run the evaluation file on the program, in a fresh sandbox session, and return the
-        result without its duration."""
+    def run_cascade(self, code: str) -> Result:
+        """Run the stages in order, and merge what they return (D9); no duration yet.
+
+        - A later stage's score replaces the earlier one; its metrics are added to the
+          earlier ones, replacing those with the same name; feedback is gathered.
+        - The next stage runs only if this stage's score reaches its threshold.
+        - An illegal answer at any stage makes the program invalid, and an error at any
+          stage (not the program's fault) makes the result an error.
+        - A later stage that fails or times out keeps the earlier stages' result: the
+          program stays ok, with "stage k:" and the failure as its error.
+        """
+        merged: StageResult | None = None
+        feedback: str | None = None
+        stage_reached = 0
+        for number, stage in enumerate(self.stages, start=1):
+            outcome = self.run_stage(stage, code)
+            if isinstance(outcome, Result):
+                # The stage did not give a score.
+                gathered = join_feedback(feedback, outcome.feedback)
+                if merged is None or outcome.status in (Status.INVALID, Status.ERROR):
+                    return replace(outcome, feedback=gathered, stage_reached=stage_reached)
+                return Result(
+                    Status.OK,
+                    score=merged.score,
+                    error=f"stage {number}: {outcome.error}",
+                    metrics=merged.metrics,
+                    feedback=gathered,
+                    stage_reached=stage_reached,
+                )
+            metrics = {**merged.metrics, **outcome.metrics} if merged else outcome.metrics
+            merged = StageResult(outcome.score, metrics)
+            feedback = join_feedback(feedback, outcome.feedback)
+            stage_reached = number
+            if number < len(self.stages) and outcome.score < self.thresholds[number - 1]:
+                break
+        assert merged is not None
+        return Result(
+            Status.OK,
+            score=merged.score,
+            metrics=merged.metrics,
+            feedback=feedback,
+            stage_reached=stage_reached,
+        )
+
+    def run_stage(self, stage: EvaluateFunction, code: str) -> StageResult | Result:
+        """Run one stage on the program in a fresh sandbox session, with its own time limit.
+
+        Returns what the stage returned, checked, or the Result of a program that gave no
+        score at this stage.
+        """
         try:
             session = self.sandbox.start(code, self.stage_time_limit)
         except ProgramFailure as failure:
@@ -149,34 +237,26 @@ class Evaluator:
             return Result.failure(Status.TIMEOUT, str(timeout))
         except SandboxError as error:
             return Result.failure(Status.ERROR, f"sandbox: {error}")
+        outcome: StageResult | Result
         try:
-            outcome = checked(self.evaluate_function(ProgramNamespace(session)))
+            outcome = checked(stage(ProgramNamespace(session)))
         except InvalidProgram as invalid:
-            result = Result.failure(Status.INVALID, invalid.reason, invalid.feedback or None)
+            outcome = Result.failure(Status.INVALID, invalid.reason, invalid.feedback or None)
         except ProgramFailure as failure:
-            result = Result.failure(Status.FAILED, failure.describe())
+            outcome = Result.failure(Status.FAILED, failure.describe())
         except StageTimeout as timeout:
-            result = Result.failure(Status.TIMEOUT, str(timeout))
+            outcome = Result.failure(Status.TIMEOUT, str(timeout))
         except SandboxError as error:
-            result = Result.failure(Status.ERROR, f"sandbox: {error}")
+            outcome = Result.failure(Status.ERROR, f"sandbox: {error}")
         # The evaluation file raised, or returned something that cannot be saved.
         except Exception as error:
-            result = Result.failure(
+            outcome = Result.failure(
                 Status.ERROR, f"evaluator: {describe_error(error)}\n\n{traceback.format_exc()}"
-            )
-        else:
-            result = Result(
-                Status.OK,
-                score=outcome.score,
-                metrics=outcome.metrics,
-                feedback=outcome.feedback or None,
             )
         finally:
             session.close()
         # Out of time, whatever the evaluation file made of it (it may catch every exception).
         if session.timed_out:
             limit = f"{self.stage_time_limit:g}"
-            return Result.failure(
-                Status.TIMEOUT, f"the evaluation ran over its time limit of {limit} s"
-            )
-        return result
+            return Result.failure(Status.TIMEOUT, f"the stage ran over its time limit of {limit} s")
+        return outcome

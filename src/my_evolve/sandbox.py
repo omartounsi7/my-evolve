@@ -206,7 +206,7 @@ class SandboxSession:
                 self.timed_out = True
                 self.kill()
                 raise StageTimeout(
-                    f"the evaluation ran over its time limit of {self.stage_limit:g} s"
+                    f"the stage ran over its time limit of {self.stage_limit:g} s"
                 ) from None
             if answer is None:
                 raise self.failure(describe_exit(self.process.wait()))

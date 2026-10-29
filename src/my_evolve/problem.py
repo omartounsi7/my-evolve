@@ -10,7 +10,8 @@ The problem file is written in YAML. For now it holds:
       model: qwen3-coder:30b               # the model's name, as its server knows it
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
     evaluation:                            # optional
-      stage_time_limit: 60                 # seconds a program's evaluation may take
+      stage_time_limit: 60                 # seconds each cascade stage may take
+      thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
     prompt:                                # optional
       max_feedback_chars: 2000             # feedback and errors are cut to this length
     sandbox:                               # optional: the limits of the Docker sandbox
@@ -21,6 +22,7 @@ The problem file is written in YAML. For now it holds:
 Every key is checked, and an unknown key is an error rather than silently ignored.
 """
 
+import math
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -52,8 +54,10 @@ class LLMSettings:
 class EvaluationSettings:
     """How programs are evaluated."""
 
-    # How long a program's evaluation may take, in seconds, before its status is timeout
+    # How long each cascade stage may take, in seconds, before its status is timeout
     stage_time_limit: float = 60.0
+    # The score stage k must reach for stage k + 1 to run, one per stage after the first
+    thresholds: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -119,7 +123,9 @@ class Problem:
         )
         llm = checked_section(top["llm"], "the llm section", required={"model", "api_base"})
         evaluation = checked_section(
-            top.get("evaluation", {}), "the evaluation section", optional={"stage_time_limit"}
+            top.get("evaluation", {}),
+            "the evaluation section",
+            optional={"stage_time_limit", "thresholds"},
         )
         sandbox = checked_section(
             top.get("sandbox", {}),
@@ -146,6 +152,7 @@ class Problem:
                     "the evaluation section",
                     defaults.stage_time_limit,
                 ),
+                thresholds=checked_thresholds(evaluation.get("thresholds", [])),
             ),
             prompt=PromptSettings(
                 max_feedback_chars=checked_count(
@@ -195,6 +202,18 @@ def checked_positive_number(section: dict[str, Any], key: str, where: str, defau
     if isinstance(value, bool) or not isinstance(value, int | float) or not value > 0:
         raise ProblemError(f"{key!r} in {where} must be a number above 0, got {value!r}")
     return float(value)
+
+
+def checked_thresholds(value: Any) -> tuple[float, ...]:
+    """Return the cascade's thresholds: a list of finite numbers."""
+    if not isinstance(value, list) or not all(
+        isinstance(item, int | float) and not isinstance(item, bool) and math.isfinite(item)
+        for item in value
+    ):
+        raise ProblemError(
+            f"'thresholds' in the evaluation section must be a list of numbers, got {value!r}"
+        )
+    return tuple(float(item) for item in value)
 
 
 def checked_count(section: dict[str, Any], key: str, where: str, default: int) -> int:
