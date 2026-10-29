@@ -2,7 +2,7 @@
 
 import unittest
 
-from my_evolve.reply_parser import extract_code
+from my_evolve.reply_parser import extract_code, parse_reply
 
 # The marker that opens and closes a code block, named so the tests stay readable
 FENCE = "```"
@@ -103,6 +103,43 @@ class TestExtractCode(unittest.TestCase):
     def test_empty_reply_gives_no_code(self) -> None:
         self.assertEqual(extract_code(""), "")
         self.assertEqual(extract_code(f"{FENCE}python\n{FENCE}"), "")
+
+
+class TestParseReply(unittest.TestCase):
+    """Checks on parse_reply: the description and the code."""
+
+    def test_the_description_and_the_code(self) -> None:
+        reply = (
+            "Let me think.\n<DESCRIPTION>\nA hexagonal grid, then a local search.\n</DESCRIPTION>\n"
+            f"{FENCE}python\nx = 1\n{FENCE}\n"
+        )
+        parsed = parse_reply(reply)
+        self.assertEqual(parsed.description, "A hexagonal grid, then a local search.")
+        self.assertEqual(parsed.code, "x = 1\n")
+
+    def test_the_tags_in_any_letter_case(self) -> None:
+        parsed = parse_reply(f"<description>Rings.</Description>\n{FENCE}\nx = 1\n{FENCE}")
+        self.assertEqual(parsed.description, "Rings.")
+
+    def test_code_quoted_in_the_description_is_never_the_program(self) -> None:
+        reply = (
+            f"<DESCRIPTION>It replaces\n{FENCE}python\nslow_code_that_is_much_longer = 1\n"
+            f"{FENCE}\nwith a faster loop.</DESCRIPTION>\n{FENCE}python\nx = 1\n{FENCE}"
+        )
+        self.assertEqual(parse_reply(reply).code, "x = 1\n")
+
+    def test_a_reply_without_a_description_keeps_its_code(self) -> None:
+        parsed = parse_reply(f"{FENCE}python\nx = 1\n{FENCE}")
+        self.assertEqual((parsed.code, parsed.description), ("x = 1\n", None))
+
+    def test_an_empty_description_is_none(self) -> None:
+        self.assertIsNone(parse_reply("<DESCRIPTION>  \n </DESCRIPTION>x = 1").description)
+
+    def test_a_description_inside_the_reasoning_is_ignored(self) -> None:
+        reply = (
+            "<think><DESCRIPTION>draft</DESCRIPTION></think><DESCRIPTION>Final.</DESCRIPTION>x = 1"
+        )
+        self.assertEqual(parse_reply(reply).description, "Final.")
 
 
 if __name__ == "__main__":

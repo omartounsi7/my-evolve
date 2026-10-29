@@ -116,6 +116,8 @@ class Program:
     iteration: int = 0
     # The LLM call that wrote it; None for the initial program
     llm: LLMUsage | None = None
+    # How it solves the problem, in the words of the LLM that wrote it; None if unknown
+    description: str | None = None
     # Identifies the program everywhere: in the database and in the saved files
     id: str = field(default_factory=new_id)
 
@@ -127,6 +129,7 @@ class Program:
         result: Result,
         iteration: int,
         llm: LLMUsage | None = None,
+        description: str | None = None,
     ) -> "Program":
         """Return a program the LLM wrote from parent, one generation further."""
         return cls(
@@ -136,6 +139,7 @@ class Program:
             generation=parent.generation + 1,
             iteration=iteration,
             llm=llm,
+            description=description,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -147,5 +151,6 @@ class Program:
             "iteration": self.iteration,
             "result": self.result.to_dict(),
             "llm": self.llm.to_dict() if self.llm else None,
+            "description": self.description,
             "code": self.code,
         }

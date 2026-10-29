@@ -30,8 +30,11 @@ RUN_SCRIPT = REPOSITORY_FOLDER / "scripts" / "run.py"
 
 
 def reply_returning(value: str) -> str:
-    """Return an LLM reply whose program's solve() returns that value."""
-    return f"Here is a better program:\n\n```python\ndef solve():\n    return {value}\n```\n"
+    """Return an LLM reply whose program's solve() returns that value, with a description."""
+    return (
+        f"<DESCRIPTION>Returns {value}.</DESCRIPTION>\n"
+        f"Here is a better program:\n\n```python\ndef solve():\n    return {value}\n```\n"
+    )
 
 
 def run_toy(
@@ -76,6 +79,7 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(scores, [1.0, 5.0, None, None, 7.0])
         self.assertIn("ZeroDivisionError", programs[2].result.error or "")
         self.assertIn("SyntaxError", programs[3].result.error or "")
+        self.assertEqual((programs[1].description, programs[3].description), ("Returns 5.", None))
         for child in programs[1:]:
             parent = database.programs[child.parent_id or ""]
             self.assertEqual(child.generation, parent.generation + 1)

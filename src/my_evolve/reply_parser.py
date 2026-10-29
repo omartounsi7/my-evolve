@@ -1,14 +1,16 @@
-"""Finding the program in the LLM's reply.
+"""Finding the program, and its description, in the LLM's reply.
 
 The LLM returns the whole program, rewritten (D11): this is what the AlphaEvolve
-diagram calls apply_diff. The rules are my-alphaevolve's (D68): the reasoning of
-thinking models is dropped; among the code blocks, the valid Python ones are kept, then
-those that do not merely repeat the parent, then the longest; a block cut short and a
-reply without any block are handled too.
+diagram calls apply_diff. It also describes the program between <DESCRIPTION> and
+</DESCRIPTION> (D15). Finding the code follows my-alphaevolve's rules (D68): the
+reasoning of thinking models is dropped; among the code blocks, the valid Python ones
+are kept, then those that do not merely repeat the parent, then the longest; a block cut
+short and a reply without any block are handled too.
 """
 
 import ast
 import re
+from dataclasses import dataclass
 
 # A code block: a line starting with three backticks (and an optional language name),
 # the code, and a line holding only three backticks. Backticks inside the code that
@@ -36,6 +38,19 @@ WIDEST_CODE_BLOCK_PATTERN = re.compile(
 
 # The reasoning some models write before the answer, which is not part of the program.
 THINKING_PATTERN = re.compile(r"<think>.*?</think>", re.DOTALL | re.IGNORECASE)
+
+# The program's description, between its tags, in any letter case.
+DESCRIPTION_PATTERN = re.compile(r"<description>(.*?)</description>", re.DOTALL | re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class ParsedReply:
+    """What is kept of an LLM's reply: the program, and its description."""
+
+    # The program's code; empty if the reply holds none
+    code: str
+    # How the program solves the problem, in the LLM's words; None if it gave none
+    description: str | None
 
 
 def is_valid_python(code: str) -> bool:
@@ -105,3 +120,26 @@ def extract_code(reply: str, parent_code: str | None = None) -> str:
         code = unclosed_block.group(1) if unclosed_block else reply
     code = code.strip()
     return code + "\n" if code else ""
+
+
+def extract_description(text: str) -> tuple[str | None, str]:
+    """Return the first description in the text, and the text without it.
+
+    Taking the description out first means code quoted inside it is never taken for
+    the program. An empty description is None.
+    """
+    found = DESCRIPTION_PATTERN.search(text)
+    if found is None:
+        return None, text
+    description = found.group(1).strip() or None
+    return description, text[: found.start()] + text[found.end() :]
+
+
+def parse_reply(reply: str, parent_code: str | None = None) -> ParsedReply:
+    """Return the program and the description an LLM's reply holds.
+
+    A reply without a description is still accepted if its code is usable.
+    """
+    without_thinking = THINKING_PATTERN.sub("", reply)
+    description, rest = extract_description(without_thinking)
+    return ParsedReply(code=extract_code(rest, parent_code), description=description)

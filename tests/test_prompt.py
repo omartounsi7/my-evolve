@@ -31,7 +31,7 @@ class PromptTest(unittest.TestCase):
             "- Higher scores are better.\n",
             system,
         )
-        self.assertTrue(system.endswith("in a single ```python code block.\n"))
+        self.assertTrue(system.endswith("```python\nthe complete program\n```\n"))
 
     def test_the_allowed_packages_are_named_without_versions(self) -> None:
         """The rules name each package the program may import."""
@@ -82,6 +82,20 @@ class PromptTest(unittest.TestCase):
         user = PromptBuilder(problem).build(parent, [example]).user
         self.assertIn("## Attempt 1: score 0.4\nFeedback: AAAAAAAAAA… (truncated)\n```python", user)
         self.assertIn("score 0.5\nFeedback: Short.\n```python\nx = 1\n```", user)
+
+    def test_descriptions_are_shown_before_feedback(self) -> None:
+        """A program's description, if it has one, comes right after its heading."""
+        parent = Program(
+            "x = 1\n", Result(Status.OK, score=0.5, feedback="Fine."), description="Rings."
+        )
+        user = PromptBuilder(PROBLEM).build(parent, []).user
+        self.assertIn("score 0.5\nDescription: Rings.\nFeedback: Fine.\n```python", user)
+
+    def test_the_reply_format_asks_for_a_description(self) -> None:
+        """The system message asks for the two parts of the reply."""
+        system = PromptBuilder(PROBLEM).system_message
+        self.assertIn("<DESCRIPTION>\nHow this program solves the problem", system)
+        self.assertIn("do not mention any other program.\n</DESCRIPTION>\n```python", system)
 
     def test_braces_are_kept_as_written(self) -> None:
         """Code and descriptions containing braces reach the prompt unchanged."""

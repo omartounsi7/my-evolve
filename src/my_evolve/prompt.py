@@ -2,9 +2,9 @@
 
 The system message is the same for the whole run: the instruction, the problem, the
 reply format. The user message changes every iteration: the example programs, then the
-parent, the program to improve. Each program is shown with its score, the feedback the
-evaluation file wrote about it (cut to a size limit), and its code; step 2.7 of the
-implementation plan gives the prompt its final text.
+parent, the program to improve. Each program is shown with its score, its description,
+the feedback the evaluation file wrote about it (cut to a size limit), and its code;
+step 2.7 of the implementation plan gives the prompt its final text.
 """
 
 from collections.abc import Sequence
@@ -27,7 +27,14 @@ Write a new version of the parent that solves the problem below better than it d
 - Higher scores are better.
 
 # Reply format
-Reply with the complete new program in a single ```python code block.
+Your reply must contain these two parts. You may write anything else around them.
+<DESCRIPTION>
+How this program solves the problem: its approach and main ideas. Describe the
+program on its own; do not mention any other program.
+</DESCRIPTION>
+```python
+the complete program
+```
 """
 
 # The last words of the user message
@@ -82,8 +89,10 @@ class PromptBuilder:
         self.max_feedback_chars: int = problem.prompt.max_feedback_chars
 
     def program_section(self, program: Program, heading: str) -> str:
-        """Return one program's part of the user message: its heading, feedback and code."""
+        """Return one program's part of the user message: heading, description, feedback, code."""
         lines = [heading]
+        if program.description:
+            lines.append(f"Description: {program.description}")
         if program.result.feedback:
             feedback = truncated(program.result.feedback.strip(), self.max_feedback_chars)
             lines.append(f"Feedback: {feedback}")

@@ -5,9 +5,9 @@ Each iteration runs the six steps of the AlphaEvolve diagram:
     parent, examples = database.sample()
     prompt = prompt_builder.build(parent, examples)
     reply = llm.complete(prompt)
-    code = extract_code(reply)
-    result = evaluator.evaluate(code)
-    database.add(Program.new_child(parent, code, result, iteration))
+    parsed = parse_reply(reply)          # the program and its description
+    result = evaluator.evaluate(parsed.code)
+    database.add(Program.new_child(parent, parsed.code, result, iteration))
 
 For now iterations run one after another, and the run folder holds:
 - programs.jsonl: one line per program, appended as it is stored;
@@ -29,7 +29,7 @@ from my_evolve.llm import LLM, LLMError
 from my_evolve.problem import Problem
 from my_evolve.program import LLMUsage, Program
 from my_evolve.prompt import PromptBuilder
-from my_evolve.reply_parser import extract_code
+from my_evolve.reply_parser import parse_reply
 
 # The files of the run folder
 PROGRAMS_FILE = "programs.jsonl"
@@ -151,10 +151,10 @@ def run(
             append_line(output / LLM_CALLS_FILE, call)
             print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
             continue
-        code = extract_code(reply.text, parent.code)
-        result = evaluator.evaluate(code)
+        parsed = parse_reply(reply.text, parent.code)
+        result = evaluator.evaluate(parsed.code)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
-        child = Program.new_child(parent, code, result, iteration, usage)
+        child = Program.new_child(parent, parsed.code, result, iteration, usage, parsed.description)
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
         append_line(output / LLM_CALLS_FILE, call)
