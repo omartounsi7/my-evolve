@@ -7,6 +7,7 @@ It keeps passing at every step, and grows with every phase.
 import contextlib
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ from fakes import FakeLLM
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
-from my_evolve.loop import RunError, run
+from my_evolve.loop import RunError, run, summary
 from my_evolve.problem import IslandSettings, ParentSettings, Problem
 from my_evolve.program import Origin, Status
 from my_evolve.sandbox import LocalSandbox
@@ -275,6 +276,51 @@ class LoopTest(unittest.TestCase):
             set(children[1].example_ids), {copy.id, children[0].id} - {children[1].parent_id}
         )
 
+    def test_the_log_and_the_summary(self) -> None:
+        """log.txt gets the details the console leaves out; the run ends with a summary."""
+        replies: list[str | Exception] = [
+            reply_returning("5"),
+            reply_returning("1 / 0"),
+            LLMError("fake-model", "down"),
+        ]
+        _, _, console = run_toy(replies, self.output)
+        log = (self.output / "log.txt").read_text()
+        self.assertIn("Iteration 1: island 0, parent", log)
+        self.assertNotIn("Iteration 1: island 0, parent", console)
+        self.assertIn("INFO my_evolve.loop: Seed: 0", log)
+        self.assertIn("Run finished: 3 iterations done, every iteration done.", console)
+        self.assertIn("Best score: 5.000000, found at iteration 1.", console)
+        self.assertIn("Children: 2 (1 failed, 1 ok).", console)
+        self.assertRegex(console, r"fake-model: 2 replies, [\d,]+ input and \d+ output tokens\.")
+
+    def test_verbose_shows_the_details(self) -> None:
+        llm = FakeLLM([reply_returning("5")])
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([llm], [1.0], max_failures=3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=1,
+                output=self.output,
+                seed=0,
+                verbose=True,
+            )
+        self.assertIn("Iteration 1: island 0, parent", console.getvalue())
+        self.assertIn("Iteration 1: LLM 0.0 s, evaluation", console.getvalue())
+
+    def test_the_summary_prices_tokens_when_prices_are_given(self) -> None:
+        problem = Problem.load(TOY_FOLDER / "problem.yaml")
+        model = replace(problem.llm.models[0], price_input=2.0, price_output=10.0)
+        problem = replace(problem, llm=replace(problem.llm, models=(model,)))
+        database, _, _ = run_toy([reply_returning("5")], self.output)
+        (child,) = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        assert child.llm is not None
+        cost = (child.llm.input_tokens * 2.0 + child.llm.output_tokens * 10.0) / 1e6
+        lines = summary(problem, database, 1, "every iteration done")
+        self.assertTrue(lines[-1].endswith(f"tokens, ${cost:.4f}."))
+
     def test_every_llm_call_is_saved(self) -> None:
         """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""
         replies: list[str | Exception] = [
@@ -336,7 +382,7 @@ class LoopTest(unittest.TestCase):
                 output=self.output,
                 seed=0,
             )
-        self.assertFalse(self.output.exists())
+        self.assertFalse((self.output / "programs.jsonl").exists())
 
     def test_an_initial_program_without_evolve_blocks_is_refused(self) -> None:
         """The blocks are what the LLM may change: the initial program must have them."""
@@ -392,7 +438,32 @@ class RunScriptTest(unittest.TestCase):
             self.assertEqual(completed.returncode, 1, completed.stdout)
             self.assertIn("a model did not answer its check: fake-model:", completed.stderr)
             self.assertNotIn("Traceback", completed.stderr)
-            self.assertFalse(output.exists())
+            self.assertFalse((output / "programs.jsonl").exists())
+
+    def test_no_api_key_reaches_any_output(self) -> None:
+        """A key is read from its variable, and never printed nor written anywhere."""
+        with tempfile.TemporaryDirectory() as folder:
+            config = Path(folder) / "problem.yaml"
+            config.write_text(
+                (TOY_FOLDER / "problem.yaml")
+                .read_text()
+                .replace(
+                    "api_base: http://localhost:1/v1",
+                    "api_base: http://localhost:1/v1\n  api_key: ${MY_EVOLVE_TEST_SECRET}",
+                )
+            )
+            output = Path(folder) / "run"
+            completed = subprocess.run(
+                [sys.executable, str(RUN_SCRIPT), *self.toy_arguments(output, config), "--verbose"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                env={**os.environ, "MY_EVOLVE_TEST_SECRET": "sk-very-secret-value"},
+            )
+            self.assertEqual(completed.returncode, 1, completed.stderr)
+            written = "".join(path.read_text() for path in output.rglob("*") if path.is_file())
+            for text in (completed.stdout, completed.stderr, written):
+                self.assertNotIn("sk-very-secret-value", text)
 
     def test_wrong_arguments_are_usage_errors(self) -> None:
         """A number of iterations below 1, or a missing file, stops the script at once."""

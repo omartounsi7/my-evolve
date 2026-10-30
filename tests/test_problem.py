@@ -81,6 +81,15 @@ class ProblemTest(unittest.TestCase):
             ([first.weight, second.weight], llm.max_failures_in_a_row), ([0.8, 0.2], 5)
         )
 
+    def test_prices_are_optional_and_shared_or_per_model(self) -> None:
+        data = valid_data()
+        self.assertIsNone(Problem.from_dict(data).llm.models[0].price_input)
+        data["llm"].update(price_input=1.0, price_output=5.0)
+        data["llm"]["models"] = [{"name": "a"}, {"name": "b", "price_output": 15}]
+        first, second = Problem.from_dict(data).llm.models
+        self.assertEqual((first.price_input, first.price_output), (1.0, 5.0))
+        self.assertEqual((second.price_input, second.price_output), (1.0, 15.0))
+
     def test_wrong_ensembles_are_refused(self) -> None:
         for models, error in [
             ([], "a list of one model or more"),

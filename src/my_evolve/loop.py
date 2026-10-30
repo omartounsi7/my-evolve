@@ -15,12 +15,17 @@ For now iterations run one after another, and the run folder holds:
 - llm_calls.jsonl: one line per LLM call, failed ones included: the user message, the
   reply, the tokens and the duration;
 - run.json: the run's id, its seed and the system message, written once;
-- best_program.py: the best program so far.
+- best_program.py: the best program so far;
+- log.txt: everything logged, with the time (logs.py).
+The run ends with a summary: iterations done and why the run stopped, the best score,
+the children by status, and the tokens and cost of each model (D51).
 """
 
 import json
+import logging
 import random
 import uuid
+from collections import Counter
 from pathlib import Path
 from typing import Any
 
@@ -28,8 +33,9 @@ from my_evolve.checks import MarkerError, check_child, split_evolve_blocks
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError, NoModelLeft
-from my_evolve.problem import Problem
-from my_evolve.program import LLMUsage, Program, Result
+from my_evolve.logs import setup_logging, stop_logging
+from my_evolve.problem import ModelSettings, Problem
+from my_evolve.program import LLMUsage, Origin, Program, Result
 from my_evolve.prompt import PromptBuilder
 from my_evolve.reply_parser import parse_reply
 
@@ -41,6 +47,8 @@ BEST_PROGRAM_FILE = "best_program.py"
 
 # The longest error shown on the console, in characters (programs.jsonl keeps it whole)
 MAX_CONSOLE_ERROR = 200
+
+logger = logging.getLogger(__name__)
 
 
 class RunError(Exception):
@@ -92,6 +100,48 @@ def best_score_text(database: Database) -> str:
     return f"{best_score:.6f}" if best_score is not None else "none"
 
 
+def model_cost(model: ModelSettings | None, input_tokens: int, output_tokens: int) -> str:
+    """Return what a model's tokens cost, as text; empty when its prices are not given."""
+    if model is None or model.price_input is None or model.price_output is None:
+        return ""
+    dollars = (input_tokens * model.price_input + output_tokens * model.price_output) / 1e6
+    return f", ${dollars:.4f}"
+
+
+def summary(problem: Problem, database: Database, completed: int, reason: str) -> list[str]:
+    """Return the lines of the end-of-run summary (D51).
+
+    The iterations done and why the run stopped, the best score and the iteration that
+    found it, the LLM's children by status, and the tokens (and cost, when prices are
+    given) of each model.
+    """
+    lines = [f"Run finished: {completed} iterations done, {reason}."]
+    best = database.best()
+    if best is not None:
+        lines.append(
+            f"Best score: {best_score_text(database)}, found at iteration {best.iteration}."
+        )
+    children = [program for program in database.programs.values() if program.origin is Origin.LLM]
+    statuses = Counter(child.result.status.value for child in children)
+    counts = ", ".join(f"{count} {status}" for status, count in sorted(statuses.items()))
+    lines.append(f"Children: {len(children)} ({counts or 'none'}).")
+    models = {model.name: model for model in problem.llm.models}
+    usage: dict[str, list[int]] = {}
+    for child in children:
+        if child.llm is not None:
+            totals = usage.setdefault(child.llm.model, [0, 0, 0])
+            totals[0] += 1
+            totals[1] += child.llm.input_tokens
+            totals[2] += child.llm.output_tokens
+    for name, (calls, input_tokens, output_tokens) in usage.items():
+        cost = model_cost(models.get(name), input_tokens, output_tokens)
+        lines.append(
+            f"{name}: {calls} replies, {input_tokens:,} input and {output_tokens:,} output "
+            f"tokens{cost}."
+        )
+    return lines
+
+
 def run(
     problem: Problem,
     initial_code: str,
@@ -101,6 +151,7 @@ def run(
     output: Path,
     seed: int | None = None,
     run_id: str | None = None,
+    verbose: bool = False,
 ) -> Database:
     """Evolve the initial program for that many iterations, and return the database.
 
@@ -110,6 +161,8 @@ def run(
     containers are labelled with it); without one, an id is made. Each iteration draws
     one model of the ensemble; an iteration whose LLM call fails is skipped, and the run
     stops when every model has been dropped. Every model is checked before the run.
+    Messages go to the console (details too with verbose) and to log.txt in the output
+    folder.
 
     A child that fails a check (it does not compile, changes code outside the evolve
     blocks, lacks an entry function, or repeats an earlier program) is rejected, and
@@ -121,6 +174,24 @@ def run(
     """
     if (output / PROGRAMS_FILE).exists():
         raise RunError(f"{output} already holds a run; choose another output folder")
+    setup_logging(output, verbose)
+    try:
+        return evolve(problem, initial_code, ensemble, evaluator, iterations, output, seed, run_id)
+    finally:
+        stop_logging()
+
+
+def evolve(
+    problem: Problem,
+    initial_code: str,
+    ensemble: Ensemble,
+    evaluator: Evaluator,
+    iterations: int,
+    output: Path,
+    seed: int | None,
+    run_id: str | None,
+) -> Database:
+    """Run the loop, once logging is set up (see run)."""
     if seed is None:
         seed = random.SystemRandom().randrange(2**32)
     if run_id is None:
@@ -132,7 +203,7 @@ def run(
     initial_checks = check_child(initial_code, initial_code, problem.entry_functions, {})
     if initial_checks.reason is not None:
         raise RunError(f"the initial program fails the checks: {initial_checks.reason}")
-    print(f"Seed: {seed}")
+    logger.info("Seed: %d", seed)
 
     try:
         ensemble.check_all()
@@ -166,7 +237,9 @@ def run(
             store(arrival)
         if arrivals:
             verb = "moved" if problem.islands.mode == "move" else "copied"
-            print(f"Migration after iteration {completed}: {len(arrivals)} programs {verb}")
+            logger.info(
+                "Migration after iteration %d: %d programs %s", completed, len(arrivals), verb
+            )
 
     initial = Program(
         initial_code,
@@ -184,16 +257,30 @@ def run(
     store(initial)
     for copy in database.seed_islands(initial):
         store(copy)
-    print(f"Initial program: {describe(initial)}, copied to {len(database.islands)} islands")
+    logger.info(
+        "Initial program: %s, copied to %d islands", describe(initial), len(database.islands)
+    )
 
+    completed = 0
+    reason = "every iteration done"
     for iteration in range(1, iterations + 1):
         island = database.sample_island()
         parent, examples = database.sample(island, problem.prompt.example_programs)
         try:
             llm = ensemble.draw(rng)
         except NoModelLeft as error:
-            print(f"Stopping: {error}")
+            logger.info("Stopping: %s", error)
+            reason = "no LLM model left"
             break
+        logger.debug(
+            "Iteration %d: island %d, parent %s (%s), examples %s, model %s",
+            iteration,
+            island,
+            parent.id,
+            describe(parent),
+            [example.id for example in examples],
+            llm.name,
+        )
         prompt = prompt_builder.build(parent, examples, database.best_score())
         call: dict[str, Any] = {"iteration": iteration, "user_message": prompt.user}
         try:
@@ -202,10 +289,15 @@ def run(
             ensemble.record_failure(llm.name)
             call.update(program_id=None, model=llm.name, reply=None, error=str(error))
             append_line(output / LLM_CALLS_FILE, call)
-            print(
-                f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: "
-                f"skipped, no reply ({error})"
+            logger.info(
+                "Iteration %d/%d, island %d, %s: skipped, no reply (%s)",
+                iteration,
+                iterations,
+                island,
+                llm.name,
+                error,
             )
+            completed = iteration
             after_completion(iteration)
             continue
         ensemble.record_success(llm.name)
@@ -217,6 +309,13 @@ def run(
             result = Result.rejected(checks.reason)
         else:
             result = evaluator.evaluate(parsed.code)
+            logger.debug(
+                "Iteration %d: LLM %.1f s, evaluation %.1f s (stage %d reached)",
+                iteration,
+                reply.duration,
+                result.duration,
+                result.stage_reached,
+            )
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
         child = Program.new_child(
             parent,
@@ -233,9 +332,17 @@ def run(
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
         append_line(output / LLM_CALLS_FILE, call)
-        print(
-            f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: {describe(child)} "
-            f"(best {best_score_text(database)})"
+        logger.info(
+            "Iteration %d/%d, island %d, %s: %s (best %s)",
+            iteration,
+            iterations,
+            island,
+            llm.name,
+            describe(child),
+            best_score_text(database),
         )
+        completed = iteration
         after_completion(iteration)
+    for line in summary(problem, database, completed, reason):
+        logger.info(line)
     return database

@@ -15,6 +15,8 @@ The problem file is written in YAML. For now it holds:
       reasoning_effort: medium             # optional; reasoning models only
       timeout: 300                         # optional: seconds to wait for a reply
       retries: 2                           # optional: retries of a failed request
+      price_input: 1.0                     # optional: dollars per million input tokens
+      price_output: 5.0                    # optional: per million output tokens (reports only)
       max_failures_in_a_row: 3             # optional: a model failing this often is dropped
       models:                              # the ensemble: one model is drawn per iteration
         - name: qwen3-coder:30b            # the model's name, as its server knows it
@@ -88,7 +90,17 @@ MAX_GRID_FEATURES = 3
 DEFAULT_BINS = {1: 10, 2: 5, 3: 3}
 # The keys of the llm section that apply to every model, unless a model sets its own
 SHARED_MODEL_KEYS = frozenset(
-    {"api_base", "api_key", "max_tokens", "temperature", "reasoning_effort", "timeout", "retries"}
+    {
+        "api_base",
+        "api_key",
+        "max_tokens",
+        "temperature",
+        "reasoning_effort",
+        "timeout",
+        "retries",
+        "price_input",
+        "price_output",
+    }
 )
 # A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
 PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
@@ -120,6 +132,10 @@ class ModelSettings:
     timeout: float = 300.0
     # How many times the openai package retries a failed request: the only layer of retries
     retries: int = 2
+    # Its prices in dollars per million input and output tokens, for the run's summary
+    # only (D35); None when not given
+    price_input: float | None = None
+    price_output: float | None = None
     # How often the ensemble draws it, relative to the other models' weights
     weight: float = 1.0
 
@@ -531,6 +547,8 @@ def build_model(values: dict[str, Any], where: str) -> ModelSettings:
         reasoning=reasoning,
         timeout=checked_positive_number(llm, "timeout", where, defaults.timeout),
         retries=checked_count(llm, "retries", where, defaults.retries, minimum=0),
+        price_input=checked_optional_number(llm, "price_input", where),
+        price_output=checked_optional_number(llm, "price_output", where),
         weight=checked_positive_number(llm, "weight", where, defaults.weight),
     )
 

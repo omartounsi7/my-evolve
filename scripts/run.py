@@ -2,7 +2,7 @@
 
 Usage:
     python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE
-        --iterations N --output FOLDER [--seed S] [--unsafe-local-sandbox]
+        --iterations N --output FOLDER [--seed S] [--unsafe-local-sandbox] [--verbose]
 
 Programs run in Docker containers, so Docker must be installed and running.
 
@@ -62,6 +62,9 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         action="store_true",
         help="run programs as plain processes, without Docker or any isolation (tests only)",
     )
+    parser.add_argument(
+        "--verbose", action="store_true", help="show each iteration's details on the console"
+    )
     parsed = parser.parse_args(arguments)
     for path in (parsed.initial_program, parsed.evaluation_file, parsed.config):
         if not path.is_file():
@@ -109,6 +112,7 @@ def main(arguments: list[str]) -> int:
                 parsed.output,
                 parsed.seed,
                 run_id,
+                parsed.verbose,
             )
         finally:
             # Whatever happened, no container of the run outlives it.
