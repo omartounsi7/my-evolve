@@ -421,10 +421,12 @@ class Loop:
         """Continue a run (D49): rebuild its database from the run folder.
 
         Children of iterations without a history row are dropped first (P3), islands
-        still lacking their copy of the initial program get it, and best_program.py is
-        rewritten from the rebuilt database. The initial program is not
-        evaluated again. The random generator is reseeded from the seed and the number of
-        programs, so that draws continue instead of repeating the first session's (D39).
+        still lacking their copy of the initial program get it, the snapshot and the
+        migration due after the last completed iteration are made if they were not
+        (catch_up), and best_program.py is rewritten from the rebuilt database. The
+        initial program is not evaluated again. The random generator is reseeded from the
+        seed and the number of programs, so that draws continue instead of repeating the
+        first session's (D39).
         Raises RunError if the run cannot continue.
         """
         self.check_start()
@@ -453,6 +455,7 @@ class Loop:
             self.store(programs[0].copy_to(island.index, iteration=0))
         if unseeded:
             self.storage.write_snapshot(programs[0], 0)
+        self.catch_up(programs)
         best = self.db.best()
         if best is not None:
             self.storage.write_best(best)
@@ -704,15 +707,39 @@ class Loop:
         if completed % self.problem.snapshot_every == 0 and best is not None:
             self.storage.write_snapshot(best, completed)
         if completed % self.problem.islands.migration_interval == 0:
-            arrivals = self.db.migrate(completed)
-            for arrival in arrivals:
-                self.store(arrival)
-            if arrivals:
-                verb = "moved" if self.problem.islands.mode == "move" else "copied"
-                logger.info(
-                    "Migration after iteration %d: %d programs %s", completed, len(arrivals), verb
-                )
+            self.migrate()
         self.check_stop()
+
+    def migrate(self) -> None:
+        """Migrate between islands, and store the arrivals (D23)."""
+        arrivals = self.db.migrate(self.completed)
+        for arrival in arrivals:
+            self.store(arrival)
+        if arrivals:
+            verb = "moved" if self.problem.islands.mode == "move" else "copied"
+            logger.info(
+                "Migration after iteration %d: %d programs %s", self.completed, len(arrivals), verb
+            )
+
+    def catch_up(self, programs: Sequence[Program]) -> None:
+        """Do what a run stopped right after its last completed iteration left undone: the
+        snapshot, and the migration, due at that count.
+
+        A migration that took place left its arrivals, which carry its count; one that
+        moved nothing is harmless to do again.
+        """
+        completed = self.completed
+        best = self.db.best()
+        if completed == 0 or best is None:
+            return
+        if completed % self.problem.snapshot_every == 0:
+            self.storage.write_snapshot(best, completed)
+        migrated = any(
+            program.origin in (Origin.COPY, Origin.MOVE) and program.iteration == completed
+            for program in programs
+        )
+        if completed % self.problem.islands.migration_interval == 0 and not migrated:
+            self.migrate()
 
     def on_ctrl_c(self, signal_number: int, frame: Any) -> None:
         """Handle Ctrl+C while iterations run: the first sets a flag, the second stops at once.

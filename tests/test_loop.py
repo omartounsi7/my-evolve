@@ -785,6 +785,25 @@ class LoopTest(unittest.TestCase):
         copies = [p.island for p in database.programs.values() if p.origin is Origin.COPY]
         self.assertEqual(sorted(copies[:3]), [0, 1, 2])
 
+    def test_a_migration_left_undone_is_made_when_continuing(self) -> None:
+        """A run stopped between iteration 2's history row and the migration due after it."""
+        islands = IslandSettings(count=2, migration_interval=2)
+        toy = replace(Problem.load(TOY_FOLDER / "problem.yaml"), islands=islands, snapshot_every=2)
+        run_toy(
+            [reply_returning("2"), reply_returning("3")], self.output, iterations=2, problem=toy
+        )
+        programs_file = self.output / "programs.jsonl"
+        records = [json.loads(line) for line in programs_file.read_text().splitlines()]
+        migrants = [r for r in records if r["origin"] == "copy" and r["iteration"] == 2]
+        self.assertTrue(migrants)
+        kept = [r for r in records if r not in migrants]
+        programs_file.write_text("".join(json.dumps(r) + "\n" for r in kept))
+        (self.output / "best" / "iteration_0002.py").unlink()
+        database, _, _ = run_toy([reply_returning("4")], self.output, iterations=3, problem=toy)
+        arrivals = [p for p in database.programs.values() if p.origin is Origin.COPY]
+        self.assertEqual(len([p for p in arrivals if p.iteration == 2]), len(migrants))
+        self.assertTrue((self.output / "best" / "iteration_0002.py").exists())
+
     def test_draws_after_resuming_are_not_the_first_draws_again(self) -> None:
         """The generator is reseeded from the seed and the number of programs (D39)."""
         run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, seed=5, iterations=2)
