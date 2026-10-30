@@ -146,8 +146,6 @@ class Program:
     fingerprint: str | None = None
     # The example programs shown in the prompt that wrote it (D26)
     example_ids: tuple[str, ...] = ()
-    # Its syntax-tree nodes inside the evolve blocks (D17); None if it does not compile
-    code_complexity: int | None = None
     # Identifies the program everywhere: in the database and in the saved files
     id: str = field(default_factory=new_id)
 
@@ -164,7 +162,6 @@ class Program:
         description: str | None = None,
         fingerprint: str | None = None,
         example_ids: tuple[str, ...] = (),
-        code_complexity: int | None = None,
     ) -> "Program":
         """Return a program the LLM wrote from parent, one generation further."""
         return cls(
@@ -179,15 +176,14 @@ class Program:
             description=description,
             fingerprint=fingerprint,
             example_ids=example_ids,
-            code_complexity=code_complexity,
         )
 
     def copy_to(self, island: int, iteration: int, origin: Origin = Origin.COPY) -> "Program":
         """Return a copy (or, with Origin.MOVE, a move) of this program onto an island.
 
         The copy is a new program, with this one as its parent; its code, result,
-        generation, description, fingerprint and code complexity are carried over. It is
-        not evaluated again.
+        generation, description and fingerprint are carried over. It is not evaluated
+        again.
         """
         return Program(
             code=self.code,
@@ -199,7 +195,6 @@ class Program:
             iteration=iteration,
             description=self.description,
             fingerprint=self.fingerprint,
-            code_complexity=self.code_complexity,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -216,6 +211,5 @@ class Program:
             "description": self.description,
             "fingerprint": self.fingerprint,
             "example_ids": list(self.example_ids),
-            "code_complexity": self.code_complexity,
             "code": self.code,
         }

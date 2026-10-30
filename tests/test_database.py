@@ -7,21 +7,16 @@ import unittest
 from collections import Counter
 
 from my_evolve.database import Database, WeightedSelector
-from my_evolve.problem import CODE_COMPLEXITY, FeatureSpec, IslandSettings, ParentSettings
+from my_evolve.problem import IslandSettings, ParentSettings
 from my_evolve.program import Origin, Program, Result, Status
 
 # Most tests use a database with a single island, island 0
 ONE_ISLAND = IslandSettings(count=1)
-# A grid whose bin k holds the programs of 2**k nodes (measured against 1 node)
-TEST_GRID = (FeatureSpec(CODE_COMPLEXITY, 0.0, 10.0, 10),)
 
 
-def working(score: float, island: int = 0, cell: int | None = None) -> Program:
-    """Return a program on an island, with that score, in grid cell `cell` (default: the
-    score's whole part)."""
-    nodes = 2 ** (int(score) % 10 if cell is None else cell)
-    result = Result(Status.OK, score=score)
-    return Program(f"x = {score}\n", result, island=island, code_complexity=nodes)
+def working(score: float, island: int = 0) -> Program:
+    """Return a program on an island, with that score."""
+    return Program(f"x = {score}\n", Result(Status.OK, score=score), island=island)
 
 
 def failed(island: int = 0) -> Program:
@@ -32,7 +27,7 @@ def failed(island: int = 0) -> Program:
 
 def one_island(seed: int = 0, parents: ParentSettings | None = None) -> Database:
     """Return an empty database with a single island."""
-    return Database(random.Random(seed), parents, ONE_ISLAND, TEST_GRID)
+    return Database(random.Random(seed), parents, ONE_ISLAND)
 
 
 def filled_database(seed: int = 0) -> Database:
@@ -147,14 +142,7 @@ class FingerprintTest(unittest.TestCase):
 def child_of(parent: Program, status: Status) -> Program:
     """Return a child of parent with that status."""
     result = Result(status, score=1.0) if status is Status.OK else Result(status, error="x")
-    return Program.new_child(
-        parent,
-        "x = 2\n",
-        result,
-        iteration=1,
-        island=parent.island,
-        code_complexity=parent.code_complexity,
-    )
+    return Program.new_child(parent, "x = 2\n", result, iteration=1, island=parent.island)
 
 
 class ChildrenTest(unittest.TestCase):
@@ -229,10 +217,8 @@ class WeightedSelectorTest(unittest.TestCase):
 class IslandTest(unittest.TestCase):
     def three_islands(self) -> tuple[Database, Program]:
         """Return a database of three islands seeded with the initial program, and that program."""
-        database = Database(random.Random(0), None, IslandSettings(count=3), TEST_GRID)
-        initial = Program(
-            "x = 1\n", Result(Status.OK, score=1.0), fingerprint="f", code_complexity=1
-        )
+        database = Database(random.Random(0), islands=IslandSettings(count=3))
+        initial = Program("x = 1\n", Result(Status.OK, score=1.0), fingerprint="f")
         database.add(initial)
         for copy in database.seed_islands(initial):
             database.add(copy)
@@ -261,7 +247,7 @@ class IslandTest(unittest.TestCase):
         database, _ = self.three_islands()
         for score in (2.0, 3.0):
             database.add(working(score, island=0))
-            database.add(working(score + 10, island=1, cell=int(score)))
+            database.add(working(score + 10, island=1))
             database.add(failed(island=1))
         island_1 = {program.id for program in database.island_programs(1)}
         for _ in range(100):
@@ -281,32 +267,6 @@ class IslandTest(unittest.TestCase):
         counts = Counter(database.sample_island() for _ in range(9_000))
         for island in range(3):
             self.assertAlmostEqual(counts[island] / 9_000, 1 / 3, delta=0.03)
-
-
-class GridPopulationTest(unittest.TestCase):
-    def test_parents_are_elites_and_displaced_elites_stay_examples(self) -> None:
-        """A better program in the same cell takes it; the one displaced is no more a
-        parent, but stays in the database and can still be an example."""
-        database = one_island()
-        weaker, stronger = working(1.0, cell=3), working(2.0, cell=3)
-        other = working(0.5, cell=7)
-        for program in (weaker, stronger, other):
-            database.add(program)
-        self.assertEqual(database.islands[0].elites(), [stronger, other])
-        self.assertIn(weaker.id, database.programs)
-        parents = {database.sample_parent(0).id for _ in range(200)}
-        self.assertEqual(parents, {stronger.id, other.id})
-        examples = {
-            example.id for _ in range(200) for example in database.sample_examples(0, other, 2)
-        }
-        self.assertIn(weaker.id, examples)
-
-    def test_a_program_in_its_cell_needs_a_strictly_higher_score(self) -> None:
-        database = one_island()
-        first, tie = working(1.0, cell=3), working(1.0, cell=3)
-        database.add(first)
-        database.add(tie)
-        self.assertEqual(database.islands[0].elites(), [first])
 
 
 if __name__ == "__main__":

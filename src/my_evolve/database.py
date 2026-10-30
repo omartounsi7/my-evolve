@@ -2,12 +2,11 @@
 
 The programs live on islands, populations that evolve apart (D23): each starts with a
 copy of the initial program, each iteration draws an island uniformly, and the child
-lives on that island. Each island has a MAP-Elites grid (D16), and its population is
-the grid's elites: working programs enter it as they are added. The parent is chosen
-among the island's elites by ShinkaEvolve's weighted rule (D19): programs score above or
-below the median, and programs already tried often are tried less. The examples are
-other programs made on the island, drawn at random, failed ones and displaced elites
-included (D26): the LLM sees them as previous attempts, unlabelled.
+lives on that island. On it, the parent is chosen by ShinkaEvolve's weighted rule (D19):
+programs score above or below the median, and programs already tried often are tried
+less. The examples are other programs of the island drawn at random, failed ones
+included (D26): the LLM sees them as previous attempts, unlabelled. MAP-Elites grids
+come in the next step.
 """
 
 import math
@@ -17,12 +16,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from my_evolve.grid import Grid
-from my_evolve.problem import CODE_COMPLEXITY, FeatureSpec, IslandSettings, ParentSettings
+from my_evolve.problem import IslandSettings, ParentSettings
 from my_evolve.program import Origin, Program, Status
-
-# The grid used when none is given: code complexity alone, in 10 bins (D18)
-DEFAULT_GRID = (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 10),)
 
 # The statuses whose programs count for the duplicate check: they were run. Rejected ones
 # never were, and an error is not the program's fault: an identical child may be tried.
@@ -85,18 +80,12 @@ class WeightedSelector(ParentSelector):
 
 @dataclass
 class Island:
-    """One island: its number, its grid, and every program made on it, in order (D62)."""
+    """One island: its number, and every program made on it, in order (D62)."""
 
     # Its number, from 0
     index: int
-    # Its MAP-Elites grid, whose elites are its population (D23)
-    grid: Grid
     # The ids of every program made on it, whatever its status
     program_ids: list[str] = field(default_factory=list)
-
-    def elites(self) -> list[Program]:
-        """Return the island's population: its grid's elites, in cell order."""
-        return self.grid.elite_list()
 
 
 def make_selector(settings: ParentSettings) -> ParentSelector:
@@ -112,16 +101,12 @@ class Database:
         rng: random.Random,
         parents: ParentSettings | None = None,
         islands: IslandSettings | None = None,
-        grid_features: Sequence[FeatureSpec] = DEFAULT_GRID,
-        reference_nodes: int = 1,
     ) -> None:
         """Create an empty database.
 
         rng makes every random draw, so that a run with the same seed draws the same;
         parents says how parents are chosen (the weighted rule with lambda 1 by default);
-        islands how many islands there are (3 by default); grid_features the dimensions
-        of each island's grid, whose code complexity is measured against reference_nodes,
-        the initial program's.
+        islands how many islands there are (3 by default).
         """
         # Every program of the run, by id, in the order added
         self.programs: dict[str, Program] = {}
@@ -133,8 +118,7 @@ class Database:
         self.best_id: str | None = None
         # The islands
         self.islands: list[Island] = [
-            Island(index, Grid(grid_features, reference_nodes))
-            for index in range((islands or IslandSettings()).count)
+            Island(index) for index in range((islands or IslandSettings()).count)
         ]
         # The rule choosing parents
         self.selector: ParentSelector = make_selector(parents or ParentSettings())
@@ -162,8 +146,6 @@ class Database:
         score = program.result.score
         if not program.result.is_ok or score is None:
             return
-        if program.island is not None:
-            self.islands[program.island].grid.place(program)
         best_score = self.best_score()
         # Strictly higher: on a tie, the earlier program stays the best.
         if best_score is None or score > best_score:
@@ -202,12 +184,11 @@ class Database:
         return self.rng.randrange(len(self.islands))
 
     def sample_parent(self, island: int) -> Program:
-        """Choose the parent of the next child among the island's elites (D19, D23).
+        """Choose the parent of the next child among the island's working programs (D19).
 
-        Failed programs are never elites, so never parents. Raises ValueError if the
-        island has no elite.
+        Failed programs are never parents. Raises ValueError if none of them works.
         """
-        candidates = self.islands[island].elites()
+        candidates = self.working_programs(island)
         if not candidates:
             raise ValueError(f"no working program on island {island} to build on")
         return self.selector.choose(candidates, self, self.rng)
