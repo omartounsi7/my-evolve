@@ -514,6 +514,32 @@ class LoopTest(unittest.TestCase):
         self.assertIn("Run finished: 2 iterations done, stopped by Ctrl+C.", console.getvalue())
         self.assertEqual(self.session_end(), "stopped by Ctrl+C")
 
+    def test_the_worker_threads_end_with_the_run(self) -> None:
+        before = set(threading.enumerate())
+        run_toy([reply_returning(str(n)) for n in range(2, 5)], self.output)
+        started = [thread for thread in threading.enumerate() if thread not in before]
+        for thread in started:
+            thread.join(timeout=5)
+        self.assertEqual([thread for thread in started if thread.is_alive()], [])
+
+    def test_a_ctrl_c_while_an_iteration_is_saved_lets_it_finish(self) -> None:
+        """Ctrl+C arriving in the middle of the main thread's bookkeeping, not while it
+        waits, does not cut the iteration short: it is saved whole, and the run ends."""
+        original = Storage.append_history
+
+        def interrupted(storage: Storage, row: HistoryRow) -> None:
+            if row.iteration == 1:
+                signal.raise_signal(signal.SIGINT)
+            original(storage, row)
+
+        replies = [reply_returning(str(n)) for n in range(2, 6)]
+        with mock.patch.object(Storage, "append_history", interrupted):
+            _, _, console = run_toy(replies, self.output)
+        self.assertIn("Run finished: 1 iterations done, stopped by Ctrl+C.", console)
+        self.assertEqual([row.iteration for row in Storage(self.output).load_history()], [1])
+        # Ctrl+C is Python's own again once the run is over.
+        self.assertIs(signal.getsignal(signal.SIGINT), signal.default_int_handler)
+
     def test_a_second_ctrl_c_stops_at_once(self) -> None:
         """Even while an LLM call is still waiting: its thread is not waited for."""
         llm = FakeLLM([reply_returning("5")], delay=30.0)

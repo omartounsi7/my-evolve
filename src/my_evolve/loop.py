@@ -35,9 +35,10 @@ again under their numbers. A run whose initial program, evaluation file, problem
 llm section aside) or image changed is not continued (D50).
 
 Stopping (D53, D54): the first Ctrl+C lets the iterations in flight finish and be saved,
-then the run ends as usual. A second Ctrl+C, or SIGTERM (Linux, macOS), stops at once:
-the worker threads are not waited for, and the iterations in flight are lost;
-everything finished is already saved.
+then the run ends as usual; it only sets a flag, which the main thread reads between two
+steps, so that it never interrupts an iteration being saved. A second Ctrl+C, or SIGTERM
+(Linux, macOS), stops at once: the worker threads are not waited for, and the iterations
+in flight are lost; everything finished is already saved.
 
 The run ends with a summary: iterations done and why the run stopped, the best score,
 the children by status, and the tokens and cost of each model (D51).
@@ -232,19 +233,21 @@ class WorkerPool:
 
     def __init__(self, workers: int) -> None:
         """Start that many worker threads."""
-        # The tasks waiting for a worker
-        self.tasks: queue.Queue[tuple[str, int, Callable[..., Any], tuple[Any, ...]]] = (
+        # The tasks waiting for a worker; None tells a worker to end
+        self.tasks: queue.Queue[tuple[str, int, Callable[..., Any], tuple[Any, ...]] | None] = (
             queue.Queue()
         )
+        # How many worker threads there are
+        self.workers: int = workers
         # The tasks finished, waiting for the main thread
         self.results: queue.Queue[TaskResult] = queue.Queue()
         for number in range(workers):
             threading.Thread(target=self.work, name=f"worker-{number}", daemon=True).start()
 
     def work(self) -> None:
-        """Run tasks, one after another, for as long as the program lives."""
-        while True:
-            kind, iteration, function, arguments = self.tasks.get()
+        """Run tasks, one after another, until told to end."""
+        while (task := self.tasks.get()) is not None:
+            kind, iteration, function, arguments = task
             try:
                 value = function(*arguments)
             except BaseException as error:
@@ -257,6 +260,17 @@ class WorkerPool:
     ) -> None:
         """Hand a task to the workers."""
         self.tasks.put((kind, iteration, function, arguments))
+
+    def close(self) -> None:
+        """Drop the tasks no worker has taken yet, and let each worker end once its current
+        task, if any, is done (its result is then never read)."""
+        while True:
+            try:
+                self.tasks.get_nowait()
+            except queue.Empty:
+                break
+        for _ in range(self.workers):
+            self.tasks.put(None)
 
     def next_result(self, timeout: float) -> TaskResult | None:
         """Return the next finished task, or None if none finishes within timeout seconds."""
@@ -346,7 +360,8 @@ class Loop:
         self.pending: dict[str, str] = {}
         # Iterations in a row that ended in an error, not the program's fault (D38)
         self.errors_in_a_row: int = 0
-        # True once Ctrl+C was pressed: no new iteration starts
+        # True once Ctrl+C was pressed: no new iteration starts. Set by on_ctrl_c, or, where
+        # it cannot be installed, from the KeyboardInterrupt
         self.interrupted: bool = False
 
     @property
@@ -691,32 +706,56 @@ class Loop:
                 )
         self.check_stop()
 
+    def on_ctrl_c(self, signal_number: int, frame: Any) -> None:
+        """Handle Ctrl+C while iterations run: the first sets a flag, the second stops at once.
+
+        A flag, not an exception: Ctrl+C arriving while the main thread saves an iteration
+        would otherwise leave that iteration half saved, and the run waiting for it forever.
+        """
+        if self.interrupted:
+            raise StopNow("a second Ctrl+C")
+        self.interrupted = True
+
     def run_iterations(self) -> str:
         """Run iterations until enough have completed or the run stops; return why it stopped.
 
         The first Ctrl+C stops new iterations from starting, and the run ends once those
-        in flight are done (D53). A second Ctrl+C, or SIGTERM, raises StopNow (D54).
+        in flight are done (D53). A second Ctrl+C, or SIGTERM, raises StopNow (D54). Ctrl+C
+        is handled by on_ctrl_c, except outside the main thread, where Python lets no
+        handler be installed: it is then caught as KeyboardInterrupt between steps.
         """
         # A continued run may have reached its target, or run out of patience, already.
         self.check_stop()
         pool = WorkerPool(self.workers)
         in_flight: dict[int, IterationState] = {}
-        while True:
-            try:
-                if not self.step(pool, in_flight):
-                    break
-            except StopNow:
-                raise
-            except KeyboardInterrupt:
-                if self.interrupted:
-                    raise StopNow("a second Ctrl+C") from None
-                self.interrupted = True
-                self.stop_reason = self.stop_reason or "stopped by Ctrl+C"
-                logger.info(
-                    "Ctrl+C: no new iteration starts; the %d in progress finish and are saved. "
-                    "Press Ctrl+C again to stop at once.",
-                    len(in_flight),
-                )
+        in_main_thread = threading.current_thread() is threading.main_thread()
+        previous_handler = signal.getsignal(signal.SIGINT)
+        if in_main_thread:
+            signal.signal(signal.SIGINT, self.on_ctrl_c)
+        noticed = False
+        try:
+            while True:
+                if self.interrupted and not noticed:
+                    noticed = True
+                    self.stop_reason = self.stop_reason or "stopped by Ctrl+C"
+                    logger.info(
+                        "Ctrl+C: no new iteration starts; the %d in progress finish and are "
+                        "saved. Press Ctrl+C again to stop at once.",
+                        len(in_flight),
+                    )
+                try:
+                    if not self.step(pool, in_flight):
+                        break
+                except StopNow:
+                    raise
+                except KeyboardInterrupt:
+                    if self.interrupted:
+                        raise StopNow("a second Ctrl+C") from None
+                    self.interrupted = True
+        finally:
+            pool.close()
+            if in_main_thread:
+                signal.signal(signal.SIGINT, previous_handler or signal.default_int_handler)
         return self.stop_reason or "every iteration done"
 
     def step(self, pool: WorkerPool, in_flight: dict[int, IterationState]) -> bool:
@@ -727,6 +766,7 @@ class Loop:
         """
         while (
             self.stop_reason is None
+            and not self.interrupted
             and len(in_flight) < self.workers
             and self.started < self.iterations
         ):
