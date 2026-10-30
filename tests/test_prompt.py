@@ -29,12 +29,14 @@ Write solve(), which returns a number up to 10.
   Leave everything else, the markers included, exactly as it is. Return the whole file.
 - You may import Python's standard library and: numpy, scipy. Nothing else is installed.
 - Higher scores are better.
+- In the description, say what the program does, for a reader who has never seen any
+  other version of it. Never compare it with another program: no "improved",
+  "enhanced", "better than", "original", "previous" or "instead of".
 
 # Reply format
 Your reply must contain these two parts. You may write anything else around them.
 <DESCRIPTION>
-How this program solves the problem: its approach and main ideas. Describe the
-program on its own; do not mention any other program.
+The program's approach and main ideas, in a few sentences.
 </DESCRIPTION>
 ```python
 the complete program

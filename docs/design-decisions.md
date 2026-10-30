@@ -178,6 +178,12 @@ program is later shown in a prompt, its parent is usually absent. The reply may 
 (reasoning, comments); only the description and the code are kept (D68). A reply without a description is
 accepted if its code is usable. The description is shown in prompts (D26) and saved (D48).
 
+The first wording ("Describe the program on its own; do not mention any other program", inside the reply
+format) was not enough: 83 of 90 descriptions in Milestones 3 and 4 compared the program with another
+("This improved constructor…", "improves upon the original…"), several starting with the format's own
+words. The rule is now among the Rules, names the words to avoid, and the format's placeholder only says
+what to write.
+
 ---
 
 ## 4. The database and the choice of parents
@@ -1443,12 +1449,14 @@ than it does, using what the previous attempts show.
   Leave everything else, the markers included, exactly as it is. Return the whole file.
 - You may import Python's standard library and: {allowed packages}. Nothing else is installed.
 - Higher scores are better.
+- In the description, say what the program does, for a reader who has never seen any
+  other version of it. Never compare it with another program: no "improved",
+  "enhanced", "better than", "original", "previous" or "instead of".
 
 # Reply format
 Your reply must contain these two parts. You may write anything else around them.
 <DESCRIPTION>
-How this program solves the problem: its approach and main ideas. Describe the
-program on its own; do not mention any other program.
+The program's approach and main ideas, in a few sentences.
 </DESCRIPTION>
 ```python
 the complete program
