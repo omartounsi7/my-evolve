@@ -174,6 +174,17 @@ class ProblemTest(unittest.TestCase):
                 self.assertEqual(claude.llm.models[0].api_key_env, "ANTHROPIC_API_KEY")
                 self.assertEqual(replace(claude, llm=local.llm), local)
 
+    def test_the_precise_problem_file_for_qwen(self) -> None:
+        """circle_packing_precise's problem_qwen.yaml differs from its problem.yaml, for
+        Claude, only in its llm section: the local models of circle_packing."""
+        folder = REPOSITORY_FOLDER / "examples" / "circle_packing_precise"
+        claude = Problem.load(folder / "problem.yaml")
+        qwen = Problem.load(folder / "problem_qwen.yaml")
+        local = Problem.load(REPOSITORY_FOLDER / "examples" / "circle_packing" / "problem.yaml")
+        self.assertEqual(qwen.llm, local.llm)
+        self.assertEqual(replace(claude, llm=qwen.llm), qwen)
+        self.assertEqual(claude.fingerprint_without_llm(), qwen.fingerprint_without_llm())
+
     def test_entry_functions(self) -> None:
         """Required: a list of one or more function names."""
         self.assertEqual(Problem.from_dict(valid_data()).entry_functions, ("solve",))
