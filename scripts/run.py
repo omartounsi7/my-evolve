@@ -5,7 +5,9 @@ Usage:
         --iterations N [--output FOLDER] [--workers W] [--seed S] [--unsafe-local-sandbox]
         [--verbose]
 
-The run folder defaults to runs/<problem name>_<date>_<time>.
+The run folder defaults to runs/<problem name>_<date>_<time>. Running the same command
+with --output naming an existing run folder continues that run: --iterations is the total,
+the iterations already done included.
 
 Programs run in Docker containers, so Docker must be installed and running.
 
@@ -27,6 +29,7 @@ from my_evolve.llm import Ensemble, MissingKeyError
 from my_evolve.loop import RunError, StopNow, run, stop_on_sigterm
 from my_evolve.problem import Problem, ProblemError
 from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, SandboxError, ensure_image
+from my_evolve.storage import saved_run_info
 
 # Shown when programs run without the Docker sandbox
 UNSAFE_WARNING = (
@@ -56,12 +59,16 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         "--config", type=Path, required=True, help="the problem file (YAML): the problem and LLM"
     )
     parser.add_argument(
-        "--iterations", type=positive_integer, required=True, help="how many children to ask for"
+        "--iterations",
+        type=positive_integer,
+        required=True,
+        help="how many iterations in all (a continued run counts those it did)",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="the run folder, where everything is saved (default: runs/<problem>_<date>_<time>)",
+        help="the run folder, where everything is saved (default: runs/<problem>_<date>_<time>);"
+        " an existing run folder is continued",
     )
     parser.add_argument(
         "--workers",
@@ -115,8 +122,10 @@ def main(arguments: list[str]) -> int:
         problem = Problem.load(parsed.config)
         output = parsed.output or default_output(problem.name)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
-        # Identifies the run, and labels its containers; saved in run.json.
-        run_id = uuid.uuid4().hex
+        # Identifies the run, and labels its containers; saved in run.json. A run being
+        # continued keeps its own.
+        saved = saved_run_info(output)
+        run_id = saved.run_id if saved is not None else uuid.uuid4().hex
         sandbox = make_sandbox(problem, parsed.unsafe_local_sandbox, run_id)
         evaluator = Evaluator(
             parsed.evaluation_file,
@@ -152,6 +161,7 @@ def main(arguments: list[str]) -> int:
     except StopNow as stop:
         # Every program evaluated so far is already saved; the containers are removed.
         print(f"\nStopped at once ({stop}). Everything finished is in {output}")
+        print(f"To continue the run, run the same command with --output {output}")
         return 130
     except KeyboardInterrupt:
         # Ctrl+C before the iterations started.

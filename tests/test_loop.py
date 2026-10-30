@@ -10,6 +10,7 @@ import csv
 import io
 import json
 import os
+import random
 import signal
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 from fakes import FakeLLM
@@ -26,7 +28,7 @@ from fakes import FakeLLM
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
-from my_evolve.loop import RunError, StopNow, run, stop_on_sigterm, summary
+from my_evolve.loop import Loop, RunError, StopNow, run, stop_on_sigterm, summary
 from my_evolve.problem import IslandSettings, ParentSettings, Problem
 from my_evolve.program import Origin, Result, Status
 from my_evolve.sandbox import LocalSandbox
@@ -626,11 +628,90 @@ class LoopTest(unittest.TestCase):
                 output=self.output,
             )
 
-    def test_a_folder_holding_a_run_is_refused(self) -> None:
-        """Continuing a run comes later: for now an existing run is never overwritten."""
-        run_toy([reply_returning("2")], self.output)
-        with self.assertRaisesRegex(RunError, "already holds a run"):
-            run_toy([reply_returning("3")], self.output)
+    def children_iterations(self) -> list[int]:
+        """Return the iteration of every LLM child saved in programs.jsonl, in order."""
+        records = [
+            json.loads(line) for line in (self.output / "programs.jsonl").read_text().splitlines()
+        ]
+        return [record["iteration"] for record in records if record["origin"] == "llm"]
+
+    def test_a_larger_iterations_extends_the_run(self) -> None:
+        """--iterations is a total; the initial program is not evaluated again."""
+        run_toy([reply_returning(str(n)) for n in (2, 3, 4)], self.output, iterations=3)
+        with mock.patch.object(
+            Evaluator, "evaluate", autospec=True, wraps=Evaluator.evaluate
+        ) as evaluate:
+            database, llm, console = run_toy(
+                [reply_returning(str(n)) for n in (5, 6)], self.output, iterations=5
+            )
+        self.assertEqual(evaluate.call_count, 2)
+        self.assertEqual(len(llm.prompts), 2)
+        self.assertIn("Continuing the run: 3 of 5 iterations done, 5 programs", console)
+        self.assertIn("Run finished: 5 iterations done, every iteration done.", console)
+        self.assertEqual(self.children_iterations(), [1, 2, 3, 4, 5])
+        self.assertEqual(database.best_score(), 6.0)
+        history = Storage(self.output).load_history()
+        self.assertEqual([row.completed for row in history], [1, 2, 3, 4, 5])
+        info = json.loads((self.output / "run.json").read_text())
+        self.assertEqual(len(info["sessions"]), 2)
+        self.assertEqual(info["seed"], 0)
+        self.assertEqual(info["sessions"][1]["flags"]["iterations"], 5)
+        self.assertEqual(info["sessions"][1]["end"], "every iteration done")
+        self.assertEqual(
+            [program.origin for program in database.programs.values()].count(Origin.INITIAL), 1
+        )
+
+    def test_a_finished_run_asks_for_nothing_more(self) -> None:
+        run_toy([reply_returning("2")], self.output, iterations=1)
+        _, llm, console = run_toy([], self.output, iterations=1)
+        self.assertEqual(llm.prompts, [])
+        self.assertIn("Run finished: 1 iterations done, every iteration done.", console)
+
+    def test_a_crashed_run_is_finished_by_the_same_command(self) -> None:
+        """Cut-off last lines are dropped, and so is a child without its history row: its
+        iteration is done again, under its number (P3)."""
+        run_toy([reply_returning(str(n)) for n in (2, 3, 7, 4)], self.output, iterations=4)
+        history_file = self.output / "history.csv"
+        lines = history_file.read_text().splitlines(keepends=True)
+        # Iteration 3 (row 4, after the header) was in flight when the run crashed.
+        history_file.write_text("".join(lines[:3] + lines[4:]) + "5,5,ab")
+        with (self.output / "programs.jsonl").open("a") as file:
+            file.write('{"code": "def solve')
+        database, llm, console = run_toy([reply_returning("5")], self.output, iterations=4)
+        self.assertIn("Children dropped, their iteration unfinished: 1", console)
+        self.assertEqual(len(llm.prompts), 1)
+        self.assertEqual(sorted(self.children_iterations()), [1, 2, 3, 4])
+        history = Storage(self.output).load_history()
+        self.assertEqual([row.iteration for row in history], [1, 2, 4, 3])
+        calls = [
+            json.loads(line) for line in (self.output / "llm_calls.jsonl").read_text().splitlines()
+        ]
+        self.assertEqual(sorted(call["iteration"] for call in calls), [1, 2, 3, 4])
+        # The dropped child scored 7, the best of the first session: the best is now 5.
+        self.assertEqual(database.best_score(), 5.0)
+        self.assertIn("# Score: 5.0", (self.output / "best_program.py").read_text())
+
+    def test_draws_after_resuming_are_not_the_first_draws_again(self) -> None:
+        """The generator is reseeded from the seed and the number of programs (D39)."""
+        run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, seed=5, iterations=2)
+        states = []
+        original = Loop.start_iteration
+
+        def record(loop: Loop) -> Any:
+            states.append(loop.rng.getstate())
+            return original(loop)
+
+        with mock.patch.object(Loop, "start_iteration", autospec=True, side_effect=record):
+            run_toy([reply_returning("4")], self.output, seed=5, iterations=3)
+        self.assertNotEqual(states[0], random.Random(5).getstate())
+
+    def test_a_broken_run_folder_is_refused(self) -> None:
+        run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, iterations=2)
+        programs_file = self.output / "programs.jsonl"
+        lines = programs_file.read_text().splitlines(keepends=True)
+        programs_file.write_text(lines[0] + "not json\n" + "".join(lines[1:]))
+        with self.assertRaisesRegex(RunError, "programs.jsonl: line 2 cannot be read"):
+            run_toy([reply_returning("4")], self.output, iterations=3)
 
 
 class RunScriptTest(unittest.TestCase):

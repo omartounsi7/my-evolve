@@ -67,6 +67,20 @@ class Result:
         """Return the result of a program that did not work, saying why."""
         return cls(status=status, error=error, feedback=feedback, duration=duration)
 
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Result":
+        """Rebuild a result from what to_dict wrote."""
+        return cls(
+            status=Status(data["status"]),
+            score=data["score"],
+            error=data["error"],
+            metrics=dict(data["metrics"]),
+            features=dict(data["features"]),
+            feedback=data["feedback"],
+            duration=data["duration"],
+            stage_reached=data["stage_reached"],
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Return the result as plain JSON values; a missing score is None (null in JSON)."""
         return {
@@ -92,6 +106,11 @@ class LLMUsage:
     output_tokens: int
     # How long the call took, in seconds
     duration: float
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "LLMUsage":
+        """Rebuild the usage from what to_dict wrote."""
+        return cls(data["model"], data["input_tokens"], data["output_tokens"], data["duration"])
 
     def to_dict(self) -> dict[str, Any]:
         """Return the usage as plain JSON values."""
@@ -217,6 +236,32 @@ class Program:
             fingerprint=self.fingerprint,
             code_complexity=self.code_complexity,
         )
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "Program":
+        """Rebuild a program from what to_dict wrote, keeping its id.
+
+        Raises ValueError, naming the key, if one is missing.
+        """
+        try:
+            return cls(
+                code=data["code"],
+                result=Result.from_dict(data["result"]),
+                origin=Origin(data["origin"]),
+                parent_id=data["parent_id"],
+                island=data["island"],
+                generation=data["generation"],
+                iteration=data["iteration"],
+                llm=LLMUsage.from_dict(data["llm"]) if data["llm"] is not None else None,
+                description=data["description"],
+                fingerprint=data["fingerprint"],
+                example_ids=tuple(data["example_ids"]),
+                code_complexity=data["code_complexity"],
+                id=data["id"],
+                created_at=data["created_at"],
+            )
+        except KeyError as error:
+            raise ValueError(f"a saved program lacks the key {error}") from None
 
     def to_dict(self) -> dict[str, Any]:
         """Return the program as plain JSON values: one line of programs.jsonl."""

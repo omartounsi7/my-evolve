@@ -418,6 +418,27 @@ class MigrationTest(unittest.TestCase):
         self.assertEqual(len(database.islands[1].elites()), 2)
         self.assertTrue(all(program.id in database.programs for program in programs))
 
+    def test_a_replay_rebuilds_the_database_without_drawing(self) -> None:
+        """Migrations replay from their stored records (D49)."""
+        database = islands_of(2, migrants="random", mode="move", migration_share=1.0)
+        stored = fill(database, 0, [1.0, 2.0, 3.0])
+        stored.append(child_of(stored[0], Status.FAILED))
+        database.add(stored[-1])
+        for arrival in database.migrate(1):
+            database.add(arrival)
+            stored.append(arrival)
+        replayed = islands_of(2, migrants="random", mode="move", migration_share=1.0)
+        state = replayed.rng.getstate()
+        replayed.replay(stored)
+        self.assertEqual(replayed.rng.getstate(), state)
+        self.assertEqual(list(replayed.programs), list(database.programs))
+        self.assertEqual(replayed.best_id, database.best_id)
+        self.assertEqual(replayed.children, database.children)
+        for island in (0, 1):
+            self.assertEqual(
+                replayed.islands[island].grid.elites, database.islands[island].grid.elites
+            )
+
     def test_one_island_has_nowhere_to_send(self) -> None:
         database = islands_of(1)
         fill(database, 0, [1.0, 2.0])

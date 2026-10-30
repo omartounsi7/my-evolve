@@ -57,10 +57,10 @@ length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
 | Flag | Meaning | Default |
 |---|---|---|
 | `--config` | The problem file: the problem's description and its LLM | required |
-| `--iterations` | How many children to ask the LLM for | required |
-| `--output` | The run folder; it must not hold a run already | `runs/<problem>_<date>_<time>` |
+| `--iterations` | How many iterations in all, those of earlier sessions included | required |
+| `--output` | The run folder; a folder holding a run continues it | `runs/<problem>_<date>_<time>` |
 | `--workers` | How many iterations may be in flight at once | 1 |
-| `--seed` | The seed of the run's random draws | drawn, and printed |
+| `--seed` | The seed of the run's random draws (a continued run keeps its own) | drawn, and printed |
 | `--unsafe-local-sandbox` | Run programs as plain processes, without any isolation: tests and trusted code only | off |
 | `--verbose` | Show each iteration's details on the console (`log.txt` always has them) | off |
 
@@ -75,10 +75,16 @@ the end. The run folder holds:
 | `best_program.py` | The best program so far, under a comment header |
 | `best/iteration_0010.py`, ... | The best program every `snapshot_every` iterations |
 | `run.json` | The run's id, its seed, and one record per session |
-| `problem.yaml` | A copy of the problem file |
+| `problem.yaml` | A copy of the problem file, from the first session |
 | `log.txt` | Everything logged, with the time |
 
-Ctrl+C stops the run; every program evaluated so far is already saved.
+The first Ctrl+C lets the iterations in progress finish, then ends the run; a second one,
+or SIGTERM, stops it at once. Either way, everything finished is already saved.
+
+To continue a run, stopped or crashed, run the same command with `--output` naming its
+folder: its programs are read back, the initial program is not evaluated again, and
+`--iterations` counts the iterations already done, so a larger value extends the run.
+Iterations that were in progress when it stopped are done again.
 
 ## Everyday commands
 

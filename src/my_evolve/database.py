@@ -221,6 +221,14 @@ class Database:
         if best_score is None or score > best_score:
             self.best_id = program.id
 
+    def replay(self, programs: Sequence[Program]) -> None:
+        """Add saved programs again, in the order they were stored, to rebuild a run (D49).
+
+        Migrations were stored as their records, so they replay too; nothing is drawn.
+        """
+        for program in programs:
+            self.add(program)
+
     def best(self) -> Program | None:
         """Return the program with the highest score (None while no program works)."""
         return self.programs[self.best_id] if self.best_id is not None else None

@@ -3,7 +3,7 @@
 import json
 import unittest
 
-from my_evolve.program import Program, Result, Status
+from my_evolve.program import LLMUsage, Origin, Program, Result, Status
 
 
 class ResultTest(unittest.TestCase):
@@ -66,6 +66,32 @@ class ProgramTest(unittest.TestCase):
         self.assertEqual(data["id"], program.id)
         self.assertEqual((data["result"]["status"], data["result"]["score"]), ("ok", 0.5))
         self.assertEqual(data["code"], "x = 1\n")
+
+    def test_from_dict_rebuilds_the_program(self) -> None:
+        """What to_dict wrote, read back through JSON, is the same program, id included."""
+        parent = Program("x = 1\n", Result(Status.OK, score=1.0, features={"spread": 0.5}))
+        usage = LLMUsage("model-a", 120, 40, 2.5)
+        child = Program.new_child(
+            parent,
+            "x = 2\n",
+            Result.failure(Status.TIMEOUT, "ran over 10 s"),
+            iteration=4,
+            island=1,
+            llm=usage,
+            description="Tries 2.",
+            fingerprint="abc",
+            example_ids=("e1", "e2"),
+            code_complexity=12,
+        )
+        for program in (parent, child, parent.copy_to(2, 5, Origin.MOVE)):
+            data = json.loads(json.dumps(program.to_dict(), allow_nan=False))
+            self.assertEqual(Program.from_dict(data), program)
+
+    def test_from_dict_names_a_missing_key(self) -> None:
+        data = Program("x = 1\n", Result(Status.OK, score=1.0)).to_dict()
+        del data["island"]
+        with self.assertRaisesRegex(ValueError, "lacks the key 'island'"):
+            Program.from_dict(data)
 
 
 if __name__ == "__main__":

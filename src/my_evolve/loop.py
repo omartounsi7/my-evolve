@@ -28,6 +28,11 @@ status error, or, before a child exists, records the iteration as an error; too 
 in a row stop the run. An exception in the main thread's own bookkeeping (the disk
 refusing a write) stops the run at once.
 
+Continuing (D49): run the same command with the same output folder. The saved programs
+are added again, in order; the iterations completed are the rows of history.csv, and
+--iterations is a total. Iterations in flight when the run stopped are lost, and done
+again under their numbers.
+
 Stopping (D53, D54): the first Ctrl+C lets the iterations in flight finish and be saved,
 then the run ends as usual. A second Ctrl+C, or SIGTERM (Linux, macOS), stops at once:
 the worker threads are not waited for, and the iterations in flight are lost;
@@ -61,7 +66,7 @@ from my_evolve.problem import ModelSettings, Problem
 from my_evolve.program import LLMUsage, Origin, Program, Result, Status, new_id
 from my_evolve.prompt import Prompt, PromptBuilder
 from my_evolve.reply_parser import ParsedReply, parse_reply
-from my_evolve.storage import HistoryRow, RunInfo, Storage
+from my_evolve.storage import HistoryRow, RunFolderError, RunInfo, Storage
 
 # The longest error shown on the console, in characters (programs.jsonl keeps it whole)
 MAX_CONSOLE_ERROR = 200
@@ -282,14 +287,21 @@ class Loop:
         self.storage: Storage = storage
         # How many iterations may be in flight at once
         self.workers: int = workers
-        # The run's random generator: every draw of the run comes from it (D39)
+        # The run's seed, and its random generator: every draw of the run comes from it (D39)
+        self.run_seed: int = seed
         self.rng: random.Random = random.Random(seed)
         self.prompt_builder: PromptBuilder = PromptBuilder(problem)
         # Set by prepare
         self.database: Database | None = None
-        # Iterations started and completed (failed and skipped ones included)
+        # Iterations started and completed (failed and skipped ones included), those of
+        # earlier sessions too
         self.started: int = 0
         self.completed: int = 0
+        # The numbers of the iterations earlier sessions completed, and the lowest number
+        # the next iteration may have: the numbers of iterations lost when a run stopped
+        # are given again
+        self.done_before: set[int] = set()
+        self.next_number: int = 1
         # Why the run stopped, once it stops starting new iterations
         self.stop_reason: str | None = None
         # The fingerprints of the children being evaluated, each with its future id: the
@@ -307,9 +319,11 @@ class Loop:
         assert self.database is not None
         return self.database
 
-    def prepare(self) -> Program:
-        """Check the initial program and the models, evaluate the initial program, and fill the
-        database; return the initial program. Raises RunError if the run cannot start."""
+    def check_start(self) -> ChildChecks:
+        """Check the initial program and the models; return the initial program's checks.
+
+        Raises RunError if the run cannot start.
+        """
         try:
             split_evolve_blocks(self.initial_code)
         except MarkerError as error:
@@ -321,13 +335,24 @@ class Loop:
             self.ensemble.check_all()
         except LLMError as error:
             raise RunError(f"a model did not answer its check: {error}") from None
-        self.database = Database(
+        return checks
+
+    def make_database(self, reference_nodes: int | None) -> Database:
+        """Return an empty database for the problem, measuring code complexity against
+        reference_nodes, the initial program's."""
+        return Database(
             self.rng,
             self.problem.parents,
             self.problem.islands,
             self.problem.grid_features,
-            reference_nodes=checks.code_complexity or 1,
+            reference_nodes=reference_nodes or 1,
         )
+
+    def prepare(self) -> Program:
+        """Start a new run: check the start, evaluate the initial program, and create the
+        database; return the initial program. Raises RunError if the run cannot start."""
+        checks = self.check_start()
+        self.database = self.make_database(checks.code_complexity)
         initial = Program(
             self.initial_code,
             self.evaluator.evaluate(self.initial_code),
@@ -340,6 +365,49 @@ class Loop:
                 f"{initial.result.error}"
             )
         return initial
+
+    def restore(self) -> None:
+        """Continue a run (D49): rebuild its database from the run folder.
+
+        Children of iterations without a history row are dropped first (P3), and
+        best_program.py rewritten from the rebuilt database. The initial program is not
+        evaluated again. The random generator is reseeded from the seed and the number of
+        programs, so that draws continue instead of repeating the first session's (D39).
+        Raises RunError if the run cannot continue.
+        """
+        self.check_start()
+        try:
+            history = self.storage.load_history()
+            finished = {row.iteration for row in history}
+            dropped = self.storage.drop_unfinished(finished)
+            programs = self.storage.load_programs()
+        except RunFolderError as error:
+            raise RunError(f"the run cannot be continued: {error}") from None
+        if not programs or programs[0].origin is not Origin.INITIAL:
+            raise RunError(
+                "the run cannot be continued: programs.jsonl does not start with the initial "
+                "program"
+            )
+        self.rng.seed(f"{self.run_seed}/{len(programs)}")
+        self.database = self.make_database(programs[0].code_complexity)
+        self.db.replay(programs)
+        self.started = self.completed = len(history)
+        self.done_before = finished
+        best = self.db.best()
+        if best is not None:
+            self.storage.write_best(best)
+        logger.info(
+            "Continuing the run: %d of %d iterations done, %d programs, best %s",
+            self.completed,
+            self.iterations,
+            len(programs),
+            best_score_text(self.db),
+        )
+        if dropped:
+            logger.info(
+                "Children dropped, their iteration unfinished: %d; those iterations are done again",
+                dropped,
+            )
 
     def seed(self, initial: Program) -> None:
         """Store the initial program and its copy on every island, and snapshot 0."""
@@ -360,8 +428,13 @@ class Loop:
 
     def start_iteration(self) -> IterationState | None:
         """Start the next iteration (main thread): draw its island, parent, examples and model,
-        and build its prompt. Returns None, and stops the run, if no model is left."""
-        number = self.started + 1
+        and build its prompt. Returns None, and stops the run, if no model is left.
+
+        Its number is the lowest not yet used: an iteration lost when the run stopped is
+        done again under its number."""
+        number = self.next_number
+        while number in self.done_before:
+            number += 1
         island = self.db.sample_island()
         parent, examples = self.db.sample(island, self.problem.prompt.example_programs)
         try:
@@ -370,7 +443,8 @@ class Loop:
             logger.info("Stopping: %s", error)
             self.stop_reason = "no LLM model left"
             return None
-        self.started = number
+        self.next_number = number + 1
+        self.started += 1
         logger.debug(
             "Iteration %d: island %d, parent %s (%s), examples %s, model %s",
             number,
@@ -638,7 +712,8 @@ def run(
     command: Sequence[str] = (),
     workers: int = 1,
 ) -> Database:
-    """Evolve the initial program for that many iterations, and return the database.
+    """Evolve the initial program until `iterations` iterations are done, and return the
+    database.
 
     Everything is saved in the output folder as soon as it exists (storage.py), with a
     copy of problem_file, if given, and the command line in the session's record. seed
@@ -650,24 +725,39 @@ def run(
     model is checked before the run. Messages go to the console (details too with
     verbose) and to log.txt in the output folder.
 
+    An output folder that already holds a run is continued (D49): its programs are added
+    again, the iterations it completed count towards `iterations`, and the run keeps its
+    seed and its id (a different seed or run_id is ignored). The initial program is not
+    evaluated again. Each session adds its record to run.json.
+
     A child that fails a check (it does not compile, changes code outside the evolve
     blocks, lacks an entry function, or repeats an earlier program or one in flight) is
     rejected, and costs no evaluation.
 
-    Raises RunError if the output folder already holds a run, if a model does not
-    answer its check, if the initial program fails the checks, or if it does not work:
-    evolution needs a working start.
+    Raises RunError if a model does not answer its check, if the initial program fails
+    the checks, if it does not work (evolution needs a working start), or if the run in
+    the output folder cannot be continued.
     """
     storage = Storage(output)
-    if storage.holds_a_run():
-        raise RunError(f"{output} already holds a run; choose another output folder")
+    continuing = storage.holds_a_run()
     setup_logging(output, verbose)
     try:
+        saved = storage.read_run_info() if continuing else None
+        if continuing and saved is None:
+            raise RunError(f"{output} holds programs but no run.json: it cannot be continued")
+        if saved is not None:
+            if seed is not None and seed != saved.seed:
+                logger.warning("The run keeps its seed, %d: --seed %d is ignored", saved.seed, seed)
+            seed = saved.seed
         seed = seed if seed is not None else random.SystemRandom().randrange(2**32)
         loop = Loop(problem, initial_code, ensemble, evaluator, iterations, storage, seed, workers)
         logger.info("Seed: %d", seed)
-        initial = loop.prepare()
-        info = RunInfo(run_id=run_id or uuid.uuid4().hex, seed=seed)
+        if saved is not None:
+            loop.restore()
+            info = saved
+        else:
+            initial = loop.prepare()
+            info = RunInfo(run_id=run_id or uuid.uuid4().hex, seed=seed)
         session: dict[str, Any] = {
             "started_at": now(),
             "ended_at": None,
@@ -680,9 +770,10 @@ def run(
         }
         info.sessions.append(session)
         storage.write_run_info(info)
-        if problem_file is not None:
-            storage.save_problem(problem_file)
-        loop.seed(initial)
+        if saved is None:
+            if problem_file is not None:
+                storage.save_problem(problem_file)
+            loop.seed(initial)
         reason = "interrupted"
         try:
             reason = loop.run_iterations()

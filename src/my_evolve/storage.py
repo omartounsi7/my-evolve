@@ -14,6 +14,9 @@ disk before the write returns, so nothing finished is lost if the run stops abru
     log.txt              everything logged (logs.py)
 
 Only the main thread uses the run folder (D36).
+
+Reading the folder back, to continue a run (D49), a last line cut off by a crash is
+dropped, and the file rewritten without it; an unreadable line elsewhere is an error.
 """
 
 import csv
@@ -24,8 +27,19 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
-from my_evolve.program import Program
+from my_evolve.program import Origin, Program
 
+# The columns of history.csv, in order
+HISTORY_COLUMNS = (
+    "iteration",
+    "completed",
+    "program_id",
+    "status",
+    "score",
+    "best_score",
+    "best_id",
+    "model",
+)
 # The files of the run folder
 PROGRAMS_FILE = "programs.jsonl"
 LLM_CALLS_FILE = "llm_calls.jsonl"
@@ -34,6 +48,10 @@ BEST_PROGRAM_FILE = "best_program.py"
 SNAPSHOT_FOLDER = "best"
 RUN_FILE = "run.json"
 PROBLEM_COPY = "problem.yaml"
+
+
+class RunFolderError(Exception):
+    """Raised when the run folder cannot be read back; the message names the file and line."""
 
 
 @dataclass
@@ -55,6 +73,22 @@ class HistoryRow:
     best_id: str
     # The model drawn for the iteration
     model: str
+
+    @classmethod
+    def from_csv(cls, row: dict[str, str]) -> "HistoryRow":
+        """Rebuild a row from history.csv. Raises ValueError if it is incomplete."""
+        if any(value is None for value in row.values()) or set(row) != set(HISTORY_COLUMNS):
+            raise ValueError("an incomplete row")
+        return cls(
+            iteration=int(row["iteration"]),
+            completed=int(row["completed"]),
+            program_id=row["program_id"],
+            status=row["status"],
+            score=float(row["score"]) if row["score"] else None,
+            best_score=float(row["best_score"]) if row["best_score"] else None,
+            best_id=row["best_id"],
+            model=row["model"],
+        )
 
 
 @dataclass
@@ -90,6 +124,14 @@ def header(program: Program, title: str) -> str:
         lines.append("# Description:")
         lines.extend(f"#   {line}".rstrip() for line in program.description.splitlines())
     return "\n".join(lines) + "\n\n"
+
+
+def saved_run_info(folder: Path) -> RunInfo | None:
+    """Return the content of a run folder's run.json, or None if there is none."""
+    path = folder / RUN_FILE
+    if not path.exists():
+        return None
+    return RunInfo.from_dict(json.loads(path.read_text(encoding="utf-8")))
 
 
 class Storage:
@@ -153,10 +195,7 @@ class Storage:
 
     def read_run_info(self) -> RunInfo | None:
         """Return the content of run.json, or None if there is none yet."""
-        path = self.folder / RUN_FILE
-        if not path.exists():
-            return None
-        return RunInfo.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        return saved_run_info(self.folder)
 
     def write_run_info(self, info: RunInfo) -> None:
         """Write run.json whole, or not at all."""
@@ -171,3 +210,95 @@ class Storage:
             file.flush()
             os.fsync(file.fileno())
         os.replace(temporary, path)
+
+    def read_lines(self, file_name: str) -> list[str]:
+        """Return a file's lines; none if it does not exist."""
+        path = self.folder / file_name
+        return path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+
+    def drop_last_line(self, file_name: str) -> None:
+        """Rewrite a file without its last line: one cut off by a crash."""
+        path = self.folder / file_name
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        self.write_whole(path, "".join(lines[:-1]))
+
+    def read_json_lines(self, file_name: str) -> list[dict[str, Any]]:
+        """Return the records of a JSON-lines file, in order.
+
+        A last line cut off by a crash is dropped, and the file rewritten without it.
+        Raises RunFolderError for an unreadable line elsewhere.
+        """
+        lines = self.read_lines(file_name)
+        records = []
+        for number, line in enumerate(lines, start=1):
+            try:
+                records.append(json.loads(line))
+            except ValueError as error:
+                if number == len(lines):
+                    self.drop_last_line(file_name)
+                    break
+                raise RunFolderError(
+                    f"{file_name}: line {number} cannot be read: {error}"
+                ) from None
+        return records
+
+    def write_json_lines(self, file_name: str, records: list[dict[str, Any]]) -> None:
+        """Rewrite a JSON-lines file whole, as append_line writes each record."""
+        text = "".join(json.dumps(record, allow_nan=False) + "\n" for record in records)
+        self.write_whole(self.folder / file_name, text)
+
+    def load_programs(self) -> list[Program]:
+        """Read programs.jsonl back, in order (a last line cut off by a crash is dropped).
+
+        Raises RunFolderError for a line that is not a saved program.
+        """
+        programs = []
+        for number, record in enumerate(self.read_json_lines(PROGRAMS_FILE), start=1):
+            try:
+                programs.append(Program.from_dict(record))
+            except (ValueError, TypeError, KeyError) as error:
+                raise RunFolderError(
+                    f"{PROGRAMS_FILE}: line {number} is not a program: {error}"
+                ) from None
+        return programs
+
+    def load_history(self) -> list[HistoryRow]:
+        """Read history.csv back, in order (a last row cut off by a crash is dropped).
+
+        Raises RunFolderError for an unreadable row elsewhere.
+        """
+        lines = self.read_lines(HISTORY_FILE)
+        rows = []
+        # Line 1 is the header.
+        for number, row in enumerate(csv.DictReader(lines), start=2):
+            try:
+                rows.append(HistoryRow.from_csv(row))
+            except (ValueError, TypeError) as error:
+                if number == len(lines):
+                    self.drop_last_line(HISTORY_FILE)
+                    break
+                raise RunFolderError(
+                    f"{HISTORY_FILE}: line {number} cannot be read: {error}"
+                ) from None
+        return rows
+
+    def drop_unfinished(self, finished: set[int]) -> int:
+        """Drop the LLM's children, and the LLM calls, of iterations without a history row.
+
+        A crash between storing a child and its history row leaves a child whose
+        iteration is done again on resume (the first plan's P3): it is dropped, as a
+        cut-off line is. Returns how many children were dropped.
+        """
+        programs = self.read_json_lines(PROGRAMS_FILE)
+        kept = [
+            record
+            for record in programs
+            if record["origin"] != Origin.LLM.value or record["iteration"] in finished
+        ]
+        if len(kept) != len(programs):
+            self.write_json_lines(PROGRAMS_FILE, kept)
+        calls = self.read_json_lines(LLM_CALLS_FILE)
+        kept_calls = [record for record in calls if record["iteration"] in finished]
+        if len(kept_calls) != len(calls):
+            self.write_json_lines(LLM_CALLS_FILE, kept_calls)
+        return len(programs) - len(kept)
