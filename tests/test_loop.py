@@ -828,6 +828,17 @@ class LoopTest(unittest.TestCase):
         self.assertEqual([s["llm"]["max_failures_in_a_row"] for s in sessions], [3, 5])
         self.assertEqual([s["flags"]["iterations"] for s in sessions], [1, 2])
 
+    def test_a_folder_another_process_runs_is_refused(self) -> None:
+        """Running the same command twice at once would mix two runs in one folder."""
+        run_toy([reply_returning("2")], self.output, iterations=1)
+        other = Storage(self.output)
+        other.lock()
+        with self.assertRaisesRegex(RunError, "is in use: another process is running it"):
+            run_toy([reply_returning("3")], self.output, iterations=2)
+        other.unlock()
+        _, _, console = run_toy([reply_returning("3")], self.output, iterations=2)
+        self.assertIn("Run finished: 2 iterations done", console)
+
     def test_a_broken_run_folder_is_refused(self) -> None:
         run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, iterations=2)
         programs_file = self.output / "programs.jsonl"

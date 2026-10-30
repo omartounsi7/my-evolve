@@ -12,6 +12,7 @@ disk before the write returns, so nothing finished is lost if the run stops abru
     run.json             the run's id, its seed, its fingerprints, one record per session
     problem.yaml         a copy of the problem file, from the first session
     log.txt              everything logged (logs.py)
+    run.lock             locked while a process runs the folder
 
 Only the main thread uses the run folder (D36).
 
@@ -23,9 +24,10 @@ import csv
 import json
 import os
 import shutil
+import sys
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from my_evolve.program import Origin, Program
 
@@ -48,6 +50,8 @@ BEST_PROGRAM_FILE = "best_program.py"
 SNAPSHOT_FOLDER = "best"
 RUN_FILE = "run.json"
 PROBLEM_COPY = "problem.yaml"
+# Locked by the process running the folder, so that a second one cannot run it too
+LOCK_FILE = "run.lock"
 
 
 class RunFolderError(Exception):
@@ -151,6 +155,38 @@ class Storage:
         # The run folder
         self.folder: Path = folder
         folder.mkdir(parents=True, exist_ok=True)
+        # run.lock, open while this process holds its lock
+        self.lock_file: IO[str] | None = None
+
+    def lock(self) -> None:
+        """Hold the folder's lock until unlock, so that no other process runs it meanwhile.
+
+        The operating system releases the lock when the process ends, however it ends, so
+        a crash never leaves the folder locked. Raises RunFolderError if another process
+        holds it.
+        """
+        lock_file = (self.folder / LOCK_FILE).open("a", encoding="utf-8")
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+
+                msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lock_file.close()
+            raise RunFolderError(
+                f"{self.folder} is in use: another process is running it"
+            ) from None
+        self.lock_file = lock_file
+
+    def unlock(self) -> None:
+        """Release the folder's lock, if this process holds it."""
+        if self.lock_file is not None:
+            self.lock_file.close()
+            self.lock_file = None
 
     def holds_a_run(self) -> bool:
         """Return True once programs have been saved here."""

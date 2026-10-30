@@ -79,6 +79,7 @@ the end. The run folder holds:
 | `run.json` | The run's id, its seed, the fingerprints a continued run is checked against, and one record per session |
 | `problem.yaml` | A copy of the problem file, from the first session |
 | `log.txt` | Everything logged, with the time |
+| `run.lock` | Locked while a process runs the folder, so that a second one is refused |
 
 The first Ctrl+C lets the iterations in progress finish, then ends the run; a second one,
 or SIGTERM, stops it at once. Either way, everything finished is already saved.

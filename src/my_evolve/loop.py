@@ -839,11 +839,17 @@ def run(
     blocks, lacks an entry function, or repeats an earlier program or one in flight) is
     rejected, and costs no evaluation.
 
+    Only one process may run a folder at a time: a second one is refused.
+
     Raises RunError if a model does not answer its check, if the initial program fails
     the checks, if it does not work (evolution needs a working start), or if the run in
     the output folder cannot be continued, saying what changed.
     """
     storage = Storage(output)
+    try:
+        storage.lock()
+    except RunFolderError as error:
+        raise RunError(str(error)) from None
     continuing = storage.holds_a_run()
     setup_logging(output, verbose)
     try:
@@ -925,3 +931,4 @@ def run(
         return loop.db
     finally:
         stop_logging()
+        storage.unlock()
