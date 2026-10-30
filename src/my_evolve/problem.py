@@ -43,8 +43,9 @@ The problem file is written in YAML. For now it holds:
           low: 0                           #   the evaluation's stage 1 must give
           high: 1
     parents:                               # optional: how parents are chosen (D19)
-      strategy: weighted                   # ShinkaEvolve's rule
-      lambda: 1.0                          # how sharply it favours the better programs
+      strategy: weighted                   # ShinkaEvolve's rule, or openevolve
+      lambda: 1.0                          # weighted: how sharply it favours better programs
+      archive_size: 10                     # openevolve: the best programs it draws from
     prompt:                                # optional
       example_programs: 2                  # other programs shown besides the parent
       max_chars: 60000                     # the longest prompt, in characters
@@ -72,8 +73,8 @@ KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # The beginnings of the names of OpenAI's reasoning models, which refuse max_tokens and
 # temperature and need max_completion_tokens (as openevolve guesses them)
 REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
-# The rules that can choose parents
-PARENT_STRATEGIES = ("weighted",)
+# The rules that can choose parents; the first is the default
+PARENT_STRATEGIES = ("weighted", "openevolve")
 # The choices of a migration (D23); the first of each is the default
 MIGRANT_CHOICES = ("random_non_best", "best", "random")
 DESTINATION_CHOICES = ("all_others", "ring")
@@ -196,10 +197,12 @@ class IslandSettings:
 class ParentSettings:
     """How parents are chosen (D19)."""
 
-    # The rule: "weighted", ShinkaEvolve's
+    # The rule: "weighted", ShinkaEvolve's, or "openevolve"
     strategy: str = "weighted"
     # How sharply the weighted rule favours programs above the median (λ; ShinkaEvolve: 10)
     lam: float = 1.0
+    # How many of the run's best programs form the archive openevolve's rule draws from (D21)
+    archive_size: int = 10
 
 
 @dataclass(frozen=True)
@@ -315,14 +318,10 @@ class Problem:
                 f"'migration_share' in the islands section must be at most 1, got {share}"
             )
         parents = checked_section(
-            top.get("parents", {}), "the parents section", optional={"strategy", "lambda"}
+            top.get("parents", {}),
+            "the parents section",
+            optional={"strategy", "lambda", "archive_size"},
         )
-        strategy = parents.get("strategy", ParentSettings().strategy)
-        if strategy not in PARENT_STRATEGIES:
-            raise ProblemError(
-                f"'strategy' in the parents section must be one of {', '.join(PARENT_STRATEGIES)}, "
-                f"got {strategy!r}"
-            )
         defaults = EvaluationSettings()
         sandbox_defaults = SandboxSettings()
         return cls(
@@ -359,9 +358,14 @@ class Problem:
                 ),
             ),
             parents=ParentSettings(
-                strategy=strategy,
+                strategy=checked_choice(
+                    parents, "strategy", "the parents section", PARENT_STRATEGIES
+                ),
                 lam=checked_positive_number(
                     parents, "lambda", "the parents section", ParentSettings().lam
+                ),
+                archive_size=checked_count(
+                    parents, "archive_size", "the parents section", ParentSettings().archive_size
                 ),
             ),
             grid_features=build_grid(top.get("grid", {})),

@@ -20,7 +20,7 @@ from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import RunError, run
-from my_evolve.problem import IslandSettings, Problem
+from my_evolve.problem import IslandSettings, ParentSettings, Problem
 from my_evolve.program import Origin, Status
 from my_evolve.sandbox import LocalSandbox
 
@@ -218,6 +218,39 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(sorted({entry["iteration"] for entry in migrants}), [2, 4])
         self.assertEqual(len(migrants), 4)
         self.assertIn("Migration after iteration 2: 2 programs copied", console.getvalue())
+
+    def test_with_openevolves_rule_the_child_lives_on_the_drawn_island(self) -> None:
+        """The archive branch may give a parent from another island, or the initial program
+        (on none); the child still lives on its iteration's island."""
+        problem = replace(
+            Problem.load(TOY_FOLDER / "problem.yaml"),
+            islands=IslandSettings(count=3),
+            parents=ParentSettings(strategy="openevolve"),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            database = run(
+                problem=problem,
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble(
+                    [FakeLLM([reply_returning(str(n)) for n in range(2, 10)])], [1.0], 3
+                ),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=8,
+                output=self.output,
+                seed=5,
+            )
+        children = [
+            program for program in database.programs.values() if program.origin is Origin.LLM
+        ]
+        self.assertEqual(len(children), 8)
+        self.assertTrue(all(child.island in (0, 1, 2) for child in children))
+        parent_islands = [database.programs[child.parent_id or ""].island for child in children]
+        self.assertTrue(
+            any(
+                parent is None or parent != child.island
+                for parent, child in zip(parent_islands, children, strict=True)
+            )
+        )
 
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""

@@ -6,7 +6,7 @@ import statistics
 import unittest
 from collections import Counter
 
-from my_evolve.database import Database, WeightedSelector
+from my_evolve.database import Database, OpenEvolveSelector, WeightedSelector
 from my_evolve.problem import CODE_COMPLEXITY, FeatureSpec, IslandSettings, ParentSettings
 from my_evolve.program import Origin, Program, Result, Status
 
@@ -176,8 +176,8 @@ class WeightedSelectorTest(unittest.TestCase):
     def population(self, scores: list[float], children: list[int]) -> Database:
         """Return a database of working programs with these scores and numbers of children."""
         database = one_island(parents=ParentSettings(lam=1.0))
-        for score, count in zip(scores, children, strict=True):
-            program = working(score)
+        for cell, (score, count) in enumerate(zip(scores, children, strict=True)):
+            program = working(score, cell=cell)
             database.add(program)
             for _ in range(count):
                 database.add(child_of(program, Status.FAILED))
@@ -193,12 +193,12 @@ class WeightedSelectorTest(unittest.TestCase):
         return [weight / sum(weights) for weight in weights]
 
     def frequencies(self, database: Database, draws: int = 20_000) -> list[float]:
-        """Return how often each working program is drawn as parent, in the order added."""
-        working_programs = database.working_programs(0)
+        """Return how often each elite is drawn as parent, in cell order (the order added)."""
+        elites = database.islands[0].elites()
         selector = WeightedSelector(1.0)
         rng = random.Random(1)
-        counts = Counter(selector.choose(working_programs, database, rng).id for _ in range(draws))
-        return [counts[program.id] / draws for program in working_programs]
+        counts = Counter(selector.choose(0, database, rng).id for _ in range(draws))
+        return [counts[program.id] / draws for program in elites]
 
     def test_draws_follow_the_formula(self) -> None:
         """sigmoid((score - median) / MAD) * 1 / (1 + children), normalized."""
@@ -422,6 +422,61 @@ class MigrationTest(unittest.TestCase):
         database = islands_of(1)
         fill(database, 0, [1.0, 2.0])
         self.assertEqual(database.migrate(1), [])
+
+
+class ArchiveTest(unittest.TestCase):
+    def test_the_best_programs_first_and_the_earlier_on_a_tie(self) -> None:
+        database = islands_of(2)
+        programs = fill(database, 0, [1.0, 4.0, 2.0]) + fill(database, 1, [4.0, 3.0])
+        self.assertEqual(database.archive(4), [programs[1], programs[3], programs[4], programs[2]])
+        self.assertEqual(len(database.archive(10)), 5)
+
+    def test_copies_of_one_program_count_once(self) -> None:
+        database = islands_of(3)
+        initial = Program(
+            "x = 1\n", Result(Status.OK, score=1.0), fingerprint="f", code_complexity=1
+        )
+        database.add(initial)
+        for copy in database.seed_islands(initial):
+            database.add(copy)
+        self.assertEqual(database.archive(10), [initial])
+
+    def test_failed_programs_are_not_in_the_archive(self) -> None:
+        database = one_island()
+        database.add(failed())
+        self.assertEqual(database.archive(10), [])
+
+
+class OpenEvolveSelectorTest(unittest.TestCase):
+    def frequencies(self, database: Database, draws: int = 20_000) -> Counter[str]:
+        selector = OpenEvolveSelector(archive_size=1)
+        rng = random.Random(3)
+        counts = Counter(selector.choose(0, database, rng).id for _ in range(draws))
+        return Counter({key: value / draws for key, value in counts.items()})
+
+    def test_the_three_branches(self) -> None:
+        """Island 0's elites score 1 and 2; the archive (size 1) is island 1's 9.
+
+        No archive program was made on island 0, so the archive branch draws from the whole
+        archive: 70% for the 9; the uniform branch gives each elite 10%; the proportional
+        branch gives them 1/3 and 2/3 of 10%.
+        """
+        database = islands_of(2)
+        low, high = fill(database, 0, [1.0, 2.0])
+        (far,) = fill(database, 1, [9.0])
+        frequencies = self.frequencies(database)
+        self.assertAlmostEqual(frequencies[far.id], 0.70, delta=0.015)
+        self.assertAlmostEqual(frequencies[low.id], 0.10 + 0.1 / 3, delta=0.015)
+        self.assertAlmostEqual(frequencies[high.id], 0.10 + 0.2 / 3, delta=0.015)
+
+    def test_the_archive_branch_prefers_the_island(self) -> None:
+        """With the island's own program in the archive, the archive branch keeps to it."""
+        database = islands_of(2)
+        (best,) = fill(database, 0, [9.0])
+        fill(database, 1, [5.0])
+        selector = OpenEvolveSelector(archive_size=2)
+        rng = random.Random(4)
+        self.assertEqual({selector.choose(0, database, rng).id for _ in range(500)}, {best.id})
 
 
 if __name__ == "__main__":

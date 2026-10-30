@@ -284,7 +284,15 @@ class ProblemTest(unittest.TestCase):
         data = valid_data()
         data["parents"] = {"lambda": 10}
         self.assertEqual(Problem.from_dict(data).parents.lam, 10.0)
-        for wrong, error in [({"strategy": "best"}, "must be one of"), ({"lambda": 0}, "above 0")]:
+        self.assertEqual(parents.archive_size, 10)
+        data["parents"] = {"strategy": "openevolve", "archive_size": 5}
+        parents = Problem.from_dict(data).parents
+        self.assertEqual((parents.strategy, parents.archive_size), ("openevolve", 5))
+        for wrong, error in [
+            ({"strategy": "best"}, "must be one of weighted, openevolve"),
+            ({"lambda": 0}, "above 0"),
+            ({"archive_size": 0}, "'archive_size'"),
+        ]:
             data["parents"] = wrong
             with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, error):
                 Problem.from_dict(data)

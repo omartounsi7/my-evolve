@@ -6,7 +6,9 @@ lives on that island. Each island has its own MAP-Elites grid (D16, D61), and it
 population is the grid's elites: every working program made on the island is offered
 its cell as it is added. The parent is chosen among the island's elites by ShinkaEvolve's
 weighted rule (D19): programs score above or below the median, and programs already
-tried often are tried less. The examples are other programs made on the island, drawn
+tried often are tried less. openevolve's rule is the other choice: it mixes uniform and
+score-proportional draws among the elites with draws from an archive of the run's best
+programs (D21). The examples are other programs made on the island, drawn
 at random, failed ones and displaced elites included (D26): the LLM sees them as previous
 attempts, unlabelled.
 
@@ -41,21 +43,19 @@ def sigmoid(x: float) -> float:
 
 
 class ParentSelector(ABC):
-    """A rule choosing the parent of the next child among candidate programs (D75)."""
+    """A rule choosing the parent of an island's next child (D75)."""
 
     @abstractmethod
-    def choose(
-        self, candidates: Sequence[Program], database: "Database", rng: random.Random
-    ) -> Program:
-        """Return one of the candidates, which are working programs (never empty)."""
+    def choose(self, island: int, database: "Database", rng: random.Random) -> Program:
+        """Return the parent of the island's next child; the island has an elite or more."""
 
 
 class WeightedSelector(ParentSelector):
-    """ShinkaEvolve's weighted rule (D19), from its database/parents.py.
+    """ShinkaEvolve's weighted rule (D19), from its database/parents.py, over grid elites.
 
-    Each candidate is drawn with probability proportional to
+    Each of the island's elites is drawn with probability proportional to
         sigmoid(lam * (score - median) / spread) * 1 / (1 + children)
-    where the median and the spread are those of the candidates' scores. The first term
+    where the median and the spread are those of the elites' scores. The first term
     favours good programs, the second programs that have had few children. The spread
     is the median absolute deviation, or the standard deviation if that is 0; if both
     are 0 (every score equal), every sigmoid term is 0.5.
@@ -79,11 +79,45 @@ class WeightedSelector(ParentSelector):
             weights.append(performance * novelty)
         return weights
 
-    def choose(
-        self, candidates: Sequence[Program], database: "Database", rng: random.Random
-    ) -> Program:
-        """Draw one candidate in proportion to its weight."""
-        return rng.choices(candidates, weights=self.weights(candidates, database))[0]
+    def choose(self, island: int, database: "Database", rng: random.Random) -> Program:
+        """Draw one of the island's elites in proportion to its weight."""
+        elites = database.islands[island].elites()
+        return rng.choices(elites, weights=self.weights(elites, database))[0]
+
+
+class OpenEvolveSelector(ParentSelector):
+    """openevolve's rule (database.py, sample_from_island), adapted to grids (D19, D75).
+
+    - 20% of the time, a uniform draw among the island's elites;
+    - 70%, a uniform draw among the archive's programs made on this island, or among the
+      whole archive if none was: the parent may then come from another island (or be the
+      initial program, which belongs to none), as in openevolve;
+    - 10%, a draw among the island's elites in proportion to their scores, each counted
+      as at least 0.001.
+    """
+
+    # Where the draw switches from one branch to the next
+    UNIFORM_SHARE = 0.2
+    ARCHIVE_SHARE = 0.7
+    # The least weight a score counts for, in the fitness-proportional branch
+    MINIMUM_WEIGHT = 0.001
+
+    def __init__(self, archive_size: int) -> None:
+        # How many of the run's best programs the archive holds (D21)
+        self.archive_size: int = archive_size
+
+    def choose(self, island: int, database: "Database", rng: random.Random) -> Program:
+        """Draw the branch, then the parent."""
+        elites = database.islands[island].elites()
+        draw = rng.random()
+        if draw < self.UNIFORM_SHARE:
+            return rng.choice(elites)
+        if draw < self.UNIFORM_SHARE + self.ARCHIVE_SHARE:
+            archive = database.archive(self.archive_size)
+            made_here = [program for program in archive if program.island == island]
+            return rng.choice(made_here or archive)
+        weights = [max(elite.result.score or 0.0, self.MINIMUM_WEIGHT) for elite in elites]
+        return rng.choices(elites, weights=weights)[0]
 
 
 @dataclass
@@ -108,6 +142,8 @@ class Island:
 
 def make_selector(settings: ParentSettings) -> ParentSelector:
     """Return the parent selector the problem file names."""
+    if settings.strategy == "openevolve":
+        return OpenEvolveSelector(settings.archive_size)
     return WeightedSelector(settings.lam)
 
 
@@ -194,6 +230,27 @@ class Database:
         best = self.best()
         return best.result.score if best is not None else None
 
+    def archive(self, size: int) -> list[Program]:
+        """Return the run's size best working programs, best first (D21).
+
+        Computed when needed, never stored. On a tie, the earlier program comes first;
+        copies of one program (one fingerprint) count once, as their earliest.
+        """
+        ranked = sorted(
+            (program for program in self.programs.values() if program.result.is_ok),
+            key=lambda program: -(program.result.score or 0.0),
+        )
+        archive: list[Program] = []
+        seen: set[str] = set()
+        for program in ranked:
+            key = program.fingerprint or program.id
+            if key not in seen:
+                seen.add(key)
+                archive.append(program)
+            if len(archive) == size:
+                break
+        return archive
+
     def children_count(self, program_id: str) -> int:
         """Return how many children the program has had, error ones excluded."""
         return self.children.get(program_id, 0)
@@ -276,10 +333,9 @@ class Database:
         Failed programs never enter a grid, so they are never parents. Raises ValueError
         if the island has no elite.
         """
-        candidates = self.islands[island].elites()
-        if not candidates:
+        if not self.islands[island].elites():
             raise ValueError(f"no working program on island {island} to build on")
-        return self.selector.choose(candidates, self, self.rng)
+        return self.selector.choose(island, self, self.rng)
 
     def sample_examples(self, island: int, parent: Program, count: int) -> list[Program]:
         """Draw up to count example programs to show beside the parent (D26).
