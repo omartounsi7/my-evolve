@@ -210,6 +210,18 @@ class ProblemTest(unittest.TestCase):
             with self.subTest(section=section, value=wrong), self.assertRaises(ProblemError):
                 Problem.from_dict(data)
 
+    def test_the_parents_section(self) -> None:
+        """The weighted rule with lambda 1 by default; unknown strategies are refused."""
+        parents = Problem.from_dict(valid_data()).parents
+        self.assertEqual((parents.strategy, parents.lam), ("weighted", 1.0))
+        data = valid_data()
+        data["parents"] = {"lambda": 10}
+        self.assertEqual(Problem.from_dict(data).parents.lam, 10.0)
+        for wrong, error in [({"strategy": "best"}, "must be one of"), ({"lambda": 0}, "above 0")]:
+            data["parents"] = wrong
+            with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, error):
+                Problem.from_dict(data)
+
     def test_packages_need_exact_versions(self) -> None:
         """Only name==version entries: no ranges, no pip options, no duplicates."""
         data = valid_data()

@@ -26,6 +26,9 @@ The problem file is written in YAML. For now it holds:
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
+    parents:                               # optional: how parents are chosen (D19)
+      strategy: weighted                   # ShinkaEvolve's rule
+      lambda: 1.0                          # how sharply it favours the better programs
     prompt:                                # optional
       example_programs: 2                  # other programs shown besides the parent
       max_chars: 60000                     # the longest prompt, in characters
@@ -53,6 +56,8 @@ KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # The beginnings of the names of OpenAI's reasoning models, which refuse max_tokens and
 # temperature and need max_completion_tokens (as openevolve guesses them)
 REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
+# The rules that can choose parents
+PARENT_STRATEGIES = ("weighted",)
 # The keys of the llm section that apply to every model, unless a model sets its own
 SHARED_MODEL_KEYS = frozenset(
     {"api_base", "api_key", "max_tokens", "temperature", "reasoning_effort", "timeout", "retries"}
@@ -124,6 +129,16 @@ class SandboxSettings:
 
 
 @dataclass(frozen=True)
+class ParentSettings:
+    """How parents are chosen (D19)."""
+
+    # The rule: "weighted", ShinkaEvolve's
+    strategy: str = "weighted"
+    # How sharply the weighted rule favours programs above the median (λ; ShinkaEvolve: 10)
+    lam: float = 1.0
+
+
+@dataclass(frozen=True)
 class PromptSettings:
     """What the prompt shows."""
 
@@ -155,6 +170,8 @@ class Problem:
     sandbox: SandboxSettings = field(default_factory=SandboxSettings)
     # What the prompt shows
     prompt: PromptSettings = field(default_factory=PromptSettings)
+    # How parents are chosen
+    parents: ParentSettings = field(default_factory=ParentSettings)
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -176,7 +193,7 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "entry_functions", "llm"},
-            optional={"packages", "evaluation", "sandbox", "prompt"},
+            optional={"packages", "evaluation", "sandbox", "prompt", "parents"},
         )
         evaluation = checked_section(
             top.get("evaluation", {}),
@@ -194,6 +211,15 @@ class Problem:
             optional={"example_programs", "max_chars", "max_feedback_chars"},
         )
         prompt_defaults = PromptSettings()
+        parents = checked_section(
+            top.get("parents", {}), "the parents section", optional={"strategy", "lambda"}
+        )
+        strategy = parents.get("strategy", ParentSettings().strategy)
+        if strategy not in PARENT_STRATEGIES:
+            raise ProblemError(
+                f"'strategy' in the parents section must be one of {', '.join(PARENT_STRATEGIES)}, "
+                f"got {strategy!r}"
+            )
         defaults = EvaluationSettings()
         sandbox_defaults = SandboxSettings()
         return cls(
@@ -227,6 +253,12 @@ class Problem:
                     "max_feedback_chars",
                     "the prompt section",
                     prompt_defaults.max_feedback_chars,
+                ),
+            ),
+            parents=ParentSettings(
+                strategy=strategy,
+                lam=checked_positive_number(
+                    parents, "lambda", "the parents section", ParentSettings().lam
                 ),
             ),
             sandbox=SandboxSettings(

@@ -1,9 +1,13 @@
 """Checks that the database keeps every program, tracks the best, and draws only working ones."""
 
+import math
 import random
+import statistics
 import unittest
+from collections import Counter
 
-from my_evolve.database import Database
+from my_evolve.database import Database, WeightedSelector
+from my_evolve.problem import ParentSettings
 from my_evolve.program import Program, Result, Status
 
 
@@ -111,6 +115,81 @@ class FingerprintTest(unittest.TestCase):
         database.add(first)
         database.add(Program("x = 1\n", Result(Status.OK, score=2.0), fingerprint="same"))
         self.assertEqual(database.fingerprints, {"same": first.id})
+
+
+def child_of(parent: Program, status: Status) -> Program:
+    """Return a child of parent with that status."""
+    result = Result(status, score=1.0) if status is Status.OK else Result(status, error="x")
+    return Program.new_child(parent, "x = 2\n", result, iteration=1)
+
+
+class ChildrenTest(unittest.TestCase):
+    def test_every_child_counts_except_errors(self) -> None:
+        """A failed, invalid or rejected child cost an LLM call; an error is not the program's."""
+        database = Database(random.Random(0))
+        parent = working(1.0)
+        database.add(parent)
+        for status in (Status.OK, Status.FAILED, Status.REJECTED, Status.ERROR, Status.INVALID):
+            database.add(child_of(parent, status))
+        self.assertEqual(database.children_count(parent.id), 4)
+        self.assertEqual(database.children_count("unknown"), 0)
+
+
+class WeightedSelectorTest(unittest.TestCase):
+    def population(self, scores: list[float], children: list[int]) -> Database:
+        """Return a database of working programs with these scores and numbers of children."""
+        database = Database(random.Random(0), ParentSettings(lam=1.0))
+        for score, count in zip(scores, children, strict=True):
+            program = working(score)
+            database.add(program)
+            for _ in range(count):
+                database.add(child_of(program, Status.FAILED))
+        return database
+
+    def expected(self, scores: list[float], children: list[int], spread: float) -> list[float]:
+        """Return the probabilities the rule gives, computed by hand."""
+        median = statistics.median(scores)
+        weights = [
+            (0.5 if spread == 0 else 1 / (1 + math.exp(-(score - median) / spread))) / (1 + count)
+            for score, count in zip(scores, children, strict=True)
+        ]
+        return [weight / sum(weights) for weight in weights]
+
+    def frequencies(self, database: Database, draws: int = 20_000) -> list[float]:
+        """Return how often each working program is drawn as parent, in the order added."""
+        working_programs = database.working_programs()
+        selector = WeightedSelector(1.0)
+        rng = random.Random(1)
+        counts = Counter(selector.choose(working_programs, database, rng).id for _ in range(draws))
+        return [counts[program.id] / draws for program in working_programs]
+
+    def test_draws_follow_the_formula(self) -> None:
+        """sigmoid((score - median) / MAD) * 1 / (1 + children), normalized."""
+        scores, children = [1.0, 2.0, 3.0, 4.0, 5.0], [0, 0, 1, 0, 3]
+        database = self.population(scores, children)
+        # The median is 3; the absolute deviations 2, 1, 0, 1, 2 have a median of 1.
+        for found, wanted in zip(
+            self.frequencies(database), self.expected(scores, children, 1.0), strict=True
+        ):
+            self.assertAlmostEqual(found, wanted, delta=0.015)
+
+    def test_the_standard_deviation_when_the_mad_is_zero(self) -> None:
+        scores, children = [1.0, 1.0, 1.0, 5.0], [0, 0, 0, 0]
+        database = self.population(scores, children)
+        spread = statistics.pstdev(scores)
+        for found, wanted in zip(
+            self.frequencies(database), self.expected(scores, children, spread), strict=True
+        ):
+            self.assertAlmostEqual(found, wanted, delta=0.015)
+
+    def test_equal_scores_leave_only_the_children_count(self) -> None:
+        """With every score equal, each sigmoid term is 0.5: fewer children, more draws."""
+        scores, children = [2.0, 2.0, 2.0], [0, 1, 3]
+        database = self.population(scores, children)
+        for found, wanted in zip(
+            self.frequencies(database), self.expected(scores, children, 0.0), strict=True
+        ):
+            self.assertAlmostEqual(found, wanted, delta=0.015)
 
 
 if __name__ == "__main__":

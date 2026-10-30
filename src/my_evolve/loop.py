@@ -139,7 +139,7 @@ def run(
         raise RunError(f"a model did not answer its check: {error}") from None
     # The run's random generator: every draw of the run comes from it (D39)
     rng = random.Random(seed)
-    database = Database(rng)
+    database = Database(rng, problem.parents)
     prompt_builder = PromptBuilder(problem)
 
     def store(program: Program) -> None:
