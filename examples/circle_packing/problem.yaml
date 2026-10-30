@@ -59,7 +59,7 @@ prompt:
 #   grid:
 #     features:
 #       - {name: code_complexity, low: 0, high: 2.5}
-#       - {name: radii_spread, low: 0, high: 1}
+#       - {name: radii_spread, low: 0, high: 1.5}
 #       - {name: radius_centre_correlation, low: -1, high: 1}
 
 # OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.

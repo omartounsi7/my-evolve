@@ -47,7 +47,7 @@ The problem file is written in YAML. For now it holds:
           bins: 10                         # optional: 10, 5 or 3 for 1, 2 or 3 features
         - name: radii_spread               # any other name: an output feature, which
           low: 0                           #   the evaluation's stage 1 must give
-          high: 1
+          high: 1.5
     parents:                               # optional: how parents are chosen (D19)
       strategy: weighted                   # ShinkaEvolve's rule, or openevolve
       lambda: 1.0                          # weighted: how sharply it favours better programs

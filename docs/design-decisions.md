@@ -209,7 +209,9 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   about 19% each). It was −1 to +3, but children only grew in the first plan's milestones (a log2 ratio of
   0 to 1.31 for circle packing, 0.34 to 2.2 for function minimization), so the bins below 0 stayed empty
   and each island used 2 or 3 of its 10 cells. A smaller child goes to the first bin.
-- Circle packing ranges: `radii_spread` 0 to 1, `radius_centre_correlation` −1 to +1.
+- Circle packing ranges: `radii_spread` 0 to 1.5, `radius_centre_correlation` −1 to +1. `radii_spread` was
+  0 to 1, but the initial program's is 1.105, and 2 of the 15 working children of Milestone 4 were above 1
+  (the highest 1.27): all of them shared the top bin.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
 
