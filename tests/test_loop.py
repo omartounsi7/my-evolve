@@ -4,11 +4,13 @@ The end-to-end test of the implementation plan: the toy problem, evolved with a 
 It keeps passing at every step, and grows with every phase.
 """
 
+import _thread
 import contextlib
 import csv
 import io
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
@@ -24,7 +26,7 @@ from fakes import FakeLLM
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
-from my_evolve.loop import RunError, run, summary
+from my_evolve.loop import RunError, StopNow, run, stop_on_sigterm, summary
 from my_evolve.problem import IslandSettings, ParentSettings, Problem
 from my_evolve.program import Origin, Result, Status
 from my_evolve.sandbox import LocalSandbox
@@ -426,6 +428,57 @@ class LoopTest(unittest.TestCase):
             self.run_toy_with([reply_returning(str(n)) for n in range(2, 6)], 4)
         session = json.loads((self.output / "run.json").read_text())["sessions"][0]
         self.assertEqual(session["end"], "failed: OSError('disk full')")
+
+    def session_end(self) -> str:
+        """Return how run.json says the session ended."""
+        return str(json.loads((self.output / "run.json").read_text())["sessions"][-1]["end"])
+
+    def test_the_first_ctrl_c_finishes_the_iterations_in_flight(self) -> None:
+        """No new iteration starts; the two in flight finish and are saved; a summary ends it."""
+        llm = FakeLLM([reply_returning(str(n)) for n in range(1, 7)], delay=1.0)
+        threading.Timer(0.4, _thread.interrupt_main).start()
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            database = run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([llm], [1.0], 3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=6,
+                output=self.output,
+                seed=0,
+                workers=2,
+            )
+        children = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        self.assertEqual(sorted(child.iteration for child in children), [1, 2])
+        self.assertIn(
+            "Ctrl+C: no new iteration starts; the 2 in progress finish", console.getvalue()
+        )
+        self.assertIn("Run finished: 2 iterations done, stopped by Ctrl+C.", console.getvalue())
+        self.assertEqual(self.session_end(), "stopped by Ctrl+C")
+
+    def test_a_second_ctrl_c_stops_at_once(self) -> None:
+        """Even while an LLM call is still waiting: its thread is not waited for."""
+        llm = FakeLLM([reply_returning("5")], delay=30.0)
+        threading.Timer(0.4, _thread.interrupt_main).start()
+        threading.Timer(1.2, _thread.interrupt_main).start()
+        started = time.monotonic()
+        with self.assertRaises(StopNow):
+            self.run_with_workers(llm, iterations=1, workers=1)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.session_end(), "interrupted")
+
+    @unittest.skipIf(sys.platform == "win32", "SIGTERM is Linux and macOS only")
+    def test_sigterm_stops_at_once(self) -> None:
+        llm = FakeLLM([reply_returning("5")], delay=30.0)
+        previous = stop_on_sigterm()
+        self.addCleanup(signal.signal, signal.SIGTERM, previous)
+        threading.Timer(0.4, os.kill, (os.getpid(), signal.SIGTERM)).start()
+        started = time.monotonic()
+        with self.assertRaisesRegex(StopNow, "SIGTERM"):
+            self.run_with_workers(llm, iterations=1, workers=1)
+        self.assertLess(time.monotonic() - started, 5.0)
+        self.assertEqual(self.session_end(), "interrupted")
 
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""

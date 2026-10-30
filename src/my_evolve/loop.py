@@ -26,15 +26,23 @@ Errors are recorded and the run goes on (D38): an unexpected exception that is n
 program's fault (in a worker, in the checks, in the evaluation) gives the child the
 status error, or, before a child exists, records the iteration as an error; too many
 in a row stop the run. An exception in the main thread's own bookkeeping (the disk
-refusing a write) stops the run at once. The run ends with
-a summary: iterations done and why the run stopped, the best score, the children by
-status, and the tokens and cost of each model (D51).
+refusing a write) stops the run at once.
+
+Stopping (D53, D54): the first Ctrl+C lets the iterations in flight finish and be saved,
+then the run ends as usual. A second Ctrl+C, or SIGTERM (Linux, macOS), stops at once:
+the worker threads are not waited for, and the iterations in flight are lost;
+everything finished is already saved.
+
+The run ends with a summary: iterations done and why the run stopped, the best score,
+the children by status, and the tokens and cost of each model (D51).
 """
 
 import logging
 import queue
 import random
+import signal
 import subprocess
+import sys
 import threading
 import uuid
 from collections import Counter
@@ -66,6 +74,25 @@ logger = logging.getLogger(__name__)
 
 class RunError(Exception):
     """Raised when a run cannot start; the message says why."""
+
+
+class StopNow(KeyboardInterrupt):
+    """Stops a run at once: a second Ctrl+C, or SIGTERM (D54)."""
+
+
+def stop_on_sigterm() -> Any:
+    """Make SIGTERM stop a run at once, as a second Ctrl+C does; return the previous handler.
+
+    SIGTERM exists on Linux and macOS only: on Windows, nothing changes and None is
+    returned. Call it from the main thread.
+    """
+    if sys.platform == "win32" or not hasattr(signal, "SIGTERM"):
+        return None
+
+    def handler(signal_number: int, frame: Any) -> None:
+        raise StopNow("SIGTERM")
+
+    return signal.signal(signal.SIGTERM, handler)
 
 
 def describe(program: Program) -> str:
@@ -271,6 +298,8 @@ class Loop:
         self.pending: dict[str, str] = {}
         # Iterations in a row that ended in an error, not the program's fault (D38)
         self.errors_in_a_row: int = 0
+        # True once Ctrl+C was pressed: no new iteration starts
+        self.interrupted: bool = False
 
     @property
     def db(self) -> Database:
@@ -534,44 +563,65 @@ class Loop:
     def run_iterations(self) -> str:
         """Run iterations until enough have completed or the run stops; return why it stopped.
 
-        The main thread starts iterations while fewer than `workers` are in flight, then
-        waits for a finished task in short steps, and handles it.
+        The first Ctrl+C stops new iterations from starting, and the run ends once those
+        in flight are done (D53). A second Ctrl+C, or SIGTERM, raises StopNow (D54).
         """
         pool = WorkerPool(self.workers)
         in_flight: dict[int, IterationState] = {}
         while True:
-            while (
-                self.stop_reason is None
-                and len(in_flight) < self.workers
-                and self.started < self.iterations
-            ):
-                state = self.start_iteration()
-                if state is None:
+            try:
+                if not self.step(pool, in_flight):
                     break
-                in_flight[state.number] = state
-                pool.submit(
-                    "propose", state.number, propose, state.llm, state.prompt, state.parent.code
+            except StopNow:
+                raise
+            except KeyboardInterrupt:
+                if self.interrupted:
+                    raise StopNow("a second Ctrl+C") from None
+                self.interrupted = True
+                self.stop_reason = self.stop_reason or "stopped by Ctrl+C"
+                logger.info(
+                    "Ctrl+C: no new iteration starts; the %d in progress finish and are saved. "
+                    "Press Ctrl+C again to stop at once.",
+                    len(in_flight),
                 )
-            if not in_flight:
-                break
-            task = pool.next_result(WAIT_STEP_SECONDS)
-            if task is None:
-                continue
-            state = in_flight[task.iteration]
-            if task.kind == "propose":
-                if self.after_proposal(state, task):
-                    assert state.parsed is not None
-                    pool.submit(
-                        "evaluate", state.number, self.evaluator.evaluate, state.parsed.code
-                    )
-                    continue
-            elif task.error is not None:
-                # The evaluator never raises because of a program: this is not its fault.
-                self.finish(state, Result.failure(Status.ERROR, f"evaluation: {task.error!r}"))
-            else:
-                self.finish(state, task.value)
-            del in_flight[task.iteration]
         return self.stop_reason or "every iteration done"
+
+    def step(self, pool: WorkerPool, in_flight: dict[int, IterationState]) -> bool:
+        """Start iterations while fewer than `workers` are in flight, then wait a short while
+        for a finished task and handle it. Return False once nothing is left to do.
+
+        The wait is short, so that Ctrl+C reaches the main thread promptly (D53).
+        """
+        while (
+            self.stop_reason is None
+            and len(in_flight) < self.workers
+            and self.started < self.iterations
+        ):
+            state = self.start_iteration()
+            if state is None:
+                break
+            in_flight[state.number] = state
+            pool.submit(
+                "propose", state.number, propose, state.llm, state.prompt, state.parent.code
+            )
+        if not in_flight:
+            return False
+        task = pool.next_result(WAIT_STEP_SECONDS)
+        if task is None:
+            return True
+        state = in_flight[task.iteration]
+        if task.kind == "propose":
+            if self.after_proposal(state, task):
+                assert state.parsed is not None
+                pool.submit("evaluate", state.number, self.evaluator.evaluate, state.parsed.code)
+                return True
+        elif task.error is not None:
+            # The evaluator never raises because of a program: this is not its fault.
+            self.finish(state, Result.failure(Status.ERROR, f"evaluation: {task.error!r}"))
+        else:
+            self.finish(state, task.value)
+        del in_flight[task.iteration]
+        return True
 
 
 def run(

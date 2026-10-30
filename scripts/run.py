@@ -16,6 +16,7 @@ Example, from the repository root:
 """
 
 import argparse
+import io
 import sys
 import uuid
 from datetime import datetime
@@ -23,7 +24,7 @@ from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
 from my_evolve.llm import Ensemble, MissingKeyError
-from my_evolve.loop import RunError, run
+from my_evolve.loop import RunError, StopNow, run, stop_on_sigterm
 from my_evolve.problem import Problem, ProblemError
 from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, SandboxError, ensure_image
 
@@ -103,7 +104,13 @@ def make_sandbox(problem: Problem, unsafe_local: bool, run_id: str) -> Sandbox:
 
 def main(arguments: list[str]) -> int:
     """Run my-evolve from the command line; return the exit code."""
+    # Text beyond plain English must reach a Windows console too (D55).
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
     parsed = parse_arguments(arguments)
+    output = parsed.output
+    stop_on_sigterm()
     try:
         problem = Problem.load(parsed.config)
         output = parsed.output or default_output(problem.name)
@@ -142,9 +149,13 @@ def main(arguments: list[str]) -> int:
         # A mistake in the user's files, or Docker failing: one clear message, no traceback.
         print(f"Error: {error}", file=sys.stderr)
         return 1
+    except StopNow as stop:
+        # Every program evaluated so far is already saved; the containers are removed.
+        print(f"\nStopped at once ({stop}). Everything finished is in {output}")
+        return 130
     except KeyboardInterrupt:
-        # Every program evaluated so far is already saved.
-        print(f"\nStopped by Ctrl+C. The programs so far are in {output}")
+        # Ctrl+C before the iterations started.
+        print("\nStopped by Ctrl+C before the run started.")
         return 130
     print(f"Done. The run folder is {output}")
     return 0
