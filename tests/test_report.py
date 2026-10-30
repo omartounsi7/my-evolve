@@ -6,19 +6,27 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
+import matplotlib.pyplot as plt
 from fakes import FakeLLM
+from PIL import Image, ImageSequence
 
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import run
-from my_evolve.problem import Problem
+from my_evolve.problem import FeatureSpec, IslandSettings, Problem
 from my_evolve.program import Program, Result, Status
 from my_evolve.report import (
+    GridSnapshot,
     ReportError,
     RunData,
     best_at_snapshots,
+    colour_scale,
+    draw_grids,
+    grid_snapshots,
     load_run,
     snapshot_counts,
     write_report,
@@ -66,7 +74,8 @@ class ReportTest(unittest.TestCase):
         self.folder = Path(self.enterContext(tempfile.TemporaryDirectory()))
 
     def test_the_report_of_a_run(self) -> None:
-        """progress.png, and the best program's output at 0, 2, 4 and the end, 5."""
+        """progress.png, the best program's output and the grids at 0, 2, 4 and the end, 5,
+        and the grids' animation."""
         replies: list[str | Exception] = [
             reply_returning("3"),
             reply_returning("2"),
@@ -86,11 +95,18 @@ class ReportTest(unittest.TestCase):
                 "output_0002.png",
                 "output_0004.png",
                 "output_0005.png",
+                "grids_0000.png",
+                "grids_0002.png",
+                "grids_0004.png",
+                "grids_0005.png",
+                "grids.gif",
             ],
         )
+        with Image.open(output / "report" / "grids.gif") as animation:
+            self.assertEqual(len(list(ImageSequence.Iterator(animation))), 4)
         self.assertEqual((output / "report" / "progress.png").read_bytes()[:8], PNG_START)
         # The toy's visualize writes the number the best program returns.
-        values = [(output / "report" / name).read_text() for name in names[1:]]
+        values = [(output / "report" / name).read_text() for name in names[1:5]]
         self.assertEqual(values, ["1.0\n", "3\n", "7\n", "7\n"])
         self.assertEqual(
             sorted(path.name for path in output.iterdir()), sorted([*before, "report"])
@@ -117,7 +133,7 @@ class ReportTest(unittest.TestCase):
             timeout=120,
         )
         self.assertEqual(finished.returncode, 0, finished.stderr)
-        self.assertIn("3 files written", finished.stdout)
+        self.assertIn("6 files written", finished.stdout)
         missing = subprocess.run(
             [sys.executable, str(REPORT_SCRIPT), str(self.folder)],
             capture_output=True,
@@ -145,6 +161,67 @@ class SnapshotTest(unittest.TestCase):
         problem = Problem.load(TOY_FOLDER / "problem.yaml")
         run_data = RunData(problem, [initial, child], history, None)
         self.assertEqual(best_at_snapshots(run_data), [(0, initial), (3, child)])
+
+
+def child(parent: Program, score: float, iteration: int, nodes: int) -> Program:
+    """Return a working child on island 0, of that many syntax-tree nodes."""
+    result = Result(Status.OK, score=score)
+    return Program.new_child(
+        parent, f"x = {score}\n", result, iteration, island=0, code_complexity=nodes
+    )
+
+
+class GridSnapshotTest(unittest.TestCase):
+    def setUp(self) -> None:
+        toy = Problem.load(TOY_FOLDER / "problem.yaml")
+        grid = (FeatureSpec("code_complexity", 0.0, 4.0, 4),)
+        self.problem = replace(
+            toy, snapshot_every=2, islands=IslandSettings(count=2), grid_features=grid
+        )
+        initial = Program("x = 1\n", Result(Status.OK, score=1.0), code_complexity=1)
+        self.programs = [initial, initial.copy_to(0, 0), initial.copy_to(1, 0)]
+
+    def test_snapshots_follow_the_history_and_precede_migrants(self) -> None:
+        """Iteration 2 is skipped: snapshot 2 comes before the migrant of count 2."""
+        first = child(self.programs[1], 2.0, 1, nodes=2)
+        third = child(self.programs[1], 3.0, 3, nodes=4)
+        migrant = first.copy_to(1, 2)
+        programs = [*self.programs, first, migrant, third]
+        history = [
+            HistoryRow(1, 1, first.id, "ok", 2.0, 2.0, first.id, "m"),
+            HistoryRow(2, 2, "", "skipped", None, 2.0, first.id, "m"),
+            HistoryRow(3, 3, third.id, "ok", 3.0, 3.0, third.id, "m"),
+        ]
+        snapshots = grid_snapshots(RunData(self.problem, programs, history, None))
+        self.assertEqual([snapshot.count for snapshot in snapshots], [0, 2, 3])
+        self.assertEqual(snapshots[0].islands, [{(0,): 1.0}, {(0,): 1.0}])
+        self.assertEqual(snapshots[1].islands, [{(0,): 1.0, (1,): 2.0}, {(0,): 1.0}])
+        self.assertEqual(
+            snapshots[2].islands,
+            [{(0,): 1.0, (1,): 2.0, (2,): 3.0}, {(0,): 1.0, (1,): 2.0}],
+        )
+        self.assertEqual(colour_scale(programs), (1.0, 3.0))
+
+    def test_a_3d_grid_is_drawn(self) -> None:
+        """One square per bin of the third feature, for each island."""
+        features = (
+            FeatureSpec("a", 0.0, 1.0, 5),
+            FeatureSpec("b", 0.0, 1.0, 5),
+            FeatureSpec("c", -1.0, 1.0, 3),
+        )
+        snapshot = GridSnapshot(10, [{(0, 1, 2): 0.5, (4, 4, 0): 0.9}, {}])
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "grids.png"
+            # Keep the figure open, to look at it.
+            with mock.patch("my_evolve.report.plt.close") as close:
+                draw_grids(snapshot, features, (0.5, 0.9), path)
+            self.assertEqual(path.read_bytes()[:8], PNG_START)
+        figure = close.call_args.args[0]
+        self.addCleanup(plt.close, figure)
+        # Two islands of three squares, and the colour bar.
+        self.assertEqual(len(figure.axes), 7)
+        self.assertEqual(figure.axes[0].get_title(loc="left"), "island 0, c\n-1 to -0.333")
+        self.assertEqual(figure.axes[5].get_title(loc="left"), "island 1, c\n0.333 to 1")
 
 
 if __name__ == "__main__":

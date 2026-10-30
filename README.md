@@ -103,6 +103,8 @@ draws into the run folder's `report/` folder, with matplotlib:
 |---|---|
 | `progress.png` | The best score so far against completed iterations, with every working child's score as a dot |
 | `output_0010.png`, ... | The best program's output at every snapshot and at the end, if the evaluation file defines `visualize(output_data, path)`: circle packing's draws the circles |
+| `grids_0010.png`, ... | Every island's MAP-Elites grid at every snapshot and at the end: an empty cell white, an occupied one blue, deeper for higher scores, on one scale for the whole run; a 3D grid as one square per bin of its third feature |
+| `grids.gif` | The grid images, one after another |
 
 The run folder itself is only read, so a run still in progress can be reported on.
 
