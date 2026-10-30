@@ -173,6 +173,7 @@ class LeftoverTest(unittest.TestCase):
             time.sleep(0.05)
         session.process.kill()
         session.process.wait()
+        session.close()
         time.sleep(3)
         self.assertEqual(len(self.containers_of(sandbox.run_id)), 1)
         while self.containers_of(sandbox.run_id) and time.monotonic() < started + 30:
