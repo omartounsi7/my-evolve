@@ -20,7 +20,13 @@ thread, which does all the bookkeeping, and a worker thread, which does the wait
 5. main: store the child; snapshot the best program, or migrate, when due.
 
 Only the main thread uses the database and the run folder. Everything is saved as it
-happens (storage.py), and logged to the console and log.txt (logs.py). The run ends with
+happens (storage.py), and logged to the console and log.txt (logs.py).
+
+Errors are recorded and the run goes on (D38): an unexpected exception that is not the
+program's fault (in a worker, in the checks, in the evaluation) gives the child the
+status error, or, before a child exists, records the iteration as an error; too many
+in a row stop the run. An exception in the main thread's own bookkeeping (the disk
+refusing a write) stops the run at once. The run ends with
 a summary: iterations done and why the run stopped, the best score, the children by
 status, and the tokens and cost of each model (D51).
 """
@@ -44,7 +50,7 @@ from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLM, Ensemble, LLMError, LLMReply, NoModelLeft
 from my_evolve.logs import setup_logging, stop_logging
 from my_evolve.problem import ModelSettings, Problem
-from my_evolve.program import LLMUsage, Origin, Program, Result, new_id
+from my_evolve.program import LLMUsage, Origin, Program, Result, Status, new_id
 from my_evolve.prompt import Prompt, PromptBuilder
 from my_evolve.reply_parser import ParsedReply, parse_reply
 from my_evolve.storage import HistoryRow, RunInfo, Storage
@@ -263,6 +269,8 @@ class Loop:
         # duplicate check also sees them, so two identical children in flight are not
         # both evaluated
         self.pending: dict[str, str] = {}
+        # Iterations in a row that ended in an error, not the program's fault (D38)
+        self.errors_in_a_row: int = 0
 
     @property
     def db(self) -> Database:
@@ -349,21 +357,29 @@ class Loop:
     def after_proposal(self, state: IterationState, task: TaskResult) -> bool:
         """Handle the model's reply (main thread); return True if the child must be evaluated.
 
-        A failed call skips the iteration; a child that fails the checks is stored as
-        rejected; otherwise its fingerprint joins those in flight, and it is evaluated.
+        A failed call skips the iteration; any other exception in the worker records the
+        iteration as an error. A child that fails the checks is stored as rejected, and
+        one the checks themselves fail on gets the status error; otherwise its fingerprint
+        joins those in flight, and it is evaluated.
         """
         if isinstance(task.error, LLMError):
             self.ensemble.record_failure(state.llm.name)
             self.skip(state, task.error)
             return False
         if task.error is not None:
-            raise task.error
+            self.fail(state, task.error)
+            return False
         state.reply, state.parsed = task.value
         self.ensemble.record_success(state.llm.name)
         known = {**self.db.fingerprints, **self.pending}
-        state.checks = check_child(
-            state.parsed.code, self.initial_code, self.problem.entry_functions, known
-        )
+        try:
+            state.checks = check_child(
+                state.parsed.code, self.initial_code, self.problem.entry_functions, known
+            )
+        except Exception as error:
+            state.checks = ChildChecks(None, None)
+            self.finish(state, Result.failure(Status.ERROR, f"checks: {error!r}"))
+            return False
         if state.checks.reason is not None:
             self.finish(state, Result.rejected(state.checks.reason))
             return False
@@ -393,6 +409,7 @@ class Loop:
         )
         self.store(child)
         self.completed += 1
+        self.count_error(result.status is Status.ERROR)
         self.storage.append_llm_call(
             {
                 "iteration": state.number,
@@ -422,6 +439,39 @@ class Loop:
         )
         self.after_completion()
 
+    def fail(self, state: IterationState, error: BaseException) -> None:
+        """Record an iteration that failed before having a child, not through the program's
+        fault (main thread): it counts as completed, and as an error in a row (D38)."""
+        self.completed += 1
+        self.count_error(True)
+        self.storage.append_llm_call(
+            {
+                "iteration": state.number,
+                "user_message": state.prompt.user,
+                "program_id": None,
+                "model": state.llm.name,
+                "reply": None,
+                "error": repr(error),
+            }
+        )
+        self.storage.append_history(self.history_row(state, None, "error"))
+        logger.info(
+            "Iteration %d/%d, island %d, %s: error: %r",
+            state.number,
+            self.iterations,
+            state.island,
+            state.llm.name,
+            error,
+        )
+        self.after_completion()
+
+    def count_error(self, is_error: bool) -> None:
+        """Count an error in a row, or start the count again; stop the run at the limit."""
+        self.errors_in_a_row = self.errors_in_a_row + 1 if is_error else 0
+        if self.errors_in_a_row >= self.problem.max_errors_in_a_row and self.stop_reason is None:
+            logger.info("Stopping: %d errors in a row", self.errors_in_a_row)
+            self.stop_reason = "too many errors in a row"
+
     def skip(self, state: IterationState, error: BaseException) -> None:
         """Record an iteration that produced no child (main thread): it still counts (D34)."""
         self.completed += 1
@@ -435,7 +485,7 @@ class Loop:
                 "error": str(error),
             }
         )
-        self.storage.append_history(self.history_row(state, None))
+        self.storage.append_history(self.history_row(state, None, "skipped"))
         logger.info(
             "Iteration %d/%d, island %d, %s: skipped, no reply (%s)",
             state.number,
@@ -446,14 +496,17 @@ class Loop:
         )
         self.after_completion()
 
-    def history_row(self, state: IterationState, child: Program | None) -> HistoryRow:
-        """Return the history row of a completed iteration; child is None if it was skipped."""
+    def history_row(
+        self, state: IterationState, child: Program | None, outcome: str = ""
+    ) -> HistoryRow:
+        """Return the history row of a completed iteration; without a child, its outcome:
+        "skipped" (no reply) or "error"."""
         best = self.db.best()
         return HistoryRow(
             iteration=state.number,
             completed=self.completed,
             program_id=child.id if child else "",
-            status=child.result.status.value if child else "skipped",
+            status=child.result.status.value if child else outcome,
             score=child.result.score if child else None,
             best_score=self.db.best_score(),
             best_id=best.id if best else "",
@@ -512,9 +565,10 @@ class Loop:
                         "evaluate", state.number, self.evaluator.evaluate, state.parsed.code
                     )
                     continue
+            elif task.error is not None:
+                # The evaluator never raises because of a program: this is not its fault.
+                self.finish(state, Result.failure(Status.ERROR, f"evaluation: {task.error!r}"))
             else:
-                if task.error is not None:
-                    raise task.error
                 self.finish(state, task.value)
             del in_flight[task.iteration]
         return self.stop_reason or "every iteration done"

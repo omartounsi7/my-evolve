@@ -259,6 +259,17 @@ class ProblemTest(unittest.TestCase):
         self.assertEqual(problem.output_feature_names, ("radii_spread", "c"))
         self.assertEqual(Problem.from_dict(valid_data()).output_feature_names, ())
 
+    def test_top_level_settings_with_defaults(self) -> None:
+        problem = Problem.from_dict(valid_data())
+        self.assertEqual((problem.snapshot_every, problem.max_errors_in_a_row), (10, 3))
+        data = valid_data()
+        data.update(snapshot_every=5, max_errors_in_a_row=1)
+        problem = Problem.from_dict(data)
+        self.assertEqual((problem.snapshot_every, problem.max_errors_in_a_row), (5, 1))
+        data["max_errors_in_a_row"] = 0
+        with self.assertRaisesRegex(ProblemError, "'max_errors_in_a_row'"):
+            Problem.from_dict(data)
+
     def test_the_islands_section(self) -> None:
         islands = Problem.from_dict(valid_data()).islands
         self.assertEqual(

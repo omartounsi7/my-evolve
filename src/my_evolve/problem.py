@@ -8,6 +8,8 @@ The problem file is written in YAML. For now it holds:
     entry_functions: [run_packing]         # the functions every program must define
     packages: [numpy==2.5.4]               # optional: what programs may import, exact versions
     snapshot_every: 10                     # optional: completed iterations between snapshots
+    max_errors_in_a_row: 3                 # optional: errors (not the program's fault) that
+                                           #   stop the run when they come in a row
     llm:                                   # laid out like openevolve's llm section
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
       api_key: ${ANTHROPIC_API_KEY}        # optional: the variable holding the key
@@ -250,6 +252,8 @@ class Problem:
     entry_functions: tuple[str, ...] = ()
     # How many completed iterations pass between two snapshots of the best program (D47)
     snapshot_every: int = 10
+    # How many iterations in a row ending in an error, not the program's fault, stop the run
+    max_errors_in_a_row: int = 3
     # How programs are evaluated
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
     # The limits of the Docker sandbox
@@ -293,6 +297,7 @@ class Problem:
             optional={
                 "packages",
                 "snapshot_every",
+                "max_errors_in_a_row",
                 "evaluation",
                 "sandbox",
                 "prompt",
@@ -349,6 +354,7 @@ class Problem:
             description=checked_text(top, "description", "the problem file"),
             entry_functions=checked_entry_functions(top["entry_functions"]),
             snapshot_every=checked_count(top, "snapshot_every", "the problem file", 10),
+            max_errors_in_a_row=checked_count(top, "max_errors_in_a_row", "the problem file", 3),
             llm=build_llm(top["llm"]),
             packages=checked_packages(top.get("packages", [])),
             evaluation=EvaluationSettings(

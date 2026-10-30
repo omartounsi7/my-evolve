@@ -26,9 +26,9 @@ from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import RunError, run, summary
 from my_evolve.problem import IslandSettings, ParentSettings, Problem
-from my_evolve.program import Origin, Status
+from my_evolve.program import Origin, Result, Status
 from my_evolve.sandbox import LocalSandbox
-from my_evolve.storage import Storage
+from my_evolve.storage import HistoryRow, Storage
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
@@ -353,6 +353,79 @@ class LoopTest(unittest.TestCase):
         )
         self.assertEqual([child.result.status for child in children], [Status.OK, Status.REJECTED])
         self.assertEqual(children[1].result.error, f"same program as {children[0].id}")
+
+    def run_toy_with(
+        self, replies: list[str | Exception], iterations: int, evaluator: Evaluator | None = None
+    ) -> tuple[Database, str]:
+        """Evolve the toy problem with these replies; return the database and the console."""
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            database = run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([FakeLLM(replies)], [1.0], 3),
+                evaluator=evaluator
+                or Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=iterations,
+                output=self.output,
+                seed=0,
+            )
+        return database, console.getvalue()
+
+    def test_an_unexpected_exception_is_recorded_and_the_run_goes_on(self) -> None:
+        """An exception in a worker, other than an LLM failure, records the iteration as an
+        error; an exception in the evaluation gives the child the status error."""
+
+        class BreakingEvaluator(Evaluator):
+            def evaluate(self, code: str) -> Result:
+                if "return 8" in code:
+                    raise RuntimeError("the evaluator broke")
+                return super().evaluate(code)
+
+        evaluator = BreakingEvaluator(
+            TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT
+        )
+        replies: list[str | Exception] = [
+            RuntimeError("the worker broke"),
+            reply_returning("8"),
+            reply_returning("5"),
+        ]
+        database, console = self.run_toy_with(replies, 3, evaluator)
+        self.assertIn("Iteration 1/3, island 0, fake-model: error: RuntimeError", console)
+        children = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        self.assertEqual([child.result.status for child in children], [Status.ERROR, Status.OK])
+        self.assertIn(
+            "evaluation: RuntimeError('the evaluator broke')", children[0].result.error or ""
+        )
+        with (self.output / "history.csv").open() as file:
+            self.assertEqual(
+                [row["status"] for row in csv.DictReader(file)], ["error", "error", "ok"]
+            )
+
+    def test_three_errors_in_a_row_stop_the_run(self) -> None:
+        """Errors are counted apart from LLM failures, which do not break the count."""
+        broke = RuntimeError("broke")
+        down = LLMError("fake-model", "down")
+        replies: list[str | Exception] = [broke, down, broke, down, broke]
+        _, console = self.run_toy_with(replies, 10)
+        self.assertIn("Run finished: 5 iterations done, too many errors in a row.", console)
+        self.assertNotIn("dropped", console)
+
+    def test_an_error_in_the_main_thread_stops_the_run_at_once(self) -> None:
+        """The disk refusing a write is not an iteration's error: the run stops, and says so."""
+        original = Storage.append_history
+        calls = []
+
+        def failing(storage: Storage, row: HistoryRow) -> None:
+            calls.append(row)
+            if len(calls) == 2:
+                raise OSError("disk full")
+            original(storage, row)
+
+        with mock.patch.object(Storage, "append_history", failing), self.assertRaises(OSError):
+            self.run_toy_with([reply_returning(str(n)) for n in range(2, 6)], 4)
+        session = json.loads((self.output / "run.json").read_text())["sessions"][0]
+        self.assertEqual(session["end"], "failed: OSError('disk full')")
 
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""
