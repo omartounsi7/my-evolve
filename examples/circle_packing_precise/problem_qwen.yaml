@@ -9,8 +9,8 @@
 # - each program gets one stage of 5 minutes and 4 CPUs.
 # The initial program is OpenEvolve's, as in ../circle_packing.
 #
-# problem.yaml with Ollama's qwen models instead of Claude's, qwen3:8b getting most of
-# the requests, and a 2D grid (code size and radii spread). Everything else is the same.
+# problem.yaml with one of Ollama's qwen models, qwen3-coder:30b, instead of Claude's, and
+# a 2D grid (code size and radii spread). Everything else is the same.
 
 name: circle_packing_precise
 description: |
@@ -42,26 +42,21 @@ packages:
   - numpy==2.5.4
   - scipy==1.18.1
 
-# The LLMs: Appendix B's batch 1, two models on a local Ollama server, which keeps both
-# loaded, as in ../circle_packing/problem.yaml. Start Ollama with a context length that
-# holds the prompt and the reply:
+# The LLM: qwen3-coder:30b alone, from Appendix B's batch 1, on a local Ollama server.
+# Start Ollama with a context length that holds the prompt and the reply (with 32 GB of
+# GPU memory, recent versions use 32,768 by default):
 #   OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 llm:
   api_base: http://localhost:11434/v1
-  # Ollama's context, as started above: the prompt's budget (max_chars below) plus each
+  # Ollama's context, as started above: the prompt's budget (max_chars below) plus the
   # model's max_tokens must fit in it, or the problem file is refused.
   context_length: 32768
   models:
-    # Here qwen3:8b, which thinks before it answers, writes most of the children.
     - name: qwen3-coder:30b
-      weight: 0.2
-    - name: qwen3:8b
-      weight: 0.8
-      # It thinks at length: up to 14,600 tokens in the v1 branch's runs.
-      max_tokens: 20480
+      weight: 1.0
 
-# The prompt's budget, in characters: about 11,400 tokens, which with qwen3:8b's 20,480
-# fit in the 32,768 of the context.
+# The prompt's budget, in characters: about 11,400 tokens, which with the reply's 16,384
+# (max_tokens, by default) fit in the 32,768 of the context.
 prompt:
   max_chars: 40000
 
