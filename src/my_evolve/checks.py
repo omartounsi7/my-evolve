@@ -115,6 +115,38 @@ class ChildChecks:
     reason: str | None
     # The hash of its syntax tree; None if it does not compile
     fingerprint: str | None
+    # Its syntax-tree nodes inside the evolve blocks (D17); None if not known
+    code_complexity: int | None = None
+
+
+def block_line_ranges(code: str) -> list[tuple[int, int]]:
+    """Return the first and last line numbers (from 1) of each evolve block's contents."""
+    ranges = []
+    start = 0
+    for number, line in enumerate(code.splitlines(), start=1):
+        if line.strip() == START_MARKER:
+            start = number + 1
+        elif line.strip() == END_MARKER:
+            ranges.append((start, number - 1))
+    return ranges
+
+
+def count_block_nodes(tree: ast.Module, code: str) -> int:
+    """Return the number of syntax-tree nodes inside the evolve blocks: the code feature (D17).
+
+    A node counts if its first and last lines both fall inside one block. Nodes without
+    a position (contexts such as Load, operators such as Add) are not counted.
+    """
+    ranges = block_line_ranges(code)
+    count = 0
+    for node in ast.walk(tree):
+        first = getattr(node, "lineno", None)
+        last = getattr(node, "end_lineno", None)
+        if first is None or last is None:
+            continue
+        if any(start <= first and last <= end for start, end in ranges):
+            count += 1
+    return count
 
 
 def fingerprint(tree: ast.Module) -> str:
@@ -155,11 +187,16 @@ def check_child(
     difference = same_outside_code(code, initial_code)
     if difference is not None:
         return ChildChecks(difference, tree_hash)
+    complexity = count_block_nodes(tree, code)
     missing = [name for name in entry_functions if name not in defined_functions(tree)]
     if missing:
         return ChildChecks(
-            f"the program must define the function {missing[0]}() at its top level", tree_hash
+            f"the program must define the function {missing[0]}() at its top level",
+            tree_hash,
+            complexity,
         )
     if tree_hash in known_fingerprints:
-        return ChildChecks(f"same program as {known_fingerprints[tree_hash]}", tree_hash)
-    return ChildChecks(None, tree_hash)
+        return ChildChecks(
+            f"same program as {known_fingerprints[tree_hash]}", tree_hash, complexity
+        )
+    return ChildChecks(None, tree_hash, complexity)

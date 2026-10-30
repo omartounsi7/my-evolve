@@ -140,7 +140,13 @@ def run(
         raise RunError(f"a model did not answer its check: {error}") from None
     # The run's random generator: every draw of the run comes from it (D39)
     rng = random.Random(seed)
-    database = Database(rng, problem.parents, problem.islands)
+    database = Database(
+        rng,
+        problem.parents,
+        problem.islands,
+        problem.grid_features,
+        reference_nodes=checks.code_complexity or 1,
+    )
     prompt_builder = PromptBuilder(problem)
 
     def store(program: Program) -> None:
@@ -151,7 +157,10 @@ def run(
             write_best_program(output, program)
 
     initial = Program(
-        initial_code, evaluator.evaluate(initial_code), fingerprint=checks.fingerprint
+        initial_code,
+        evaluator.evaluate(initial_code),
+        fingerprint=checks.fingerprint,
+        code_complexity=checks.code_complexity,
     )
     if not initial.result.is_ok:
         raise RunError(
@@ -206,6 +215,7 @@ def run(
             description=parsed.description,
             fingerprint=checks.fingerprint,
             example_ids=prompt.example_ids,
+            code_complexity=checks.code_complexity,
         )
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
