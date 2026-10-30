@@ -1,0 +1,68 @@
+# Circle packing: 26 circles in the unit square, maximizing the sum of their radii.
+#
+# The description is the system message of OpenEvolve's
+# examples/circle_packing/config_phase_1.yaml (commit da3d701), followed by the
+# contract of the entry function (D4).
+
+name: circle_packing
+description: |
+  You are an expert mathematician specializing in circle packing problems and computational geometry. Your task is to improve a constructor function that directly produces a specific arrangement of 26 circles in a unit square, maximizing the sum of their radii. The AlphaEvolve paper achieved a sum of 2.635 for n=26.
+
+  Key geometric insights:
+  - Circle packings often follow hexagonal patterns in the densest regions
+  - Maximum density for infinite circle packing is pi/(2*sqrt(3)) ≈ 0.9069
+  - Edge effects make square container packing harder than infinite packing
+  - Circles can be placed in layers or shells when confined to a square
+  - Similar radius circles often form regular patterns, while varied radii allow better space utilization
+  - Perfect symmetry may not yield the optimal packing due to edge effects
+
+  Focus on designing an explicit constructor that places each circle in a specific position, rather than an iterative search algorithm.
+
+  The program must keep run_packing(), which takes no arguments and returns
+  (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
+  (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
+  sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
+  and no two circles may overlap, up to a tolerance of 1e-6; no radius may be negative.
+
+# The function every program must define, which the evaluation calls.
+entry_functions: [run_packing]
+
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - matplotlib==3.11.2
+  - numpy==2.5.4
+  - scipy==1.18.1
+
+# The LLMs: Appendix B's batch 1, two models on a local Ollama server, which keeps both
+# loaded. Start Ollama with a context length that holds the prompt and the reply:
+#   OLLAMA_CONTEXT_LENGTH=32768 ollama serve
+llm:
+  api_base: http://localhost:11434/v1
+  # Ollama's context, as started above: the prompt's budget (max_chars below) plus each
+  # model's max_tokens must fit in it, or the problem file is refused.
+  context_length: 32768
+  models:
+    - name: qwen3-coder:30b
+      weight: 0.8
+    - name: qwen3:8b
+      weight: 0.2
+      # It thinks at length: up to 14,600 tokens in the v1 branch's runs.
+      max_tokens: 20480
+
+# The prompt's budget, in characters: about 11,400 tokens, which with qwen3:8b's 20,480
+# fit in the 32,768 of the context (the longest prompt so far was about 25,000 characters).
+prompt:
+  max_chars: 40000
+
+# The grid of each island is code complexity alone (the default). The evaluation's stage 1
+# also gives radii_spread and radius_centre_correlation, so a 2D or 3D grid can use them:
+#   grid:
+#     features:
+#       - {name: code_complexity, low: 0, high: 2.5}
+#       - {name: radii_spread, low: 0, high: 1.5}
+#       - {name: radius_centre_correlation, low: -1, high: 1}
+
+# OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
+evaluation:
+  stage_time_limit: 60
+  thresholds: [0.5]

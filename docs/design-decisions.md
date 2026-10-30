@@ -178,6 +178,12 @@ program is later shown in a prompt, its parent is usually absent. The reply may 
 (reasoning, comments); only the description and the code are kept (D68). A reply without a description is
 accepted if its code is usable. The description is shown in prompts (D26) and saved (D48).
 
+The first wording ("Describe the program on its own; do not mention any other program", inside the reply
+format) was not enough: 83 of 90 descriptions in Milestones 3 and 4 compared the program with another
+("This improved constructor…", "improves upon the original…"), several starting with the format's own
+words. The rule is now among the Rules, names the words to avoid, and the format's placeholder only says
+what to write.
+
 ---
 
 ## 4. The database and the choice of parents
@@ -205,8 +211,13 @@ programs (D21). Every program is kept (D22). CVT MAP-Elites may replace the fixe
 **Decision.** A fixed grid, known when the run starts and never changed. The problem file gives each feature
 a range (`low`, `high`) and a number of bins; a value outside the range goes to the nearest end bin.
 - `code_complexity` is normalized against the initial program: log2(nodes inside the blocks ÷ nodes inside
-  the initial program's blocks); default range −1 to +3 (half to eight times the initial size).
-- Circle packing ranges: `radii_spread` 0 to 1, `radius_centre_correlation` −1 to +1.
+  the initial program's blocks); default range 0 to 2.5 (the initial size to about 5.7 times it; 10 bins of
+  about 19% each). It was −1 to +3, but children only grew in the first plan's milestones (a log2 ratio of
+  0 to 1.31 for circle packing, 0.34 to 2.2 for function minimization), so the bins below 0 stayed empty
+  and each island used 2 or 3 of its 10 cells. A smaller child goes to the first bin.
+- Circle packing ranges: `radii_spread` 0 to 1.5, `radius_centre_correlation` −1 to +1. `radii_spread` was
+  0 to 1, but the initial program's is 1.105, and 2 of the 15 working children of Milestone 4 were above 1
+  (the highest 1.27): all of them shared the top bin.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
 
@@ -291,6 +302,12 @@ wording variations.
 **Decision.** A character budget for the whole prompt (default 60,000, in the problem file): over it, example
 programs are dropped, last first, with a warning in the log. Feedback and errors are each cut to 2,000
 characters (also in the problem file).
+
+A model may give its `context_length`, the tokens its server holds. A server such as Ollama silently cuts
+a prompt that does not fit, the system message first, so the budget plus the model's `max_tokens` must fit
+in it: counted at 3.5 characters per token (the fewest seen in the first plan's milestones, 3.55 to 4.49),
+a problem file that does not is refused. A prompt whose reported tokens, plus `max_tokens`, still exceed the
+context is reported in the log. Batch 1's problem files set 32,768 and a budget of 40,000 characters.
 
 ---
 
@@ -582,11 +599,11 @@ The entries are numbered D60 to D70 and D72 to D79, in the order of the modules,
 | top level | `name` (required), `description` (required; includes the entry functions' contract, D4), `entry_functions` (required, e.g. `[run_packing]`), `packages` (list of `name==version`, empty), `snapshot_every` (10, D47), `max_errors_in_a_row` (3, D38) |
 | `evaluation` | `stage_time_limit` (60 s, D41), `thresholds` (list: stage k+1 runs if stage k's score reaches the k-th value, D9) |
 | `sandbox` | `memory` (`1g`), `cpus` (1), `max_processes` (64), D41 |
-| `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from −1 to +3; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
+| `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from 0 to 2.5; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
 | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
 | `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
 | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |
-| `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
+| `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices, `context_length`, D30), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
 
 **Dataclasses**:
 
@@ -1047,8 +1064,12 @@ than the stage's (D42):
 1. Keep a private copy of standard output for the protocol, then point standard output at standard
    error, so that what the program prints goes to the error output the host captures.
 2. Read the `load` message.
-3. Run the code in a fresh namespace whose `__name__` is `program`, so the program's
-   `if __name__ == "__main__":` part never runs.
+3. Run the code as a module named `program`, so the program's `if __name__ == "__main__":` part
+   never runs. The module is a real one: registered in `sys.modules`, its code saved as `program.py` in
+   a temporary folder (in `/tmp`, in a container) put first in the import path. Processes the program
+   starts (multiprocessing, `concurrent.futures`) thus find the functions it hands them: forked ones in
+   the modules they inherit, spawned ones by importing the file. In a plain namespace, pickling the
+   functions failed, and programs offered several CPUs fell back to one without saying so.
 4. Anything raised, exit requests included: send `load_failed` and stop.
 5. Send `loaded` with the program's top-level names and their kinds.
 6. For each following message: look the name up in the namespace; for `get`, take its value; for `call`,
@@ -1432,12 +1453,14 @@ than it does, using what the previous attempts show.
   Leave everything else, the markers included, exactly as it is. Return the whole file.
 - You may import Python's standard library and: {allowed packages}. Nothing else is installed.
 - Higher scores are better.
+- In the description, say what the program does, for a reader who has never seen any
+  other version of it. Never compare it with another program: no "improved",
+  "enhanced", "better than", "original", "previous" or "instead of".
 
 # Reply format
 Your reply must contain these two parts. You may write anything else around them.
 <DESCRIPTION>
-How this program solves the problem: its approach and main ideas. Describe the
-program on its own; do not mention any other program.
+The program's approach and main ideas, in a few sentences.
 </DESCRIPTION>
 ```python
 the complete program

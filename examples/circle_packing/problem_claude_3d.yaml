@@ -1,0 +1,74 @@
+# Circle packing: 26 circles in the unit square, maximizing the sum of their radii.
+#
+# The description is the system message of OpenEvolve's
+# examples/circle_packing/config_phase_1.yaml (commit da3d701), followed by the
+# contract of the entry function (D4).
+#
+# Batch 2's models (problem_claude.yaml) with a 3D MAP-Elites grid on every island, and
+# the models' prices, for the experiments of Phase 5.
+
+name: circle_packing
+description: |
+  You are an expert mathematician specializing in circle packing problems and computational geometry. Your task is to improve a constructor function that directly produces a specific arrangement of 26 circles in a unit square, maximizing the sum of their radii. The AlphaEvolve paper achieved a sum of 2.635 for n=26.
+
+  Key geometric insights:
+  - Circle packings often follow hexagonal patterns in the densest regions
+  - Maximum density for infinite circle packing is pi/(2*sqrt(3)) ≈ 0.9069
+  - Edge effects make square container packing harder than infinite packing
+  - Circles can be placed in layers or shells when confined to a square
+  - Similar radius circles often form regular patterns, while varied radii allow better space utilization
+  - Perfect symmetry may not yield the optimal packing due to edge effects
+
+  Focus on designing an explicit constructor that places each circle in a specific position, rather than an iterative search algorithm.
+
+  The program must keep run_packing(), which takes no arguments and returns
+  (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
+  (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
+  sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
+  and no two circles may overlap, up to a tolerance of 1e-6; no radius may be negative.
+
+# The function every program must define, which the evaluation calls.
+entry_functions: [run_packing]
+
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - matplotlib==3.11.2
+  - numpy==2.5.4
+  - scipy==1.18.1
+
+# The LLMs: Appendix B's batch 2, Claude Haiku 5.5 and Claude Sonnet 5.5, through
+# Anthropic's OpenAI-compatible endpoint. The key is read from the variable
+# ANTHROPIC_API_KEY. No temperature: these models reject one.
+llm:
+  api_base: https://api.anthropic.com/v1/
+  api_key: ${ANTHROPIC_API_KEY}
+  models:
+    # Prices in dollars per million input and output tokens, for the summary's cost
+    # (Haiku's are for prompts up to 100,000 tokens; these stay far below).
+    - name: claude-haiku-5-5
+      weight: 0.8
+      price_input: 0.10
+      price_output: 0.50
+    - name: claude-sonnet-5-5
+      weight: 0.2
+      price_input: 2.00
+      price_output: 10.00
+
+# The prompt's budget, in characters, the same as problem.yaml's, so that both batches
+# see the same prompts.
+prompt:
+  max_chars: 40000
+
+# One grid per island (islands.count, 3 by default), each with these three dimensions:
+# code size, how much the radii vary, and whether the big circles are in the middle (-1)
+# or at the edges (+1). 3 bins each, the default for three features: 27 cells per island.
+grid:
+  features:
+    - {name: code_complexity, low: 0, high: 2.5}
+    - {name: radii_spread, low: 0, high: 1.5}
+    - {name: radius_centre_correlation, low: -1, high: 1}
+
+# OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
+evaluation:
+  stage_time_limit: 60
+  thresholds: [0.5]
