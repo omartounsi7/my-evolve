@@ -318,5 +318,111 @@ class GridPopulationTest(unittest.TestCase):
         self.assertEqual(len(database.islands[0].elites()), 1)
 
 
+def islands_of(count: int, **migration: object) -> Database:
+    """Return a database of that many islands, with these migration settings."""
+    settings = IslandSettings(count=count, **migration)  # type: ignore[arg-type]
+    return Database(random.Random(0), None, settings, TEST_GRID)
+
+
+def fill(database: Database, island: int, scores: list[float]) -> list[Program]:
+    """Add working programs to an island, each in its own cell; return them."""
+    programs = [working(score, island=island, cell=cell) for cell, score in enumerate(scores)]
+    for program in programs:
+        database.add(program)
+    return programs
+
+
+class MigrationTest(unittest.TestCase):
+    def test_the_default_copies_one_non_best_elite_to_every_other_island(self) -> None:
+        """10% of 5 elites rounds down to 0: at least one migrates, never the island's best."""
+        database = islands_of(3)
+        programs = fill(database, 0, [1.0, 2.0, 5.0, 3.0, 4.0])
+        for _ in range(20):
+            arrivals = database.migrate(25)
+            from_island_0 = [
+                arrival
+                for arrival in arrivals
+                if arrival.parent_id in database.programs
+                and database.programs[arrival.parent_id].island == 0
+            ]
+            self.assertEqual(sorted(arrival.island or 0 for arrival in from_island_0), [1, 2])
+            self.assertEqual(len({arrival.parent_id for arrival in from_island_0}), 1)
+            self.assertNotEqual(from_island_0[0].parent_id, programs[2].id)
+        arrival = from_island_0[0]
+        self.assertEqual((arrival.origin, arrival.iteration), (Origin.COPY, 25))
+        self.assertEqual(arrival.code, database.programs[arrival.parent_id or ""].code)
+
+    def test_the_share_and_the_choice_of_migrants(self) -> None:
+        database = islands_of(2, migration_share=0.5, migrants="random")
+        fill(database, 0, [1.0, 2.0, 3.0, 4.0])
+        self.assertEqual(len(database.migrate(1)), 2)
+        database = islands_of(2, migrants="best")
+        programs = fill(database, 0, [1.0, 5.0, 3.0])
+        (arrival,) = database.migrate(1)
+        self.assertEqual(arrival.parent_id, programs[1].id)
+
+    def test_ring_destinations(self) -> None:
+        """With a ring, each island sends to the next, the last to the first."""
+        database = islands_of(3, destinations="ring", migrants="best")
+        for island in range(3):
+            fill(database, island, [1.0 + island])
+        arrivals = database.migrate(1)
+        routes = sorted((database.programs[a.parent_id or ""].island, a.island) for a in arrivals)
+        self.assertEqual(routes, [(0, 1), (1, 2), (2, 0)])
+
+    def test_an_arrival_takes_a_cell_only_if_empty_or_worse(self) -> None:
+        database = islands_of(2, migrants="best")
+        strong = fill(database, 0, [5.0])[0]
+        weak_here = working(1.0, island=1, cell=0)
+        database.add(weak_here)
+        stronger_there = working(9.0, island=1, cell=1)
+        database.add(stronger_there)
+        for arrival in database.migrate(1):
+            database.add(arrival)
+        island_1 = {elite.parent_id or elite.id for elite in database.islands[1].elites()}
+        self.assertIn(strong.id, island_1)
+        self.assertNotIn(weak_here.id, island_1)
+        island_0 = {elite.parent_id or elite.id for elite in database.islands[0].elites()}
+        # Island 1's best, 9.0 in cell 1, took the empty cell 1 of island 0.
+        self.assertIn(stronger_there.id, island_0)
+
+    def test_arrivals_do_not_migrate_again_in_the_same_round(self) -> None:
+        database = islands_of(3, migrants="best")
+        originals = {program.id for island in range(3) for program in fill(database, island, [1.0])}
+        self.assertTrue(all(arrival.parent_id in originals for arrival in database.migrate(1)))
+
+    def test_a_copy_starts_without_children_and_a_move_keeps_them(self) -> None:
+        for mode, origin, children in [("copy", Origin.COPY, 0), ("move", Origin.MOVE, 2)]:
+            with self.subTest(mode=mode):
+                database = islands_of(2, migrants="random", mode=mode, migration_share=0.5)
+                programs = fill(database, 0, [1.0, 2.0])
+                for program in programs:
+                    for _ in range(2):
+                        database.add(child_of(program, Status.FAILED))
+                (arrival,) = database.migrate(1)
+                database.add(arrival)
+                self.assertEqual(
+                    (arrival.origin, database.children_count(arrival.id)), (origin, children)
+                )
+
+    def test_a_move_leaves_its_grid_and_never_empties_an_island(self) -> None:
+        database = islands_of(2, migrants="random", mode="move", migration_share=1.0)
+        programs = fill(database, 0, [1.0, 2.0, 3.0])
+        arrivals = database.migrate(1)
+        self.assertEqual(len(arrivals), 2)
+        for arrival in arrivals:
+            database.add(arrival)
+        moved = {arrival.parent_id for arrival in arrivals}
+        self.assertEqual(len(database.islands[0].elites()), 1)
+        self.assertNotIn(database.islands[0].elites()[0].id, moved)
+        self.assertEqual(len(database.islands[1].elites()), 2)
+        self.assertTrue(all(program.id in database.programs for program in programs))
+
+    def test_one_island_has_nowhere_to_send(self) -> None:
+        database = islands_of(1)
+        fill(database, 0, [1.0, 2.0])
+        self.assertEqual(database.migrate(1), [])
+
+
 if __name__ == "__main__":
     unittest.main()

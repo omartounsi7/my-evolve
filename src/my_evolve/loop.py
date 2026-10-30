@@ -156,6 +156,18 @@ def run(
         if database.best_id == program.id:
             write_best_program(output, program)
 
+    def after_completion(completed: int) -> None:
+        """Migrate between islands when due: every migration_interval completed iterations,
+        skipped ones included (D23)."""
+        if completed % problem.islands.migration_interval != 0:
+            return
+        arrivals = database.migrate(completed)
+        for arrival in arrivals:
+            store(arrival)
+        if arrivals:
+            verb = "moved" if problem.islands.mode == "move" else "copied"
+            print(f"Migration after iteration {completed}: {len(arrivals)} programs {verb}")
+
     initial = Program(
         initial_code,
         evaluator.evaluate(initial_code),
@@ -194,6 +206,7 @@ def run(
                 f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: "
                 f"skipped, no reply ({error})"
             )
+            after_completion(iteration)
             continue
         ensemble.record_success(llm.name)
         parsed = parse_reply(reply.text, parent.code)
@@ -224,4 +237,5 @@ def run(
             f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: {describe(child)} "
             f"(best {best_score_text(database)})"
         )
+        after_completion(iteration)
     return database

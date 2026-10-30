@@ -186,6 +186,39 @@ class LoopTest(unittest.TestCase):
             self.assertEqual(child.island, database.programs[child.parent_id or ""].island)
         self.assertGreater(len({child.island for child in children}), 1)
 
+    def test_migrations_happen_every_interval_and_are_stored(self) -> None:
+        """Every 2 completed iterations, skipped ones included, copies are stored."""
+        problem = replace(
+            Problem.load(TOY_FOLDER / "problem.yaml"),
+            islands=IslandSettings(count=2, migration_interval=2, migrants="best"),
+        )
+        replies: list[str | Exception] = [
+            reply_returning("5"),
+            LLMError("fake-model", "down"),
+            reply_returning("6"),
+            reply_returning("7"),
+        ]
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console):
+            run(
+                problem=problem,
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([FakeLLM(replies)], [1.0], 3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=4,
+                output=self.output,
+                seed=2,
+            )
+        saved = [
+            json.loads(line) for line in (self.output / "programs.jsonl").read_text().splitlines()
+        ]
+        migrants = [
+            entry for entry in saved if entry["origin"] == "copy" and entry["iteration"] > 0
+        ]
+        self.assertEqual(sorted({entry["iteration"] for entry in migrants}), [2, 4])
+        self.assertEqual(len(migrants), 4)
+        self.assertIn("Migration after iteration 2: 2 programs copied", console.getvalue())
+
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""
         initial = (TOY_FOLDER / "initial_program.py").read_text()

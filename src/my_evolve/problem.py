@@ -28,6 +28,11 @@ The problem file is written in YAML. For now it holds:
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
     islands:                               # optional (D23)
       count: 3                             # islands, each with its own MAP-Elites grid
+      migration_interval: 25               # completed iterations between two migrations
+      migration_share: 0.1                 # the share of each island's elites that migrate
+      migrants: random_non_best            # or best, or random
+      destinations: all_others             # or ring: the next island only
+      mode: copy                           # or move: the migrant leaves its island
     grid:                                  # optional: the grid of each island (D17, D18)
       features:                            # its dimensions, 1 to 3
         - name: code_complexity            # nodes inside the evolve blocks, as log2 of
@@ -69,6 +74,10 @@ KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 # The rules that can choose parents
 PARENT_STRATEGIES = ("weighted",)
+# The choices of a migration (D23); the first of each is the default
+MIGRANT_CHOICES = ("random_non_best", "best", "random")
+DESTINATION_CHOICES = ("all_others", "ring")
+MIGRATION_MODES = ("copy", "move")
 # The grid's built-in feature: the syntax-tree nodes inside the evolve blocks (D17)
 CODE_COMPLEXITY = "code_complexity"
 # The most dimensions a grid may have, and each feature's bins when the problem file
@@ -167,10 +176,20 @@ DEFAULT_GRID = (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 10),)
 
 @dataclass(frozen=True)
 class IslandSettings:
-    """The islands: populations that evolve apart (D23)."""
+    """The islands: populations that evolve apart, and the migrations between them (D23)."""
 
     # How many islands there are
     count: int = 3
+    # How many completed iterations pass between two migrations
+    migration_interval: int = 25
+    # The share of each island's elites that migrate (at least one)
+    migration_share: float = 0.1
+    # Which elites migrate: "random_non_best" (any but the island's best), "best" or "random"
+    migrants: str = "random_non_best"
+    # Where they go: "all_others" (every other island) or "ring" (the next island)
+    destinations: str = "all_others"
+    # "copy" (the migrant also stays) or "move" (it leaves its island's grid)
+    mode: str = "copy"
 
 
 @dataclass(frozen=True)
@@ -275,7 +294,26 @@ class Problem:
             optional={"example_programs", "max_chars", "max_feedback_chars"},
         )
         prompt_defaults = PromptSettings()
-        islands = checked_section(top.get("islands", {}), "the islands section", optional={"count"})
+        islands = checked_section(
+            top.get("islands", {}),
+            "the islands section",
+            optional={
+                "count",
+                "migration_interval",
+                "migration_share",
+                "migrants",
+                "destinations",
+                "mode",
+            },
+        )
+        island_defaults = IslandSettings()
+        share = checked_positive_number(
+            islands, "migration_share", "the islands section", island_defaults.migration_share
+        )
+        if share > 1:
+            raise ProblemError(
+                f"'migration_share' in the islands section must be at most 1, got {share}"
+            )
         parents = checked_section(
             top.get("parents", {}), "the parents section", optional={"strategy", "lambda"}
         )
@@ -328,9 +366,21 @@ class Problem:
             ),
             grid_features=build_grid(top.get("grid", {})),
             islands=IslandSettings(
-                count=checked_count(
-                    islands, "count", "the islands section", IslandSettings().count
+                count=checked_count(islands, "count", "the islands section", island_defaults.count),
+                migration_interval=checked_count(
+                    islands,
+                    "migration_interval",
+                    "the islands section",
+                    island_defaults.migration_interval,
                 ),
+                migration_share=share,
+                migrants=checked_choice(
+                    islands, "migrants", "the islands section", MIGRANT_CHOICES
+                ),
+                destinations=checked_choice(
+                    islands, "destinations", "the islands section", DESTINATION_CHOICES
+                ),
+                mode=checked_choice(islands, "mode", "the islands section", MIGRATION_MODES),
             ),
             sandbox=SandboxSettings(
                 memory=checked_memory(sandbox.get("memory", sandbox_defaults.memory)),
@@ -479,6 +529,14 @@ def build_model(values: dict[str, Any], where: str) -> ModelSettings:
         retries=checked_count(llm, "retries", where, defaults.retries, minimum=0),
         weight=checked_positive_number(llm, "weight", where, defaults.weight),
     )
+
+
+def checked_choice(section: dict[str, Any], key: str, where: str, choices: tuple[str, ...]) -> str:
+    """Return the value of a key that must be one of choices; the first one if absent."""
+    value = section.get(key, choices[0])
+    if value not in choices:
+        raise ProblemError(f"{key!r} in {where} must be one of {', '.join(choices)}, got {value!r}")
+    return str(value)
 
 
 def checked_number(section: dict[str, Any], key: str, where: str) -> float:

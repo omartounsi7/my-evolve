@@ -9,6 +9,11 @@ weighted rule (D19): programs score above or below the median, and programs alre
 tried often are tried less. The examples are other programs made on the island, drawn
 at random, failed ones and displaced elites included (D26): the LLM sees them as previous
 attempts, unlabelled.
+
+Every so often, islands exchange some of their elites (migration, D23): copies, or
+moves, that take a cell of their new island's grid only if it is empty or holds a
+lower score. Migrants are programs of their own, stored like any other, so a run can
+be rebuilt by adding its saved programs again, in order.
 """
 
 import math
@@ -133,10 +138,12 @@ class Database:
         self.children: dict[str, int] = {}
         # The id of the program with the highest score; the earliest one on a tie
         self.best_id: str | None = None
+        # How many islands there are, and how they exchange programs
+        self.island_settings: IslandSettings = islands or IslandSettings()
         # The islands
         self.islands: list[Island] = [
             Island(index, Grid(grid_features, reference_nodes))
-            for index in range((islands or IslandSettings()).count)
+            for index in range(self.island_settings.count)
         ]
         # The rule choosing parents
         self.selector: ParentSelector = make_selector(parents or ParentSettings())
@@ -149,7 +156,8 @@ class Database:
         A program made on an island joins that island's list, and, if it works, is
         offered its cell of the island's grid. An LLM child counts for its parent whatever
         its status (each cost an LLM call), unless it is an error, which is not the
-        program's fault (D19).
+        program's fault (D19). A moved migrant takes the program it moves out of its old
+        island's grid, and keeps its children count; a copy starts at 0 (D23).
         """
         self.programs[program.id] = program
         if program.island is not None:
@@ -162,6 +170,11 @@ class Database:
             and program.result.status is not Status.ERROR
         ):
             self.children[program.parent_id] = self.children.get(program.parent_id, 0) + 1
+        if program.origin is Origin.MOVE and program.parent_id is not None:
+            moved = self.programs[program.parent_id]
+            if moved.island is not None:
+                self.islands[moved.island].grid.remove(moved.id)
+            self.children[program.id] = self.children_count(moved.id)
         score = program.result.score
         if not program.result.is_ok or score is None:
             return
@@ -191,6 +204,59 @@ class Database:
         The initial program itself belongs to no island (D23).
         """
         return [initial.copy_to(island.index, iteration=0) for island in self.islands]
+
+    def choose_migrants(self, island: Island) -> list[Program]:
+        """Return the elites of an island that migrate this time (D23).
+
+        Its best for "best"; otherwise migration_share of its elites, rounded down but at
+        least one, drawn among all its elites ("random") or all but its best
+        ("random_non_best"); fewer if there are not that many. Moves always leave the
+        island one elite at least, so that it keeps a parent to draw.
+        """
+        settings = self.island_settings
+        elites = island.elites()
+        best = island.best()
+        if settings.migrants == "best":
+            candidates = [best] if best is not None else []
+        elif settings.migrants == "random":
+            candidates = elites
+        else:
+            candidates = [elite for elite in elites if elite is not best]
+        count = min(max(1, math.floor(settings.migration_share * len(elites))), len(candidates))
+        if settings.mode == "move":
+            count = min(count, len(elites) - 1)
+        return self.rng.sample(candidates, max(count, 0))
+
+    def destinations(self, island: int) -> list[int]:
+        """Return the islands an island's migrants go to.
+
+        The next island for "ring", every other island for "all_others"; a moved program
+        can be in one place only, so it goes to the first of them alone.
+        """
+        count = len(self.islands)
+        if self.island_settings.destinations == "ring":
+            targets = [(island + 1) % count]
+        else:
+            targets = [other for other in range(count) if other != island]
+        targets = [target for target in targets if target != island]
+        return targets[:1] if self.island_settings.mode == "move" else targets
+
+    def migrate(self, iteration: int) -> list[Program]:
+        """Return this migration's new records, for the run to add and store (D23, D63).
+
+        Every island's migrants are chosen first, then their copies (or moves) made, so
+        that an arrival never migrates again in the same round. Adding a record offers
+        the migrant its cell on the new island, which it takes only if the cell is empty
+        or holds a lower score. iteration is the number of completed iterations.
+        """
+        origin = Origin.MOVE if self.island_settings.mode == "move" else Origin.COPY
+        chosen = [(island.index, self.choose_migrants(island)) for island in self.islands]
+        return [
+            migrant.copy_to(destination, iteration, origin)
+            for index, migrants in chosen
+            for migrant in migrants
+            for destination in self.destinations(index)
+        ]
 
     def island_programs(self, island: int) -> list[Program]:
         """Return every program made on an island, in the order added."""

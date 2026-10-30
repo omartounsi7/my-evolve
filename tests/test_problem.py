@@ -251,7 +251,27 @@ class ProblemTest(unittest.TestCase):
         self.assertEqual(Problem.from_dict(valid_data()).output_feature_names, ())
 
     def test_the_islands_section(self) -> None:
-        self.assertEqual(Problem.from_dict(valid_data()).islands.count, 3)
+        islands = Problem.from_dict(valid_data()).islands
+        self.assertEqual(
+            (islands.count, islands.migration_interval, islands.migration_share),
+            (3, 25, 0.1),
+        )
+        self.assertEqual(
+            (islands.migrants, islands.destinations, islands.mode),
+            ("random_non_best", "all_others", "copy"),
+        )
+        for wrong, error in [
+            ({"migration_share": 1.5}, "at most 1"),
+            ({"migration_share": 0}, "above 0"),
+            ({"migrants": "worst"}, "must be one of random_non_best, best, random"),
+            ({"destinations": "nearest"}, "must be one of all_others, ring"),
+            ({"mode": "swap"}, "must be one of copy, move"),
+            ({"migration_interval": 0}, "'migration_interval'"),
+        ]:
+            data = valid_data()
+            data["islands"] = wrong
+            with self.subTest(value=wrong), self.assertRaisesRegex(ProblemError, error):
+                Problem.from_dict(data)
         data = valid_data()
         data["islands"] = {"count": 0}
         with self.assertRaisesRegex(ProblemError, "'count' in the islands section"):
