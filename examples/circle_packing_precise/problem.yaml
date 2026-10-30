@@ -1,26 +1,26 @@
-# Circle packing at full precision: 26 circles in the unit square, for going past the
-# best known packing (a sum of radii of 2.6359830849, found by the claude_3d_1 run).
+# Circle packing at full precision: 26 circles in the unit square, maximizing the sum of
+# their radii.
 #
 # What differs from ../circle_packing/problem_claude_3d.yaml:
-# - the evaluation (evaluation.py here) scores only legal geometry: violations are shrunk
-#   away instead of tolerated, and 1.0 is the best sum found so far;
-# - the description says where the problem stands, and what can still improve it;
-# - each program gets one stage of 5 minutes and 4 CPUs;
-# - the initial program is that best packing's program (initial_program.py here).
+# - the evaluation (evaluation.py here) scores the legal sum of the radii itself:
+#   violations are shrunk away instead of tolerated, and no reference divides the sum;
+# - the description says how the score is measured and what can improve a packing, and
+#   refers to no earlier result;
+# - each program gets one stage of 5 minutes and 4 CPUs.
+# The initial program is OpenEvolve's, as in ../circle_packing.
 
 name: circle_packing_precise
 description: |
   You are an expert mathematician specializing in circle packing problems, computational geometry and high-precision numerical optimization. Your task is to improve a program that produces an arrangement of 26 circles in a unit square, maximizing the sum of their radii.
 
-  Where the problem stands:
-  - The best sum found so far is 2.6359830849 (the AlphaEvolve paper reported 2.635; OpenEvolve, 2.635977). It is believed to be optimal or very close to it, so any improvement will be small, in the sixth decimal or beyond. Every such gain counts.
-  - The score is the legal sum of radii divided by 2.6359830849: a score above 1 beats the best packing known.
-  - The sum is measured exactly. The packing's worst violation (the most two circles overlap, or one sticks out of the square) is subtracted from every radius before summing, so a packing that relies on tolerance loses 26 times what it gains. Aim for packings that are exactly legal, with contacts that touch within about 1e-12.
+  How the score is measured:
+  - The score is the sum of the radii, measured exactly in 64-bit floats. Higher is better, and every gain counts, however small.
+  - Only legal geometry counts. The packing's worst violation (the most two circles overlap, or one sticks out of the square) is subtracted from every radius before summing, so a packing that relies on tolerance loses up to 26 times what it gains. Aim for packings that are exactly legal, with contacts that touch within about 1e-12.
 
-  What can still help:
-  - A different contact graph: which circles touch which, and which touch the walls. The best packings are rigid: every circle is held by its contacts.
+  What can improve a packing:
+  - Its contact graph: which circles touch which, and which touch the walls. Good packings are rigid: every circle is held by its contacts.
   - Polishing a candidate to full precision: solve the contact equations with Newton's method or a high-precision solver, rather than stopping a general optimizer at its default tolerance.
-  - Searching widely from many starting layouts (perturbed copies of the best packing, other row structures, random starts), then polishing only the best.
+  - Searching widely from many starting layouts (perturbed copies of good layouts, different row structures, random starts), then polishing only the best.
   - The program has 4 CPUs and 5 minutes; stop the search well before that limit.
 
   The program must keep run_packing(), which takes no arguments and returns
@@ -64,11 +64,9 @@ prompt:
 # One grid per island (islands.count, 3 by default), each with these three dimensions:
 # code size, how much the radii vary, and whether the big circles are in the middle (-1)
 # or at the edges (+1). 3 bins each, the default for three features: 27 cells per island.
-# Code size is centred on the initial program, already a long one: from half its size to
-# twice it.
 grid:
   features:
-    - {name: code_complexity, low: -1, high: 1}
+    - {name: code_complexity, low: 0, high: 2.5}
     - {name: radii_spread, low: 0, high: 1.5}
     - {name: radius_centre_correlation, low: -1, high: 1}
 

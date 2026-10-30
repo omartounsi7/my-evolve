@@ -1,9 +1,9 @@
 """The evaluation of circle packing at full precision: 26 circles in the unit square.
 
-A variant of ../circle_packing/evaluation.py for going past the best known packing,
-where gains are in the sixth decimal or beyond. That evaluation, a port of OpenEvolve's,
-lets circles overlap, or stick out of the square, by up to 1e-6: across 26 circles, that
-slack is worth more than any real gain left. Here only legal geometry counts:
+A variant of ../circle_packing/evaluation.py that scores the sum of the radii itself, of
+legal geometry only. That evaluation, a port of OpenEvolve's, divides the sum by a
+reference and lets circles overlap, or stick out of the square, by up to 1e-6: across 26
+circles, that slack is worth more than the gains near the best packings. Here:
 
 - the packing's worst violation (the most two circles overlap, or one sticks out of the
   square) is measured; every radius is then shrunk by it, which makes the packing legal,
@@ -11,9 +11,8 @@ slack is worth more than any real gain left. Here only legal geometry counts:
   0). Using the tolerance thus costs up to 26 times what it brings;
 - a violation above 1e-6, a wrong shape, a NaN or a negative radius is still an illegal
   packing (InvalidProgram), and an answer that breaks the contract a failure;
-- the score is that legal sum divided by 2.6359830849, the best legal sum found so far:
-  a score above 1 is a better packing than any found before. The sum is computed in
-  64-bit floats, whatever type the program returns.
+- the score is that legal sum, compared with nothing but the other programs' scores. It
+  is computed in 64-bit floats, whatever type the program returns.
 
 One stage: the program is called once. Its output features are those of the original
 evaluation, for the MAP-Elites grid, and its centres and radii are kept for the report.
@@ -30,9 +29,6 @@ from my_evolve.evaluation_api import InvalidProgram, ProgramFailure, StageResult
 # The function every program must define, and how many circles it must place
 ENTRY_FUNCTION = "run_packing"
 NUMBER_OF_CIRCLES = 26
-# The best legal sum of radii found so far, which scores 1.0: claude_3d_1's best packing,
-# whose worst violation is 2.8e-17 (round-off)
-BEST_KNOWN_SUM = 2.6359830849
 # The largest violation that is shrunk away rather than refused
 MAX_VIOLATION = 1e-6
 # The largest violation that floating-point round-off explains: still shrunk away, but the
@@ -129,10 +125,7 @@ def evaluate(namespace: Mapping[str, Any]) -> StageResult:
     legal_radii = np.maximum(radii - shrink, 0.0)
     legal_sum = float(np.sum(legal_radii))
     raw_sum = float(np.sum(radii))
-    feedback = [
-        f"Legal sum of radii: {legal_sum:.12f} (the best found so far, {BEST_KNOWN_SUM}, "
-        f"scores 1; the difference is {legal_sum - BEST_KNOWN_SUM:+.3e})."
-    ]
+    feedback = [f"Legal sum of radii, the score: {legal_sum:.12f}."]
     if 0 < shrink <= ROUND_OFF:
         feedback.append(
             f"The contacts touch within floating-point round-off (worst overlap {shrink:.1e})."
@@ -145,7 +138,7 @@ def evaluate(namespace: Mapping[str, Any]) -> StageResult:
     else:
         feedback.append(f"No violation: the closest contact leaves a gap of {-violation:.3e}.")
     return StageResult(
-        score=legal_sum / BEST_KNOWN_SUM,
+        score=legal_sum,
         metrics={
             "sum_radii": legal_sum,
             "raw_sum_radii": raw_sum,

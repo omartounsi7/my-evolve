@@ -1,6 +1,5 @@
 """Checks the example problems and the tests' toy problem, through their evaluation files."""
 
-import os
 import runpy
 import tempfile
 import unittest
@@ -116,12 +115,12 @@ def grid_packing(grow: float = 0.0) -> dict[str, Any]:
 class PreciseCirclePackingTest(unittest.TestCase):
     def setUp(self) -> None:
         self.evaluate = load_evaluate(PRECISE_FOLDER)
-        self.best = runpy.run_path(str(PRECISE_FOLDER / "evaluation.py"))["BEST_KNOWN_SUM"]
 
     def test_a_legal_packing_scores_its_sum(self) -> None:
+        """The score is the sum itself, divided by nothing."""
         result = self.evaluate(grid_packing())
-        self.assertAlmostEqual(result.metrics["sum_radii"], 2.5, places=12)
-        self.assertAlmostEqual(result.score, 2.5 / self.best, places=12)
+        self.assertAlmostEqual(result.score, 2.5, places=12)
+        self.assertEqual(result.score, result.metrics["sum_radii"])
         # Touching circles overlap by round-off, about 1e-17: that is not a violation to fix.
         self.assertIn("within floating-point round-off", result.feedback)
 
@@ -138,12 +137,14 @@ class PreciseCirclePackingTest(unittest.TestCase):
         with self.assertRaisesRegex(InvalidProgram, "overlap by 2.000e-06"):
             self.evaluate(grid_packing(grow=2e-6))
 
-    def test_the_initial_program_is_the_best_found(self) -> None:
-        """Its legal sum is the reference, 2.6359830849 (run on the host: about 45 s)."""
-        if not os.environ.get("MY_EVOLVE_SLOW_TESTS"):
-            self.skipTest("slow; set MY_EVOLVE_SLOW_TESTS=1")
+    def test_the_initial_program_is_openevolves(self) -> None:
+        """Its legal sum, about 0.9598, as the original evaluation finds it; nothing in it, or
+        in the evaluation, refers to an earlier result."""
         result = self.evaluate(run_program(PRECISE_FOLDER / "initial_program.py"))
-        self.assertAlmostEqual(result.metrics["sum_radii"], self.best, places=9)
+        self.assertAlmostEqual(result.score, 0.9598, places=3)
+        for name in ("initial_program.py", "evaluation.py"):
+            text = (PRECISE_FOLDER / name).read_text()
+            self.assertNotRegex(text, r"2\.63|AlphaEvolve improved")
 
 
 class ToyProblemTest(unittest.TestCase):

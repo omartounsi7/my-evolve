@@ -9,12 +9,13 @@ initial program, its evaluation file, and the problem file.
 | Function minimization: the global minimum of a function with many local minima | `function_minimization/` |
 | Circle packing at full precision, for going past the best packing known | `circle_packing_precise/` |
 
-`circle_packing_precise/` is my-evolve's own; the others are OpenEvolve's. It scores only
-legal geometry (a violation is subtracted from every radius rather than tolerated), with
-1.0 for the best legal sum found so far, 2.6359830849, by the `claude_3d_1` run; its
-initial program is that run's best program, and its problem file gives each program one
-stage of 5 minutes and 4 CPUs, Claude's models, and a 3D grid. Its scores are not
-comparable with `circle_packing/`'s.
+`circle_packing_precise/` is my-evolve's own; the others are OpenEvolve's. Its score is
+the sum of the radii itself, of legal geometry only (a violation is subtracted from every
+radius rather than tolerated), with no reference dividing it; neither its evaluation nor
+its prompt refers to any earlier result. Its initial program is OpenEvolve's, without the
+comment naming AlphaEvolve's score, and its problem file gives each program one stage of
+5 minutes and 4 CPUs, Claude's models, and a 3D grid. Its scores are sums of radii, not
+`circle_packing/`'s ratios.
 
 The other problems are OpenEvolve's, so that runs start from the same baseline as
 OpenEvolve's and can be compared with them (D3).
