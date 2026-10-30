@@ -73,6 +73,9 @@ from my_evolve.storage import HistoryRow, RunFolderError, RunInfo, Storage
 
 # The longest error shown on the console, in characters (programs.jsonl keeps it whole)
 MAX_CONSOLE_ERROR = 200
+# The decimals of the scores shown on the console: enough for gains in the tenth decimal,
+# where a problem near its optimum improves (circle_packing_precise)
+SCORE_DECIMALS = 10
 # How long the main thread waits for a finished task at a time, in seconds: short, so that
 # Ctrl+C reaches it promptly, Windows included (D53)
 WAIT_STEP_SECONDS = 0.2
@@ -106,7 +109,7 @@ def stop_on_sigterm() -> Any:
 def describe(program: Program) -> str:
     """Return the program's score, or its status and error in one short line, for the console."""
     if program.result.score is not None:
-        return f"score {program.result.score:.6f}"
+        return f"score {program.result.score:.{SCORE_DECIMALS}f}"
     lines = (program.result.error or "").splitlines()
     error = lines[0] if lines else "no error message"
     if len(error) > MAX_CONSOLE_ERROR:
@@ -117,7 +120,7 @@ def describe(program: Program) -> str:
 def best_score_text(database: Database) -> str:
     """Return the best score so far, for the console."""
     best_score = database.best_score()
-    return f"{best_score:.6f}" if best_score is not None else "none"
+    return f"{best_score:.{SCORE_DECIMALS}f}" if best_score is not None else "none"
 
 
 def model_cost(model: ModelSettings | None, input_tokens: int, output_tokens: int) -> str:

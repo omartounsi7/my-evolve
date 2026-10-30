@@ -134,8 +134,8 @@ class LoopTest(unittest.TestCase):
         )
 
         # The console has one line per iteration.
-        self.assertIn("Initial program: score 1.000000", console)
-        self.assertIn("Iteration 1/5, island 0, fake-model: score 5.000000 (best 5.0", console)
+        self.assertIn("Initial program: score 1.0000000000", console)
+        self.assertIn("Iteration 1/5, island 0, fake-model: score 5.0000000000 (best 5.0", console)
         self.assertIn("Iteration 2/5, island 0, fake-model: failed: ZeroDivisionError", console)
         self.assertIn(
             "Iteration 4/5, island 0, fake-model: skipped, no reply (fake-model: the server is",
@@ -605,7 +605,7 @@ class LoopTest(unittest.TestCase):
         self.assertNotIn("Iteration 1: island 0, parent", console)
         self.assertIn("INFO my_evolve.loop: Seed: 0", log)
         self.assertIn("Run finished: 3 iterations done, every iteration done.", console)
-        self.assertIn("Best score: 5.000000, found at iteration 1.", console)
+        self.assertIn("Best score: 5.0000000000, found at iteration 1.", console)
         self.assertIn("Children: 2 (1 failed, 1 ok).", console)
         self.assertRegex(console, r"fake-model: 2 replies, [\d,]+ input and \d+ output tokens\.")
 
