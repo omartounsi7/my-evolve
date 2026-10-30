@@ -210,6 +210,13 @@ class ProblemTest(unittest.TestCase):
             with self.subTest(section=section, value=wrong), self.assertRaises(ProblemError):
                 Problem.from_dict(data)
 
+    def test_the_islands_section(self) -> None:
+        self.assertEqual(Problem.from_dict(valid_data()).islands.count, 3)
+        data = valid_data()
+        data["islands"] = {"count": 0}
+        with self.assertRaisesRegex(ProblemError, "'count' in the islands section"):
+            Problem.from_dict(data)
+
     def test_the_parents_section(self) -> None:
         """The weighted rule with lambda 1 by default; unknown strategies are refused."""
         parents = Problem.from_dict(valid_data()).parents

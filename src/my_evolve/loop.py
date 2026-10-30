@@ -2,7 +2,8 @@
 
 Each iteration runs the six steps of the AlphaEvolve diagram:
 
-    parent, examples = database.sample(example_count)
+    island = database.sample_island()
+    parent, examples = database.sample(island, example_count)
     prompt = prompt_builder.build(parent, examples, best_score)
     reply = ensemble.draw(rng).complete(prompt)
     parsed = parse_reply(reply)          # the program and its description
@@ -139,7 +140,7 @@ def run(
         raise RunError(f"a model did not answer its check: {error}") from None
     # The run's random generator: every draw of the run comes from it (D39)
     rng = random.Random(seed)
-    database = Database(rng, problem.parents)
+    database = Database(rng, problem.parents, problem.islands)
     prompt_builder = PromptBuilder(problem)
 
     def store(program: Program) -> None:
@@ -160,10 +161,13 @@ def run(
     output.mkdir(parents=True, exist_ok=True)
     write_run_info(output, run_id, seed, prompt_builder.system_message)
     store(initial)
-    print(f"Initial program: {describe(initial)}")
+    for copy in database.seed_islands(initial):
+        store(copy)
+    print(f"Initial program: {describe(initial)}, copied to {len(database.islands)} islands")
 
     for iteration in range(1, iterations + 1):
-        parent, examples = database.sample(problem.prompt.example_programs)
+        island = database.sample_island()
+        parent, examples = database.sample(island, problem.prompt.example_programs)
         try:
             llm = ensemble.draw(rng)
         except NoModelLeft as error:
@@ -177,7 +181,10 @@ def run(
             ensemble.record_failure(llm.name)
             call.update(program_id=None, model=llm.name, reply=None, error=str(error))
             append_line(output / LLM_CALLS_FILE, call)
-            print(f"Iteration {iteration}/{iterations}, {llm.name}: skipped, no reply ({error})")
+            print(
+                f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: "
+                f"skipped, no reply ({error})"
+            )
             continue
         ensemble.record_success(llm.name)
         parsed = parse_reply(reply.text, parent.code)
@@ -194,16 +201,17 @@ def run(
             parsed.code,
             result,
             iteration,
-            usage,
-            parsed.description,
-            checks.fingerprint,
-            prompt.example_ids,
+            island=island,
+            llm=usage,
+            description=parsed.description,
+            fingerprint=checks.fingerprint,
+            example_ids=prompt.example_ids,
         )
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
         append_line(output / LLM_CALLS_FILE, call)
         print(
-            f"Iteration {iteration}/{iterations}, {llm.name}: {describe(child)} "
+            f"Iteration {iteration}/{iterations}, island {island}, {llm.name}: {describe(child)} "
             f"(best {best_score_text(database)})"
         )
     return database

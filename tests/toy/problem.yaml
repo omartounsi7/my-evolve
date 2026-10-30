@@ -9,3 +9,6 @@ llm:
   api_base: http://localhost:1/v1
   models:
     - name: fake-model
+# One island keeps the loop tests simple; the tests of islands set their own.
+islands:
+  count: 1

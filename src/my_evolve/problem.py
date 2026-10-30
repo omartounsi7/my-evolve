@@ -26,6 +26,8 @@ The problem file is written in YAML. For now it holds:
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
+    islands:                               # optional (D23)
+      count: 3                             # islands, each with its own population
     parents:                               # optional: how parents are chosen (D19)
       strategy: weighted                   # ShinkaEvolve's rule
       lambda: 1.0                          # how sharply it favours the better programs
@@ -129,6 +131,14 @@ class SandboxSettings:
 
 
 @dataclass(frozen=True)
+class IslandSettings:
+    """The islands: populations that evolve apart (D23)."""
+
+    # How many islands there are
+    count: int = 3
+
+
+@dataclass(frozen=True)
 class ParentSettings:
     """How parents are chosen (D19)."""
 
@@ -172,6 +182,8 @@ class Problem:
     prompt: PromptSettings = field(default_factory=PromptSettings)
     # How parents are chosen
     parents: ParentSettings = field(default_factory=ParentSettings)
+    # The islands
+    islands: IslandSettings = field(default_factory=IslandSettings)
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -193,7 +205,7 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "entry_functions", "llm"},
-            optional={"packages", "evaluation", "sandbox", "prompt", "parents"},
+            optional={"packages", "evaluation", "sandbox", "prompt", "parents", "islands"},
         )
         evaluation = checked_section(
             top.get("evaluation", {}),
@@ -211,6 +223,7 @@ class Problem:
             optional={"example_programs", "max_chars", "max_feedback_chars"},
         )
         prompt_defaults = PromptSettings()
+        islands = checked_section(top.get("islands", {}), "the islands section", optional={"count"})
         parents = checked_section(
             top.get("parents", {}), "the parents section", optional={"strategy", "lambda"}
         )
@@ -259,6 +272,11 @@ class Problem:
                 strategy=strategy,
                 lam=checked_positive_number(
                     parents, "lambda", "the parents section", ParentSettings().lam
+                ),
+            ),
+            islands=IslandSettings(
+                count=checked_count(
+                    islands, "count", "the islands section", IslandSettings().count
                 ),
             ),
             sandbox=SandboxSettings(

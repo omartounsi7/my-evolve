@@ -11,6 +11,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 from fakes import FakeLLM
@@ -19,8 +20,8 @@ from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import RunError, run
-from my_evolve.problem import Problem
-from my_evolve.program import Status
+from my_evolve.problem import IslandSettings, Problem
+from my_evolve.program import Origin, Status
 from my_evolve.sandbox import LocalSandbox
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
@@ -74,16 +75,21 @@ class LoopTest(unittest.TestCase):
         ]
         database, llm, console = run_toy(replies, self.output)
 
-        # The initial program and one child per iteration, except the skipped one.
+        # The initial program, its copy on the island, then one child per iteration,
+        # except the skipped one.
         programs = list(database.programs.values())
-        self.assertEqual([program.iteration for program in programs], [0, 1, 2, 3, 5])
+        self.assertEqual([program.iteration for program in programs], [0, 0, 1, 2, 3, 5])
+        self.assertEqual(
+            [program.origin for program in programs[:2]], [Origin.INITIAL, Origin.COPY]
+        )
         scores = [program.result.score for program in programs]
-        self.assertEqual(scores, [1.0, 5.0, None, None, 7.0])
-        self.assertIn("ZeroDivisionError", programs[2].result.error or "")
-        self.assertEqual(programs[3].result.status, Status.REJECTED)
-        self.assertIn("must define the function solve()", programs[3].result.error or "")
-        self.assertEqual((programs[1].description, programs[3].description), ("Returns 5.", None))
-        for child in programs[1:]:
+        self.assertEqual(scores, [1.0, 1.0, 5.0, None, None, 7.0])
+        children = programs[2:]
+        self.assertIn("ZeroDivisionError", children[1].result.error or "")
+        self.assertEqual(children[2].result.status, Status.REJECTED)
+        self.assertIn("must define the function solve()", children[2].result.error or "")
+        self.assertEqual((children[0].description, children[2].description), ("Returns 5.", None))
+        for child in children:
             parent = database.programs[child.parent_id or ""]
             self.assertEqual(child.generation, parent.generation + 1)
         best = database.best()
@@ -100,10 +106,11 @@ class LoopTest(unittest.TestCase):
 
         # The console has one line per iteration.
         self.assertIn("Initial program: score 1.000000", console)
-        self.assertIn("Iteration 1/5, fake-model: score 5.000000 (best 5.000000)", console)
-        self.assertIn("Iteration 2/5, fake-model: failed: ZeroDivisionError: division by", console)
+        self.assertIn("Iteration 1/5, island 0, fake-model: score 5.000000 (best 5.0", console)
+        self.assertIn("Iteration 2/5, island 0, fake-model: failed: ZeroDivisionError", console)
         self.assertIn(
-            "Iteration 4/5, fake-model: skipped, no reply (fake-model: the server is down)", console
+            "Iteration 4/5, island 0, fake-model: skipped, no reply (fake-model: the server is",
+            console,
         )
 
     def test_the_run_folder(self) -> None:
@@ -112,7 +119,7 @@ class LoopTest(unittest.TestCase):
         lines = (self.output / "programs.jsonl").read_text().splitlines()
         saved = [json.loads(line) for line in lines]
         self.assertEqual([entry["id"] for entry in saved], list(database.programs))
-        self.assertEqual([entry["result"]["score"] for entry in saved], [1.0, 4.0, 2.0])
+        self.assertEqual([entry["result"]["score"] for entry in saved], [1.0, 1.0, 4.0, 2.0])
         best_file = (self.output / "best_program.py").read_text()
         self.assertTrue(best_file.startswith("# Best program of the run: score 4.0, iteration 1"))
         self.assertIn("    return 4\n", best_file)
@@ -134,7 +141,7 @@ class LoopTest(unittest.TestCase):
                 seed=1,
             )
         self.assertEqual(len(bad.prompts), 3)
-        self.assertEqual(len(database.programs), 1 + 6)
+        self.assertEqual(len(database.programs), 2 + 6)
         self.assertIn("good-model: score", console.getvalue())
         # With no model left, the run stops before its last iterations.
         lonely = FakeLLM([down], name="lonely")
@@ -150,6 +157,35 @@ class LoopTest(unittest.TestCase):
             )
         self.assertIn("Stopping: every model has been dropped", console.getvalue())
 
+    def test_children_live_on_the_island_of_their_iteration(self) -> None:
+        """With three islands, each starts with a copy; a child lives on its parent's island."""
+        problem = replace(
+            Problem.load(TOY_FOLDER / "problem.yaml"), islands=IslandSettings(count=3)
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            database = run(
+                problem=problem,
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble(
+                    [FakeLLM([reply_returning(str(n)) for n in range(2, 8)])], [1.0], 3
+                ),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=6,
+                output=self.output,
+                seed=4,
+            )
+        copies = [
+            program for program in database.programs.values() if program.origin is Origin.COPY
+        ]
+        self.assertEqual(sorted(copy.island or 0 for copy in copies), [0, 1, 2])
+        children = [
+            program for program in database.programs.values() if program.origin is Origin.LLM
+        ]
+        self.assertEqual(len(children), 6)
+        for child in children:
+            self.assertEqual(child.island, database.programs[child.parent_id or ""].island)
+        self.assertGreater(len({child.island for child in children}), 1)
+
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""
         initial = (TOY_FOLDER / "initial_program.py").read_text()
@@ -159,18 +195,19 @@ class LoopTest(unittest.TestCase):
             reply_returning("5"),
         ]
         database, _, _ = run_toy(replies, self.output)
-        programs = list(database.programs.values())
+        first, copy, *children = database.programs.values()
         self.assertEqual(
-            [program.result.status for program in programs[1:]],
+            [child.result.status for child in children],
             [Status.OK, Status.REJECTED, Status.REJECTED],
         )
-        self.assertEqual(programs[2].result.error, f"same program as {programs[0].id}")
-        self.assertEqual(programs[3].result.error, f"same program as {programs[1].id}")
-        self.assertEqual(programs[2].result.duration, 0.0)
-        # Each child records the example programs its prompt showed.
-        shown = [set(program.example_ids) for program in programs[1:]]
-        self.assertEqual(shown[0], set())
-        self.assertEqual(shown[1], {programs[0].id, programs[1].id} - {programs[2].parent_id})
+        self.assertEqual(children[1].result.error, f"same program as {first.id}")
+        self.assertEqual(children[2].result.error, f"same program as {children[0].id}")
+        self.assertEqual(children[1].result.duration, 0.0)
+        # Each child records the example programs its prompt showed: programs of its island.
+        self.assertEqual(children[0].example_ids, ())
+        self.assertEqual(
+            set(children[1].example_ids), {copy.id, children[0].id} - {children[1].parent_id}
+        )
 
     def test_every_llm_call_is_saved(self) -> None:
         """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""

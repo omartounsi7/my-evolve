@@ -99,6 +99,19 @@ class LLMUsage:
         }
 
 
+class Origin(enum.Enum):
+    """How a program came to exist."""
+
+    # The problem's initial program
+    INITIAL = "initial"
+    # Written by the LLM: the only programs the checks and the children counts concern
+    LLM = "llm"
+    # Placed by the framework: the initial program on each island, or a copied migrant
+    COPY = "copy"
+    # A migrant moved to another island
+    MOVE = "move"
+
+
 def new_id() -> str:
     """Return a new, unique program id."""
     return str(uuid.uuid4())
@@ -115,11 +128,15 @@ class Program:
     code: str
     # How its evaluation ended
     result: Result
-    # The program it was made from; None for the initial program
+    # How it came to exist
+    origin: Origin = Origin.INITIAL
+    # The program it was made from (for a copy, the program copied); None for the initial one
     parent_id: str | None = None
-    # How many LLM rewrites separate it from the initial program
+    # The island it was made on (D23); None for the initial program, which belongs to none
+    island: int | None = None
+    # How many LLM rewrites separate it from the initial program; a copy keeps its original's
     generation: int = 0
-    # The iteration of the run that produced it; 0 for the initial program
+    # The iteration of the run that produced it; 0 for the initial program and its copies
     iteration: int = 0
     # The LLM call that wrote it; None for the initial program
     llm: LLMUsage | None = None
@@ -139,6 +156,8 @@ class Program:
         code: str,
         result: Result,
         iteration: int,
+        *,
+        island: int | None = None,
         llm: LLMUsage | None = None,
         description: str | None = None,
         fingerprint: str | None = None,
@@ -148,7 +167,9 @@ class Program:
         return cls(
             code=code,
             result=result,
+            origin=Origin.LLM,
             parent_id=parent.id,
+            island=island,
             generation=parent.generation + 1,
             iteration=iteration,
             llm=llm,
@@ -157,11 +178,32 @@ class Program:
             example_ids=example_ids,
         )
 
+    def copy_to(self, island: int, iteration: int, origin: Origin = Origin.COPY) -> "Program":
+        """Return a copy (or, with Origin.MOVE, a move) of this program onto an island.
+
+        The copy is a new program, with this one as its parent; its code, result,
+        generation, description and fingerprint are carried over. It is not evaluated
+        again.
+        """
+        return Program(
+            code=self.code,
+            result=self.result,
+            origin=origin,
+            parent_id=self.id,
+            island=island,
+            generation=self.generation,
+            iteration=iteration,
+            description=self.description,
+            fingerprint=self.fingerprint,
+        )
+
     def to_dict(self) -> dict[str, Any]:
         """Return the program as plain JSON values: one line of programs.jsonl."""
         return {
             "id": self.id,
+            "origin": self.origin.value,
             "parent_id": self.parent_id,
+            "island": self.island,
             "generation": self.generation,
             "iteration": self.iteration,
             "result": self.result.to_dict(),
