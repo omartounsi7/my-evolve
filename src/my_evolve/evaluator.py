@@ -171,6 +171,8 @@ class Evaluator:
         EvaluationFileError if the file has no stage, or if the thresholds are not one
         per stage after the first.
         """
+        # The evaluation file
+        self.path: Path = evaluation_path
         # The evaluation file's stage functions, in order
         self.stages: list[EvaluateFunction] = find_stages(
             load_evaluation_file(evaluation_path), evaluation_path

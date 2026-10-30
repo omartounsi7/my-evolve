@@ -63,9 +63,11 @@ The problem file is written in YAML. For now it holds:
 Every key is checked, and an unknown key is an error rather than silently ignored.
 """
 
+import hashlib
+import json
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -273,6 +275,18 @@ class Problem:
         return tuple(
             feature.name for feature in self.grid_features if feature.name != CODE_COMPLEXITY
         )
+
+    def fingerprint_without_llm(self) -> str:
+        """Return a hash of every setting but the llm section (D50).
+
+        The settings are hashed once read, in a fixed order, so that a comment or the
+        layout of the file changes nothing, while a default spelled out changes nothing
+        either.
+        """
+        settings = asdict(self)
+        del settings["llm"]
+        text = json.dumps(settings, sort_keys=True, allow_nan=False)
+        return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
     @classmethod
     def load(cls, path: Path) -> "Problem":

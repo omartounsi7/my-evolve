@@ -9,8 +9,8 @@ disk before the write returns, so nothing finished is lost if the run stops abru
     history.csv          one row per completed iteration: the progress of the run
     best_program.py      the best program so far, under a comment header
     best/iteration_0010.py   the best program after every snapshot_every iterations
-    run.json             the run's id, its seed, and one record per session
-    problem.yaml         a copy of the problem file
+    run.json             the run's id, its seed, its fingerprints, one record per session
+    problem.yaml         a copy of the problem file, from the first session
     log.txt              everything logged (logs.py)
 
 Only the main thread uses the run folder (D36).
@@ -99,6 +99,9 @@ class RunInfo:
     run_id: str
     # The seed of the run's random generator
     seed: int
+    # Hashes of what a continued run must not change (D50): the initial program, the
+    # evaluation file, the problem without its llm section; and the image's tag
+    fingerprints: dict[str, str] = field(default_factory=dict)
     # One record per session: when it ran, how it was started, how it ended
     sessions: list[dict[str, Any]] = field(default_factory=list)
 
@@ -109,7 +112,12 @@ class RunInfo:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "RunInfo":
         """Rebuild the information from what to_dict wrote."""
-        return cls(run_id=data["run_id"], seed=data["seed"], sessions=list(data["sessions"]))
+        return cls(
+            run_id=data["run_id"],
+            seed=data["seed"],
+            fingerprints=dict(data["fingerprints"]),
+            sessions=list(data["sessions"]),
+        )
 
 
 def header(program: Program, title: str) -> str:

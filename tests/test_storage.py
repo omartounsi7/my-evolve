@@ -55,11 +55,11 @@ class StorageTest(unittest.TestCase):
 
     def test_run_json_round_trip_and_a_crash_while_writing_it(self) -> None:
         """A crash while writing leaves the previous run.json whole."""
-        info = RunInfo("abc", 7, [{"started_at": "now"}])
+        info = RunInfo("abc", 7, {"image": "none"}, [{"started_at": "now"}])
         self.storage.write_run_info(info)
         self.assertEqual(self.storage.read_run_info(), info)
         with mock.patch("os.replace", side_effect=OSError("disk full")), self.assertRaises(OSError):
-            self.storage.write_run_info(RunInfo("abc", 7, [{}, {}]))
+            self.storage.write_run_info(RunInfo("abc", 7, {}, [{}, {}]))
         self.assertEqual(self.storage.read_run_info(), info)
 
     def test_no_run_json_yet(self) -> None:

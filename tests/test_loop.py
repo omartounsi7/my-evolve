@@ -11,6 +11,7 @@ import io
 import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -51,17 +52,26 @@ def reply_returning(value: str) -> str:
 
 
 def run_toy(
-    replies: list[str | Exception], output: Path, seed: int = 0, iterations: int | None = None
+    replies: list[str | Exception],
+    output: Path,
+    seed: int = 0,
+    iterations: int | None = None,
+    problem: Problem | None = None,
+    evaluation: Path = TOY_FOLDER / "evaluation.py",
+    initial_code: str | None = None,
 ) -> tuple[Database, FakeLLM, str]:
-    """Evolve the toy problem with a fake LLM; return the database, the LLM and the console text."""
+    """Evolve the toy problem with a fake LLM; return the database, the LLM and the console text.
+
+    problem, evaluation and initial_code replace the toy's own.
+    """
     llm = FakeLLM(replies)
     console = io.StringIO()
     with contextlib.redirect_stdout(console):
         database = run(
-            problem=Problem.load(TOY_FOLDER / "problem.yaml"),
-            initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+            problem=problem or Problem.load(TOY_FOLDER / "problem.yaml"),
+            initial_code=initial_code or (TOY_FOLDER / "initial_program.py").read_text(),
             ensemble=Ensemble([llm], [1.0], max_failures=3),
-            evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+            evaluator=Evaluator(evaluation, LocalSandbox(), STAGE_TIME_LIMIT),
             iterations=iterations if iterations is not None else len(replies),
             output=output,
             seed=seed,
@@ -704,6 +714,48 @@ class LoopTest(unittest.TestCase):
         with mock.patch.object(Loop, "start_iteration", autospec=True, side_effect=record):
             run_toy([reply_returning("4")], self.output, seed=5, iterations=3)
         self.assertNotEqual(states[0], random.Random(5).getstate())
+
+    def test_a_changed_problem_is_not_continued(self) -> None:
+        """Each change stops the run, saying what changed, and leaves the folder as it was."""
+        run_toy([reply_returning("2")], self.output, iterations=1)
+        files = ("programs.jsonl", "history.csv", "run.json", "best_program.py")
+        before = {name: (self.output / name).read_text() for name in files}
+        info = json.loads(before["run.json"])
+        self.assertEqual(
+            set(info["fingerprints"]),
+            {"initial_program", "evaluation_file", "problem_without_llm", "image"},
+        )
+        toy = Problem.load(TOY_FOLDER / "problem.yaml")
+        evaluation = self.folder / "evaluation.py"
+        evaluation.write_text((TOY_FOLDER / "evaluation.py").read_text() + "# Changed.\n")
+        initial_code = (TOY_FOLDER / "initial_program.py").read_text() + "# Changed.\n"
+        cases: list[tuple[str, dict[str, Any]]] = [
+            ("the evaluation file", {"evaluation": evaluation}),
+            ("the initial program", {"initial_code": initial_code}),
+            (
+                "the problem file (its llm section aside)",
+                {"problem": replace(toy, description=toy.description + "Even 10.\n")},
+            ),
+        ]
+        for name, change in cases:
+            with self.subTest(name), self.assertRaisesRegex(RunError, f"{re.escape(name)} changed"):
+                run_toy([reply_returning("3")], self.output, iterations=2, **change)
+        with (
+            mock.patch.object(LocalSandbox, "image_name", return_value="my-evolve-evaluation:a1"),
+            self.assertRaisesRegex(RunError, "the evaluation image changed since it started"),
+        ):
+            run_toy([reply_returning("3")], self.output, iterations=2)
+        self.assertEqual({name: (self.output / name).read_text() for name in files}, before)
+
+    def test_a_changed_llm_section_is_continued(self) -> None:
+        """The llm section and the flags may change; each session records its own."""
+        toy = Problem.load(TOY_FOLDER / "problem.yaml")
+        run_toy([reply_returning("2")], self.output, iterations=1)
+        changed = replace(toy, llm=replace(toy.llm, max_failures_in_a_row=5))
+        run_toy([reply_returning("3")], self.output, iterations=2, problem=changed)
+        sessions = json.loads((self.output / "run.json").read_text())["sessions"]
+        self.assertEqual([s["llm"]["max_failures_in_a_row"] for s in sessions], [3, 5])
+        self.assertEqual([s["flags"]["iterations"] for s in sessions], [1, 2])
 
     def test_a_broken_run_folder_is_refused(self) -> None:
         run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, iterations=2)

@@ -390,6 +390,10 @@ class Sandbox(ABC):
         """Return the worker process's environment variables; None for this process's own."""
         return None
 
+    def image_name(self) -> str:
+        """Return the image programs run in: its tag, or "none" without one (D50)."""
+        return "none"
+
     def stop(self, name: str) -> None:  # noqa: B027 - most sandboxes have nothing to stop
         """Stop what runs the worker besides its process, such as its container."""
 
@@ -456,6 +460,10 @@ class DockerSandbox(Sandbox):
         self.settings: SandboxSettings = settings
         # The run's id, the value of every container's label
         self.run_id: str = run_id
+
+    def image_name(self) -> str:
+        """Return the evaluation image's tag, a hash of its Dockerfile and packages."""
+        return self.image
 
     def command(self, name: str, stage_limit: float) -> list[str]:
         """Return the docker run command of a worker in a new container called name."""

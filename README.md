@@ -74,7 +74,7 @@ the end. The run folder holds:
 | `history.csv` | One row per completed iteration: the progress of the run |
 | `best_program.py` | The best program so far, under a comment header |
 | `best/iteration_0010.py`, ... | The best program every `snapshot_every` iterations |
-| `run.json` | The run's id, its seed, and one record per session |
+| `run.json` | The run's id, its seed, the fingerprints a continued run is checked against, and one record per session |
 | `problem.yaml` | A copy of the problem file, from the first session |
 | `log.txt` | Everything logged, with the time |
 
@@ -84,7 +84,10 @@ or SIGTERM, stops it at once. Either way, everything finished is already saved.
 To continue a run, stopped or crashed, run the same command with `--output` naming its
 folder: its programs are read back, the initial program is not evaluated again, and
 `--iterations` counts the iterations already done, so a larger value extends the run.
-Iterations that were in progress when it stopped are done again.
+Iterations that were in progress when it stopped are done again. A run is not continued
+if its initial program, its evaluation file, its problem file (the `llm` section aside) or
+its Docker image changed: the message says which. The `llm` section and the flags may
+change between sessions; `run.json` records each session's.
 
 ## Everyday commands
 

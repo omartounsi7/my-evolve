@@ -31,7 +31,8 @@ refusing a write) stops the run at once.
 Continuing (D49): run the same command with the same output folder. The saved programs
 are added again, in order; the iterations completed are the rows of history.csv, and
 --iterations is a total. Iterations in flight when the run stopped are lost, and done
-again under their numbers.
+again under their numbers. A run whose initial program, evaluation file, problem (its
+llm section aside) or image changed is not continued (D50).
 
 Stopping (D53, D54): the first Ctrl+C lets the iterations in flight finish and be saved,
 then the run ends as usual. A second Ctrl+C, or SIGTERM (Linux, macOS), stops at once:
@@ -42,6 +43,7 @@ The run ends with a summary: iterations done and why the run stopped, the best s
 the children by status, and the tokens and cost of each model (D51).
 """
 
+import hashlib
 import logging
 import queue
 import random
@@ -157,6 +159,34 @@ def summary(problem: Problem, database: Database, completed: int, reason: str) -
             f"tokens{cost}."
         )
     return lines
+
+
+# What run.json's fingerprints are of, as the refusal to continue names them (D50)
+FINGERPRINT_NAMES = {
+    "initial_program": "the initial program",
+    "evaluation_file": "the evaluation file",
+    "problem_without_llm": "the problem file (its llm section aside)",
+    "image": "the evaluation image",
+}
+
+
+def fingerprints(problem: Problem, initial_code: str, evaluator: Evaluator) -> dict[str, str]:
+    """Return the hashes of what a continued run must not change (D50).
+
+    The llm section and the flags may change between sessions: they change how children
+    are asked for, not how they are scored. The image is named by its tag, already a hash.
+    """
+    return {
+        "initial_program": hashlib.sha256(initial_code.encode("utf-8")).hexdigest(),
+        "evaluation_file": hashlib.sha256(evaluator.path.read_bytes()).hexdigest(),
+        "problem_without_llm": problem.fingerprint_without_llm(),
+        "image": evaluator.sandbox.image_name(),
+    }
+
+
+def changed_parts(saved: dict[str, str], current: dict[str, str]) -> list[str]:
+    """Return the names of what changed between two sets of fingerprints, in a fixed order."""
+    return [name for key, name in FINGERPRINT_NAMES.items() if saved.get(key) != current[key]]
 
 
 def now() -> str:
@@ -728,7 +758,9 @@ def run(
     An output folder that already holds a run is continued (D49): its programs are added
     again, the iterations it completed count towards `iterations`, and the run keeps its
     seed and its id (a different seed or run_id is ignored). The initial program is not
-    evaluated again. Each session adds its record to run.json.
+    evaluated again. Each session adds its record to run.json. The initial program, the
+    evaluation file, the problem (its llm section aside) and the image must be those the
+    run started with (D50).
 
     A child that fails a check (it does not compile, changes code outside the evolve
     blocks, lacks an entry function, or repeats an earlier program or one in flight) is
@@ -736,7 +768,7 @@ def run(
 
     Raises RunError if a model does not answer its check, if the initial program fails
     the checks, if it does not work (evolution needs a working start), or if the run in
-    the output folder cannot be continued.
+    the output folder cannot be continued, saying what changed.
     """
     storage = Storage(output)
     continuing = storage.holds_a_run()
@@ -745,7 +777,14 @@ def run(
         saved = storage.read_run_info() if continuing else None
         if continuing and saved is None:
             raise RunError(f"{output} holds programs but no run.json: it cannot be continued")
+        current = fingerprints(problem, initial_code, evaluator)
         if saved is not None:
+            changed = changed_parts(saved.fingerprints, current)
+            if changed:
+                raise RunError(
+                    f"the run in {output} cannot be continued: {', '.join(changed)} changed "
+                    "since it started; start a new run in another folder"
+                )
             if seed is not None and seed != saved.seed:
                 logger.warning("The run keeps its seed, %d: --seed %d is ignored", saved.seed, seed)
             seed = saved.seed
@@ -757,7 +796,7 @@ def run(
             info = saved
         else:
             initial = loop.prepare()
-            info = RunInfo(run_id=run_id or uuid.uuid4().hex, seed=seed)
+            info = RunInfo(run_id=run_id or uuid.uuid4().hex, seed=seed, fingerprints=current)
         session: dict[str, Any] = {
             "started_at": now(),
             "ended_at": None,

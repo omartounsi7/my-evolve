@@ -349,6 +349,19 @@ class ProblemTest(unittest.TestCase):
         with self.assertRaisesRegex(ProblemError, "the llm section must be a mapping"):
             Problem.from_dict(data)
 
+    def test_the_fingerprint_leaves_out_the_llm_section(self) -> None:
+        """It hashes the settings once read: a default spelled out changes nothing (D50)."""
+        fingerprint = Problem.from_dict(valid_data()).fingerprint_without_llm()
+        same = valid_data()
+        same["llm"]["models"] = [{"name": "another-model", "weight": 2.0}]
+        same["snapshot_every"] = 10
+        self.assertEqual(Problem.from_dict(same).fingerprint_without_llm(), fingerprint)
+        for key, value in [("description", "Return a big number."), ("islands", {"count": 2})]:
+            with self.subTest(key=key):
+                data = valid_data()
+                data[key] = value
+                self.assertNotEqual(Problem.from_dict(data).fingerprint_without_llm(), fingerprint)
+
     def test_errors_name_the_file(self) -> None:
         """Errors from load name the file; a file that is not a mapping is refused."""
         with tempfile.TemporaryDirectory() as folder:
