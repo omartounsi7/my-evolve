@@ -4,12 +4,14 @@ Skipped when Docker is not installed or not running.
 """
 
 import os
+import sys
 import time
 import unittest
 import uuid
 from pathlib import Path
 
 from docker_check import docker_is_available
+from test_sandbox import interrupt_the_group
 
 from my_evolve.evaluation_api import ProgramFailure, StageTimeout
 from my_evolve.evaluator import Evaluator
@@ -180,6 +182,16 @@ class LeftoverTest(unittest.TestCase):
             time.sleep(1)
         self.assertEqual(self.containers_of(sandbox.run_id), [])
         self.assertGreater(time.monotonic() - started, 8)
+
+
+@unittest.skipUnless(docker_is_available(), "Docker is not available")
+@unittest.skipIf(sys.platform == "win32", "process groups and SIGINT are Linux and macOS ones")
+class CtrlCInDockerTest(unittest.TestCase):
+    def test_ctrl_c_in_the_terminal_does_not_reach_the_container(self) -> None:
+        """Neither the docker client nor the container gets the terminal's Ctrl+C."""
+        sandbox = DockerSandbox(ensure_image([]), SandboxSettings(), uuid.uuid4().hex)
+        self.addCleanup(sandbox.remove_leftovers)
+        self.assertIn("returned 42", interrupt_the_group("docker", sandbox.run_id))
 
 
 @unittest.skipUnless(docker_is_available(), "Docker is not available")

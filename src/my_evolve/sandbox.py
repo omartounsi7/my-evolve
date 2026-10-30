@@ -95,6 +95,18 @@ def describe_exit(exit_code: int) -> str:
     return f"the program's process ended (exit code {exit_code})"
 
 
+def apart_from_the_terminal() -> dict[str, Any]:
+    """Return the Popen options that start a worker in a process group of its own.
+
+    Ctrl+C in a terminal interrupts every process of the terminal's foreground group: a
+    worker left in it would raise KeyboardInterrupt in the program it is evaluating, and
+    the program would be recorded as failed, though only my-evolve was meant to stop.
+    """
+    if sys.platform == "win32":
+        return {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    return {"start_new_session": True}
+
+
 def read_messages(stream: IO[str], messages: "queue.Queue[Message | None]") -> None:
     """Put every message the worker sends in the queue, then None when its output ends.
 
@@ -234,6 +246,7 @@ class SandboxSession:
                 text=True,
                 encoding="utf-8",
                 env=self.sandbox.environment(),
+                **apart_from_the_terminal(),
             )
         except OSError as error:
             raise SandboxError(f"cannot start the worker: {error}") from error
@@ -546,6 +559,8 @@ class DockerSandbox(Sandbox):
         ]
         return [
             "docker", "run", "--rm", "--interactive",
+            # A signal the docker client receives is not passed on to the container.
+            "--sig-proxy=false",
             "--name", name,
             "--label", f"{RUN_LABEL}={self.run_id}",
             "--network", "none",

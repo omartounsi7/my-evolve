@@ -1,5 +1,7 @@
 """Checks sandbox sessions directly: calls, the deadline, and the worker process."""
 
+import subprocess
+import sys
 import time
 import unittest
 
@@ -180,6 +182,50 @@ class MisbehavingProgramTest(unittest.TestCase):
         )
         self.assertEqual(session.call("f"), 5)
         self.assertEqual(session.call("f"), 5)
+
+
+# Run in a process group of its own, as a terminal runs my-evolve: it starts a session,
+# then, while the program is in the middle of a call, interrupts its whole group as Ctrl+C
+# does, ignoring the signal itself. It prints what the call returned, or the failure.
+CTRL_C_SCRIPT = """
+import os, signal, sys, threading
+from my_evolve.evaluation_api import ProgramFailure
+from my_evolve.sandbox import DockerSandbox, LocalSandbox, ensure_image
+from my_evolve.problem import SandboxSettings
+if sys.argv[1] == "docker":
+    sandbox = DockerSandbox(ensure_image([]), SandboxSettings(), sys.argv[2])
+else:
+    sandbox = LocalSandbox()
+session = sandbox.start("import time\\ndef f():\\n    time.sleep(3)\\n    return 42\\n", 60.0)
+# Ignored only now: a worker started while it was ignored would ignore it too.
+signal.signal(signal.SIGINT, signal.SIG_IGN)
+threading.Timer(1.5, os.killpg, (os.getpgrp(), signal.SIGINT)).start()
+try:
+    print("returned", session.call("f"))
+except ProgramFailure as failure:
+    print("failed", failure.error)
+session.close()
+"""
+
+
+def interrupt_the_group(sandbox: str, run_id: str = "") -> str:
+    """Run CTRL_C_SCRIPT with that sandbox, in a group of its own; return what it printed."""
+    finished = subprocess.run(
+        [sys.executable, "-c", CTRL_C_SCRIPT, sandbox, run_id],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        start_new_session=True,
+    )
+    return finished.stdout + finished.stderr
+
+
+@unittest.skipIf(sys.platform == "win32", "process groups and SIGINT are Linux and macOS ones")
+class CtrlCTest(unittest.TestCase):
+    def test_ctrl_c_in_the_terminal_does_not_reach_the_program(self) -> None:
+        """Only my-evolve decides what Ctrl+C stops: the program's call goes on (it was once
+        interrupted, and the program recorded as failed)."""
+        self.assertIn("returned 42", interrupt_the_group("local"))
 
 
 if __name__ == "__main__":
