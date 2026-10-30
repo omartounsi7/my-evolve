@@ -91,6 +91,21 @@ if its initial program, its evaluation file, its problem file (the `llm` section
 its Docker image changed: the message says which. The `llm` section and the flags may
 change between sessions; `run.json` records each session's.
 
+## The report
+
+```bash
+.venv/bin/python scripts/report.py runs/circle_packing_1
+```
+
+draws into the run folder's `report/` folder, with matplotlib:
+
+| File | Contents |
+|---|---|
+| `progress.png` | The best score so far against completed iterations, with every working child's score as a dot |
+| `output_0010.png`, ... | The best program's output at every snapshot and at the end, if the evaluation file defines `visualize(output_data, path)`: circle packing's draws the circles |
+
+The run folder itself is only read, so a run still in progress can be reported on.
+
 ## Everyday commands
 
 These are written for Linux and macOS. On Windows, replace `.venv/bin/python`

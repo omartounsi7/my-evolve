@@ -26,6 +26,7 @@ Whatever happens becomes a Result with a status:
 - error: not the program's fault: the sandbox failed, or the evaluation file raised.
 """
 
+import json
 import math
 import runpy
 import sys
@@ -107,6 +108,20 @@ def checked_numbers(values: Any, what: str) -> dict[str, float]:
     }
 
 
+def checked_output_data(value: Any) -> Any:
+    """Return output data as JSON holds it (tuples become lists). Raises ValueError if JSON
+    cannot hold it: anything but finite numbers, text, True, False, None, lists, and
+    dictionaries with text keys."""
+    if value is None:
+        return None
+    try:
+        return json.loads(json.dumps(value, allow_nan=False))
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"the output data must be plain data, which JSON can hold: {error}"
+        ) from None
+
+
 def checked(outcome: Any, required_features: Sequence[str] = ()) -> StageResult:
     """Return what a stage returned, if it is a StageResult that can be saved as it is, with
     every feature in required_features.
@@ -123,7 +138,11 @@ def checked(outcome: Any, required_features: Sequence[str] = ()) -> StageResult:
         if name not in features:
             raise ValueError(f"stage 1 must give the grid's feature {name!r}")
     return StageResult(
-        checked_number(outcome.score, "the score"), metrics, outcome.feedback, features
+        checked_number(outcome.score, "the score"),
+        metrics,
+        outcome.feedback,
+        features,
+        checked_output_data(outcome.output_data),
     )
 
 
@@ -207,7 +226,8 @@ class Evaluator:
 
         - A later stage's score replaces the earlier one; its metrics are added to the
           earlier ones, replacing those with the same name; feedback is gathered. The
-          features are stage 1's, so every program's are measured the same way.
+          features are stage 1's, so every program's are measured the same way. A later
+          stage's output data, if it gives some, replaces the earlier stage's.
         - The next stage runs only if this stage's score reaches its threshold.
         - An illegal answer at any stage makes the program invalid, and an error at any
           stage (not the program's fault) makes the result an error.
@@ -233,12 +253,21 @@ class Evaluator:
                     features=merged.features,
                     feedback=gathered,
                     stage_reached=stage_reached,
+                    output_data=merged.output_data,
                 )
             if merged is None:
-                merged = StageResult(outcome.score, outcome.metrics, features=outcome.features)
+                merged = replace(outcome, feedback="")
             else:
-                metrics = {**merged.metrics, **outcome.metrics}
-                merged = StageResult(outcome.score, metrics, features=merged.features)
+                merged = StageResult(
+                    outcome.score,
+                    {**merged.metrics, **outcome.metrics},
+                    features=merged.features,
+                    output_data=(
+                        outcome.output_data
+                        if outcome.output_data is not None
+                        else merged.output_data
+                    ),
+                )
             feedback = join_feedback(feedback, outcome.feedback)
             stage_reached = number
             if number < len(self.stages) and outcome.score < self.thresholds[number - 1]:
@@ -251,6 +280,7 @@ class Evaluator:
             features=merged.features,
             feedback=feedback,
             stage_reached=stage_reached,
+            output_data=merged.output_data,
         )
 
     def run_stage(

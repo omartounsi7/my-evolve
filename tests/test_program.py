@@ -22,6 +22,7 @@ class ResultTest(unittest.TestCase):
                 "feedback": None,
                 "duration": 0.0,
                 "stage_reached": 0,
+                "output_data": None,
             },
         )
         self.assertFalse(result.is_ok)

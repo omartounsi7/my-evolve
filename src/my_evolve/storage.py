@@ -115,7 +115,8 @@ class RunInfo:
         return cls(
             run_id=data["run_id"],
             seed=data["seed"],
-            fingerprints=dict(data["fingerprints"]),
+            # Runs started before fingerprints existed have none: they cannot be continued.
+            fingerprints=dict(data.get("fingerprints", {})),
             sessions=list(data["sessions"]),
         )
 
@@ -230,11 +231,12 @@ class Storage:
         lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
         self.write_whole(path, "".join(lines[:-1]))
 
-    def read_json_lines(self, file_name: str) -> list[dict[str, Any]]:
+    def read_json_lines(self, file_name: str, repair: bool = True) -> list[dict[str, Any]]:
         """Return the records of a JSON-lines file, in order.
 
-        A last line cut off by a crash is dropped, and the file rewritten without it.
-        Raises RunFolderError for an unreadable line elsewhere.
+        A last line cut off by a crash is dropped, and, with repair, the file rewritten
+        without it (without, the folder is only read: the report reads a run that may be
+        in progress). Raises RunFolderError for an unreadable line elsewhere.
         """
         lines = self.read_lines(file_name)
         records = []
@@ -243,7 +245,8 @@ class Storage:
                 records.append(json.loads(line))
             except ValueError as error:
                 if number == len(lines):
-                    self.drop_last_line(file_name)
+                    if repair:
+                        self.drop_last_line(file_name)
                     break
                 raise RunFolderError(
                     f"{file_name}: line {number} cannot be read: {error}"
@@ -255,13 +258,14 @@ class Storage:
         text = "".join(json.dumps(record, allow_nan=False) + "\n" for record in records)
         self.write_whole(self.folder / file_name, text)
 
-    def load_programs(self) -> list[Program]:
-        """Read programs.jsonl back, in order (a last line cut off by a crash is dropped).
+    def load_programs(self, repair: bool = True) -> list[Program]:
+        """Read programs.jsonl back, in order (a last line cut off by a crash is dropped;
+        with repair, from the file too).
 
         Raises RunFolderError for a line that is not a saved program.
         """
         programs = []
-        for number, record in enumerate(self.read_json_lines(PROGRAMS_FILE), start=1):
+        for number, record in enumerate(self.read_json_lines(PROGRAMS_FILE, repair), start=1):
             try:
                 programs.append(Program.from_dict(record))
             except (ValueError, TypeError, KeyError) as error:
@@ -270,8 +274,9 @@ class Storage:
                 ) from None
         return programs
 
-    def load_history(self) -> list[HistoryRow]:
-        """Read history.csv back, in order (a last row cut off by a crash is dropped).
+    def load_history(self, repair: bool = True) -> list[HistoryRow]:
+        """Read history.csv back, in order (a last row cut off by a crash is dropped; with
+        repair, from the file too).
 
         Raises RunFolderError for an unreadable row elsewhere.
         """
@@ -283,7 +288,8 @@ class Storage:
                 rows.append(HistoryRow.from_csv(row))
             except (ValueError, TypeError) as error:
                 if number == len(lines):
-                    self.drop_last_line(HISTORY_FILE)
+                    if repair:
+                        self.drop_last_line(HISTORY_FILE)
                     break
                 raise RunFolderError(
                     f"{HISTORY_FILE}: line {number} cannot be read: {error}"

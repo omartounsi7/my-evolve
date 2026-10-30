@@ -43,6 +43,8 @@ class Result:
     duration: float = 0.0
     # The last cascade stage the program completed; 0 if none
     stage_reached: int = 0
+    # Plain data about the program's output, for the report's drawings; None if none (D6)
+    output_data: Any = None
 
     def __post_init__(self) -> None:
         """Refuse a result that contradicts itself: a score belongs to ok programs only."""
@@ -79,6 +81,8 @@ class Result:
             feedback=data["feedback"],
             duration=data["duration"],
             stage_reached=data["stage_reached"],
+            # Runs saved before output data existed have none.
+            output_data=data.get("output_data"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +96,7 @@ class Result:
             "feedback": self.feedback,
             "duration": self.duration,
             "stage_reached": self.stage_reached,
+            "output_data": self.output_data,
         }
 
 

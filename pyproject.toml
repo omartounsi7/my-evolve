@@ -16,6 +16,7 @@ dependencies = [
     "openai>=1.0",  # talks to LLM servers that offer the OpenAI-compatible interface
     "pyyaml>=6",    # reads the problem files
     "numpy",        # imported by the examples' evaluation files, which run on this machine
+    "matplotlib",   # draws the report (scripts/report.py)
 ]
 
 [project.optional-dependencies]

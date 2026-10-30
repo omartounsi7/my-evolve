@@ -8,7 +8,8 @@ is legal. Every program OpenEvolve scores above 0 gets exactly the same score he
 
 Stage 1 also gives two output features for the MAP-Elites grid (D17): radii_spread, how
 much the radii vary, and radius_centre_correlation, whether the big circles are in the
-middle (-1) or at the edges (+1). A problem file's grid may use either, or both.
+middle (-1) or at the edges (+1). A problem file's grid may use either, or both. It keeps
+the centres and the radii as output data, which visualize draws for the report (D51).
 
 Where OpenEvolve gives a score of 0, this evaluation says why instead:
 - a packing that breaks a rule of the problem (wrong number of circles, NaN, a negative
@@ -148,7 +149,13 @@ def evaluate_stage1(namespace: Mapping[str, Any]) -> StageResult:
         f"overlapping. Sum of radii: {result.metrics['sum_radii']:.6f} "
         f"(the target, {TARGET_VALUE}, scores 1)."
     )
-    return StageResult(result.score, result.metrics, feedback, output_features(centers, radii))
+    return StageResult(
+        result.score,
+        result.metrics,
+        feedback,
+        output_features(centers, radii),
+        {"centers": centers.tolist(), "radii": radii.tolist()},
+    )
 
 
 def evaluate_stage2(namespace: Mapping[str, Any]) -> StageResult:
@@ -169,3 +176,28 @@ def evaluate_stage2(namespace: Mapping[str, Any]) -> StageResult:
             f"add up to {result.metrics['sum_radii']:.6f}."
         )
     return StageResult(result.score, result.metrics, feedback)
+
+
+def visualize(output_data: dict[str, Any], path: Any) -> None:
+    """Draw a packing into an image file, as OpenEvolve's visualize draws it on screen.
+
+    The unit square, each circle with its number, and n and the sum of the radii as the
+    title. output_data is what stage 1 kept: the centres and the radii. Called by the
+    report, on this machine; matplotlib is imported here, so that evaluating programs does
+    not need it.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle
+
+    centers, radii = output_data["centers"], output_data["radii"]
+    figure, axes = plt.subplots(figsize=(8, 8))
+    axes.set_xlim(0, 1)
+    axes.set_ylim(0, 1)
+    axes.set_aspect("equal")
+    axes.grid(True)
+    for i, (center, radius) in enumerate(zip(centers, radii, strict=True)):
+        axes.add_patch(Circle(center, radius, alpha=0.5))
+        axes.text(center[0], center[1], str(i), ha="center", va="center")
+    axes.set_title(f"Circle Packing (n={len(centers)}, sum={sum(radii):.6f})")
+    figure.savefig(path)
+    plt.close(figure)

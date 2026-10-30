@@ -812,6 +812,11 @@ def run(
             raise RunError(f"{output} holds programs but no run.json: it cannot be continued")
         current = fingerprints(problem, initial_code, evaluator)
         if saved is not None:
+            if not saved.fingerprints:
+                raise RunError(
+                    f"the run in {output} cannot be continued: it was started by an earlier "
+                    "my-evolve, which saved no fingerprints"
+                )
             changed = changed_parts(saved.fingerprints, current)
             if changed:
                 raise RunError(
@@ -856,6 +861,8 @@ def run(
             },
             "llm": asdict(problem.llm),
             "system_message": loop.prompt_builder.system_message,
+            # Where the report finds visualize (D79)
+            "evaluation_file": str(evaluator.path.resolve()),
         }
         info.sessions.append(session)
         storage.write_run_info(info)

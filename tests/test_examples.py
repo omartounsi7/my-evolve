@@ -1,6 +1,7 @@
 """Checks the example problems and the tests' toy problem, through their evaluation files."""
 
 import runpy
+import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,17 @@ class CirclePackingFeatureTest(unittest.TestCase):
         self.assertEqual(
             self.evaluate(equal).features, {"radii_spread": 0.0, "radius_centre_correlation": 0.0}
         )
+
+
+class CirclePackingDrawingTest(unittest.TestCase):
+    def test_stage_1_keeps_the_packing_and_visualize_draws_it(self) -> None:
+        namespace = run_program(CIRCLE_PACKING_FOLDER / "initial_program.py")
+        output_data = load_evaluate(CIRCLE_PACKING_FOLDER, "evaluate_stage1")(namespace).output_data
+        self.assertEqual((len(output_data["centers"]), len(output_data["radii"])), (26, 26))
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "packing.png"
+            load_evaluate(CIRCLE_PACKING_FOLDER, "visualize")(output_data, path)
+            self.assertEqual(path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
 
 
 class ToyProblemTest(unittest.TestCase):

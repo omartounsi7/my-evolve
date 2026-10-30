@@ -335,6 +335,31 @@ class OutputFeatureTest(unittest.TestCase):
                 self.assertIn(error, result.error or "")
 
 
+class OutputDataTest(unittest.TestCase):
+    def test_output_data_is_kept_as_json_holds_it(self) -> None:
+        """Tuples become lists; a later stage's data replaces the earlier stage's."""
+        evaluator = cascade(
+            "def evaluate_stage1(namespace):\n"
+            "    return StageResult(0.6, output_data={'points': ((0.1, 0.2),)})\n"
+            "def evaluate_stage2(namespace):\n"
+            "    return StageResult(0.9)\n"
+            "def evaluate_stage3(namespace):\n"
+            "    return StageResult(1.0, output_data=[3])\n",
+            [0.5, 0.95],
+        )
+        self.assertEqual(evaluator.evaluate(COUNTING_PROGRAM).output_data, {"points": [[0.1, 0.2]]})
+
+    def test_output_data_json_cannot_hold_is_an_error(self) -> None:
+        for data in ("float('nan')", "{1, 2}", "object()"):
+            with self.subTest(data=data):
+                evaluation = (
+                    f"def evaluate(namespace):\n    return StageResult(1.0, output_data={data})\n"
+                )
+                result = evaluate_with(evaluation, "x = 1\n")
+                self.assertEqual(result.status, Status.ERROR)
+                self.assertIn("the output data must be plain data", result.error or "")
+
+
 class ErrorStatusTest(unittest.TestCase):
     def test_a_mistake_in_the_evaluation_file_is_an_error(self) -> None:
         """The evaluation file raising is not the program's fault: status error."""

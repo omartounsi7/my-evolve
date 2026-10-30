@@ -34,6 +34,10 @@ class StageResult:
     # the spread of the radii; read from stage 1 only, which must give every output feature
     # the problem's grid names
     features: dict[str, float] = field(default_factory=dict)
+    # Plain data about the program's output, kept for the report's drawings (D6, D51), such
+    # as the centres and radii of a packing: numbers, text, lists, dictionaries with text
+    # keys. The evaluation file's visualize(output_data, path), if it defines one, draws it
+    output_data: Any = None
 
 
 class InvalidProgram(Exception):
