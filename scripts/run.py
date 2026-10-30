@@ -2,7 +2,8 @@
 
 Usage:
     python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE
-        --iterations N [--output FOLDER] [--seed S] [--unsafe-local-sandbox] [--verbose]
+        --iterations N [--output FOLDER] [--workers W] [--seed S] [--unsafe-local-sandbox]
+        [--verbose]
 
 The run folder defaults to runs/<problem name>_<date>_<time>.
 
@@ -60,6 +61,12 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         "--output",
         type=Path,
         help="the run folder, where everything is saved (default: runs/<problem>_<date>_<time>)",
+    )
+    parser.add_argument(
+        "--workers",
+        type=positive_integer,
+        default=1,
+        help="how many iterations may be in flight at once (default 1)",
     )
     parser.add_argument("--seed", type=int, help="fixes the random draws (default: drawn)")
     parser.add_argument(
@@ -126,6 +133,7 @@ def main(arguments: list[str]) -> int:
                 parsed.verbose,
                 parsed.config,
                 ["scripts/run.py", *arguments],
+                parsed.workers,
             )
         finally:
             # Whatever happened, no container of the run outlives it.

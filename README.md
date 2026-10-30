@@ -59,6 +59,7 @@ length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
 | `--config` | The problem file: the problem's description and its LLM | required |
 | `--iterations` | How many children to ask the LLM for | required |
 | `--output` | The run folder; it must not hold a run already | `runs/<problem>_<date>_<time>` |
+| `--workers` | How many iterations may be in flight at once | 1 |
 | `--seed` | The seed of the run's random draws | drawn, and printed |
 | `--unsafe-local-sandbox` | Run programs as plain processes, without any isolation: tests and trusted code only | off |
 | `--verbose` | Show each iteration's details on the console (`log.txt` always has them) | off |

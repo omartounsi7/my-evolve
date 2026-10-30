@@ -12,9 +12,12 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from dataclasses import replace
 from pathlib import Path
+from unittest import mock
 
 from fakes import FakeLLM
 
@@ -25,6 +28,7 @@ from my_evolve.loop import RunError, run, summary
 from my_evolve.problem import IslandSettings, ParentSettings, Problem
 from my_evolve.program import Origin, Status
 from my_evolve.sandbox import LocalSandbox
+from my_evolve.storage import Storage
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 TOY_FOLDER = Path(__file__).parent / "toy"
@@ -165,7 +169,7 @@ class LoopTest(unittest.TestCase):
         (session,) = info["sessions"]
         self.assertEqual(session["command"], ["scripts/run.py", "--iterations", "3"])
         self.assertEqual(session["end"], "every iteration done")
-        self.assertEqual(session["flags"], {"iterations": 3, "verbose": False})
+        self.assertEqual(session["flags"], {"iterations": 3, "workers": 1, "verbose": False})
         self.assertEqual(session["llm"]["models"][0]["name"], "fake-model")
         self.assertIsNotNone(session["ended_at"])
         self.assertTrue(all(program.created_at for program in database.programs.values()))
@@ -297,6 +301,58 @@ class LoopTest(unittest.TestCase):
                 for parent, child in zip(parent_islands, children, strict=True)
             )
         )
+
+    def run_with_workers(self, llm: FakeLLM, iterations: int, workers: int) -> Database:
+        """Evolve the toy problem with that LLM and that many workers."""
+        with contextlib.redirect_stdout(io.StringIO()):
+            return run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([llm], [1.0], 3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=iterations,
+                output=self.output,
+                seed=0,
+                workers=workers,
+            )
+
+    def test_several_iterations_in_flight_at_once(self) -> None:
+        """With 3 workers, 3 LLM calls wait at once; every iteration still completes once."""
+        llm = FakeLLM([reply_returning(str(n)) for n in range(1, 7)], delay=0.5)
+        started = time.monotonic()
+        database = self.run_with_workers(llm, iterations=6, workers=3)
+        self.assertEqual(llm.most_at_once, 3)
+        self.assertLess(time.monotonic() - started, 6 * 0.5)
+        children = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        self.assertEqual(sorted(child.iteration for child in children), [1, 2, 3, 4, 5, 6])
+        with (self.output / "history.csv").open() as file:
+            rows = list(csv.DictReader(file))
+        self.assertEqual(sorted(int(row["completed"]) for row in rows), [1, 2, 3, 4, 5, 6])
+
+    def test_only_the_main_thread_writes_the_run_folder(self) -> None:
+        main = threading.main_thread()
+        writers: set[str] = set()
+        original = Storage.append_line
+
+        def watched(storage: Storage, file_name: str, line: str) -> None:
+            writers.add(threading.current_thread().name)
+            original(storage, file_name, line)
+
+        llm = FakeLLM([reply_returning(str(n)) for n in range(1, 5)], delay=0.1)
+        with mock.patch.object(Storage, "append_line", watched):
+            self.run_with_workers(llm, iterations=4, workers=2)
+        self.assertEqual(writers, {main.name})
+
+    def test_identical_children_in_flight_are_evaluated_once(self) -> None:
+        """Two workers propose the same child at once: the second is a duplicate of the first."""
+        llm = FakeLLM([reply_returning("5"), reply_returning("5")], delay=0.3)
+        database = self.run_with_workers(llm, iterations=2, workers=2)
+        children = sorted(
+            (p for p in database.programs.values() if p.origin is Origin.LLM),
+            key=lambda program: program.result.status.value,
+        )
+        self.assertEqual([child.result.status for child in children], [Status.OK, Status.REJECTED])
+        self.assertEqual(children[1].result.error, f"same program as {children[0].id}")
 
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""

@@ -176,9 +176,14 @@ class Program:
         fingerprint: str | None = None,
         example_ids: tuple[str, ...] = (),
         code_complexity: int | None = None,
+        program_id: str | None = None,
     ) -> "Program":
-        """Return a program the LLM wrote from parent, one generation further."""
+        """Return a program the LLM wrote from parent, one generation further.
+
+        program_id gives it an id chosen earlier; by default a new one.
+        """
         return cls(
+            id=program_id or new_id(),
             code=code,
             result=result,
             origin=Origin.LLM,
