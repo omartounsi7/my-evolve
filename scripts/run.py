@@ -19,6 +19,7 @@ Example, from the repository root:
 
 import argparse
 import io
+import math
 import sys
 import uuid
 from datetime import datetime
@@ -50,6 +51,17 @@ def positive_integer(text: str) -> int:
     return value
 
 
+def finite_number(text: str) -> float:
+    """Read a finite number, for argparse: a target of nan or inf could never be reached."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r} is not a number") from None
+    if not math.isfinite(value):
+        raise argparse.ArgumentTypeError(f"must be a finite number, got {text}")
+    return value
+
+
 def parse_arguments(arguments: list[str]) -> argparse.Namespace:
     """Read the command line; a wrong value stops the script with a usage message."""
     parser = argparse.ArgumentParser(description="Evolve a program with an LLM (AlphaEvolve).")
@@ -77,7 +89,9 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         help="how many iterations may be in flight at once (default 1)",
     )
     parser.add_argument(
-        "--target-score", type=float, help="stop once the best score reaches it (default: none)"
+        "--target-score",
+        type=finite_number,
+        help="stop once the best score reaches it (default: none)",
     )
     parser.add_argument(
         "--patience",
@@ -164,8 +178,16 @@ def main(arguments: list[str]) -> int:
         finally:
             # Whatever happened, no container of the run outlives it.
             sandbox.remove_leftovers()
-    except (ProblemError, EvaluationFileError, RunError, SandboxError, MissingKeyError) as error:
-        # A mistake in the user's files, or Docker failing: one clear message, no traceback.
+    except (
+        ProblemError,
+        EvaluationFileError,
+        RunError,
+        SandboxError,
+        MissingKeyError,
+        OSError,
+    ) as error:
+        # A mistake in the user's files, Docker failing, or a run folder that cannot be
+        # written: one clear message, no traceback.
         print(f"Error: {error}", file=sys.stderr)
         return 1
     except StopNow as stop:

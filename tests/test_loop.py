@@ -967,6 +967,19 @@ class RunScriptTest(unittest.TestCase):
             completed = self.run_script(*self.toy_arguments(Path(folder), Path("missing.yaml")))
             self.assertEqual(completed.returncode, 2)
             self.assertIn("no such file: missing.yaml", completed.stderr)
+            arguments = self.toy_arguments(Path(folder) / "run")
+            completed = self.run_script(*arguments, "--target-score", "nan")
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("must be a finite number, got nan", completed.stderr)
+
+    def test_a_run_folder_that_cannot_be_made_is_one_clear_message(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            taken = Path(folder) / "taken"
+            taken.write_text("a file, not a folder\n")
+            completed = self.run_script(*self.toy_arguments(taken))
+            self.assertEqual(completed.returncode, 1)
+            self.assertIn("Error: [Errno 17] File exists", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
 
     def test_a_problem_file_mistake_is_one_clear_message(self) -> None:
         """A mistake in the problem file is reported in one line, without a traceback."""
