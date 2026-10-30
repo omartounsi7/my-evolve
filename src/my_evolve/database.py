@@ -2,8 +2,8 @@
 
 The parent is chosen by ShinkaEvolve's weighted rule (D19): programs score above or
 below the median, and programs already tried often are tried less. The examples are
-other working programs drawn at random. Islands and MAP-Elites grids come in the next
-steps of the plan.
+other programs drawn at random, failed ones included (D26): the LLM sees them as
+previous attempts, unlabelled. Islands and MAP-Elites grids come in the next steps.
 """
 
 import math
@@ -137,17 +137,33 @@ class Database:
         """Return the programs whose status is ok, in the order they were added."""
         return [program for program in self.programs.values() if program.result.is_ok]
 
-    def sample(self, example_count: int) -> tuple[Program, list[Program]]:
-        """Draw the parent of the next child, and the example programs shown beside it.
+    def sample_parent(self) -> Program:
+        """Choose the parent of the next child among the working programs (D19).
 
-        The parent is chosen among the working programs by the parent selector; the
-        examples are up to example_count other working programs, drawn uniformly, in the
-        order drawn. Failed programs are never drawn. Raises ValueError if no program works.
+        Failed programs are never parents. Raises ValueError if no program works.
         """
         candidates = self.working_programs()
         if not candidates:
             raise ValueError("no working program to build on")
-        parent = self.selector.choose(candidates, self, self.rng)
-        others = [program for program in candidates if program.id != parent.id]
-        examples = self.rng.sample(others, min(example_count, len(others)))
-        return parent, examples
+        return self.selector.choose(candidates, self, self.rng)
+
+    def sample_examples(self, parent: Program, count: int) -> list[Program]:
+        """Draw up to count example programs to show beside the parent (D26).
+
+        They are drawn uniformly, without replacement, among every program, failed ones
+        included, except the parent, error programs (not the program's fault) and children
+        without code; they come in the order drawn.
+        """
+        candidates = [
+            program
+            for program in self.programs.values()
+            if program.id != parent.id
+            and program.result.status is not Status.ERROR
+            and program.code.strip()
+        ]
+        return self.rng.sample(candidates, min(count, len(candidates)))
+
+    def sample(self, example_count: int) -> tuple[Program, list[Program]]:
+        """Draw the parent of the next child, then the example programs shown beside it."""
+        parent = self.sample_parent()
+        return parent, self.sample_examples(parent, example_count)

@@ -50,23 +50,36 @@ class DatabaseTest(unittest.TestCase):
         self.assertIs(database.best(), first)
         self.assertEqual(database.best_score(), 2.0)
 
-    def test_draws_are_working_programs_and_the_parent_is_not_an_example(self) -> None:
-        """Failed programs are never drawn; the examples are other, distinct programs."""
+    def test_parents_work_and_examples_are_other_programs(self) -> None:
+        """Parents are working programs; examples are distinct and never the parent."""
         database = filled_database()
         for _ in range(200):
             parent, examples = database.sample(2)
+            self.assertTrue(parent.result.is_ok)
             self.assertEqual(len(examples), 2)
             drawn = [parent, *examples]
-            self.assertTrue(all(program.result.is_ok for program in drawn))
             self.assertEqual(len({program.id for program in drawn}), len(drawn))
 
-    def test_fewer_examples_when_fewer_programs_work(self) -> None:
-        """With the initial program alone, there is no example to show."""
+    def test_failed_programs_can_be_examples(self) -> None:
+        """With the initial program alone working, the failed program is its example."""
         database = Database(random.Random(0))
         initial = working(1.0)
+        broken = failed()
         database.add(initial)
-        database.add(failed())
-        self.assertEqual(database.sample(2), (initial, []))
+        database.add(broken)
+        self.assertEqual(database.sample(2), (initial, [broken]))
+
+    def test_errors_and_children_without_code_are_never_examples(self) -> None:
+        """An error is not the program's fault; a reply without code shows nothing."""
+        database = Database(random.Random(0))
+        parent = working(1.0)
+        database.add(parent)
+        database.add(Program("x = 2\n", Result.failure(Status.ERROR, "sandbox: down")))
+        database.add(Program("", Result.rejected("no code in the reply")))
+        rejected = Program("x = (\n", Result.rejected("the program does not compile"))
+        database.add(rejected)
+        for _ in range(50):
+            self.assertEqual(database.sample_examples(parent, 3), [rejected])
 
     def test_the_same_seed_draws_the_same(self) -> None:
         """Two databases with the same seed and programs make the same draws."""
@@ -90,7 +103,7 @@ class DatabaseTest(unittest.TestCase):
         database = filled_database()
         self.assertEqual(database.sample(0)[1], [])
         self.assertEqual(len(database.sample(4)[1]), 4)
-        self.assertEqual(len(database.sample(9)[1]), 4)
+        self.assertEqual(len(database.sample(20)[1]), 9)
 
     def test_sampling_an_empty_database_is_refused(self) -> None:
         """Without a working program, there is nothing to build on."""

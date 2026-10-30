@@ -146,8 +146,10 @@ class BudgetTest(unittest.TestCase):
         size = len(self.builder(10**6).build(parent, examples[:2], 3.0).user)
         builder = self.builder(len(SYSTEM_MESSAGE) + size)
         with self.assertLogs("my_evolve.prompt", "WARNING") as logs:
-            user = builder.build(parent, examples, 3.0).user
+            prompt = builder.build(parent, examples, 3.0)
+        user = prompt.user
         self.assertEqual(len(logs.output), 1)
+        self.assertEqual(prompt.example_ids, (examples[0].id, examples[1].id))
         self.assertIn("## Attempt 2: score 2.0", user)
         self.assertNotIn("## Attempt 3", user)
 

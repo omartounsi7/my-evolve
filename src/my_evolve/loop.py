@@ -197,6 +197,7 @@ def run(
             usage,
             parsed.description,
             checks.fingerprint,
+            prompt.example_ids,
         )
         store(child)
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())

@@ -57,6 +57,8 @@ class Prompt:
     system: str
     # What changes every iteration
     user: str
+    # The example programs the user message shows, after the budget left some out
+    example_ids: tuple[str, ...] = ()
 
 
 def packages_rule(packages: Sequence[str]) -> str:
@@ -158,4 +160,4 @@ class PromptBuilder:
                 "The prompt is over its budget of %d characters, even without example programs",
                 self.max_chars,
             )
-        return Prompt(system=self.system_message, user=user)
+        return Prompt(self.system_message, user, tuple(example.id for example in shown))

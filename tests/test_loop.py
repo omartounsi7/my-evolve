@@ -167,6 +167,10 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(programs[2].result.error, f"same program as {programs[0].id}")
         self.assertEqual(programs[3].result.error, f"same program as {programs[1].id}")
         self.assertEqual(programs[2].result.duration, 0.0)
+        # Each child records the example programs its prompt showed.
+        shown = [set(program.example_ids) for program in programs[1:]]
+        self.assertEqual(shown[0], set())
+        self.assertEqual(shown[1], {programs[0].id, programs[1].id} - {programs[2].parent_id})
 
     def test_every_llm_call_is_saved(self) -> None:
         """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""
