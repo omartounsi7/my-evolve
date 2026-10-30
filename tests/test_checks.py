@@ -7,6 +7,7 @@ from pathlib import Path
 from my_evolve.checks import (
     MarkerError,
     check_child,
+    count_block_nodes,
     fingerprint,
     same_outside_code,
     split_evolve_blocks,
@@ -173,6 +174,34 @@ class FingerprintTest(unittest.TestCase):
 
     def test_a_program_that_does_not_compile_has_no_fingerprint(self) -> None:
         self.assertIsNone(check_child("def (", TWO_BLOCKS, ["a"], {}).fingerprint)
+
+
+class CodeComplexityTest(unittest.TestCase):
+    def test_a_small_block(self) -> None:
+        """def a(): return 1 has 3 nodes with a position: the function, the return, the 1.
+
+        Its arguments, taken together, have no position in the code: they do not count.
+        """
+        code = f"{START}\ndef a():\n    return 1\n{END}\n"
+        self.assertEqual(count_block_nodes(ast.parse(code), code), 3)
+
+    def test_only_nodes_inside_the_blocks_count(self) -> None:
+        """Growing a block adds nodes; growing the code outside the blocks does not."""
+        base = count_block_nodes(ast.parse(TWO_BLOCKS), TWO_BLOCKS)
+        inside = TWO_BLOCKS.replace("    return 1", "    return 1 + 2 * 3")
+        outside = TWO_BLOCKS.replace("    return 2", "    return 2 + 2 * 3")
+        self.assertEqual(count_block_nodes(ast.parse(inside), inside), base + 4)
+        self.assertEqual(count_block_nodes(ast.parse(outside), outside), base)
+
+    def test_the_checks_measure_children_with_sound_blocks(self) -> None:
+        """A child's measure comes with its checks; not when its blocks are broken."""
+        for name, code in INITIAL_PROGRAMS.items():
+            with self.subTest(name=name):
+                checks = check_child(code, code, [], {})
+                self.assertEqual(checks.code_complexity, count_block_nodes(ast.parse(code), code))
+                self.assertGreater(checks.code_complexity or 0, 50)
+        broken = check_child("def a():\n    return 1\n", TWO_BLOCKS, ["a"], {})
+        self.assertIsNone(broken.code_complexity)
 
 
 if __name__ == "__main__":

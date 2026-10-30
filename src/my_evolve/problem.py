@@ -27,7 +27,13 @@ The problem file is written in YAML. For now it holds:
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
     islands:                               # optional (D23)
-      count: 3                             # islands, each with its own population
+      count: 3                             # islands, each with its own MAP-Elites grid
+    grid:                                  # optional: the grid of each island (D17, D18)
+      features:                            # its dimensions, 1 to 3
+        - name: code_complexity            # nodes inside the evolve blocks, as log2 of
+          low: -1                          #   their ratio to the initial program's
+          high: 3                          # values outside low..high go to the end bins
+          bins: 10                         # optional: 10, 5 or 3 for 1, 2 or 3 features
     parents:                               # optional: how parents are chosen (D19)
       strategy: weighted                   # ShinkaEvolve's rule
       lambda: 1.0                          # how sharply it favours the better programs
@@ -60,6 +66,13 @@ KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
 # The rules that can choose parents
 PARENT_STRATEGIES = ("weighted",)
+# The grid's built-in feature: the syntax-tree nodes inside the evolve blocks (D17)
+CODE_COMPLEXITY = "code_complexity"
+# The most dimensions a grid may have, and each feature's bins when the problem file
+# gives none, by number of dimensions: grids stay small for runs of a few hundred
+# iterations (D18)
+MAX_GRID_FEATURES = 3
+DEFAULT_BINS = {1: 10, 2: 5, 3: 3}
 # The keys of the llm section that apply to every model, unless a model sets its own
 SHARED_MODEL_KEYS = frozenset(
     {"api_base", "api_key", "max_tokens", "temperature", "reasoning_effort", "timeout", "retries"}
@@ -131,6 +144,24 @@ class SandboxSettings:
 
 
 @dataclass(frozen=True)
+class FeatureSpec:
+    """One dimension of the MAP-Elites grid (D17, D18)."""
+
+    # The feature's name; code_complexity is the built-in one
+    name: str
+    # The range cut into equal bins; a value outside it goes to the nearest end bin
+    low: float
+    high: float
+    # How many bins
+    bins: int
+
+
+# The grid when the problem file gives none: code complexity, from half to eight times the
+# initial program's size, in 10 bins (D18)
+DEFAULT_GRID = (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 10),)
+
+
+@dataclass(frozen=True)
 class IslandSettings:
     """The islands: populations that evolve apart (D23)."""
 
@@ -184,6 +215,8 @@ class Problem:
     parents: ParentSettings = field(default_factory=ParentSettings)
     # The islands
     islands: IslandSettings = field(default_factory=IslandSettings)
+    # The dimensions of each island's MAP-Elites grid
+    grid_features: tuple[FeatureSpec, ...] = DEFAULT_GRID
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -205,7 +238,15 @@ class Problem:
             data,
             "the problem file",
             required={"name", "description", "entry_functions", "llm"},
-            optional={"packages", "evaluation", "sandbox", "prompt", "parents", "islands"},
+            optional={
+                "packages",
+                "evaluation",
+                "sandbox",
+                "prompt",
+                "parents",
+                "islands",
+                "grid",
+            },
         )
         evaluation = checked_section(
             top.get("evaluation", {}),
@@ -274,6 +315,7 @@ class Problem:
                     parents, "lambda", "the parents section", ParentSettings().lam
                 ),
             ),
+            grid_features=build_grid(top.get("grid", {})),
             islands=IslandSettings(
                 count=checked_count(
                     islands, "count", "the islands section", IslandSettings().count
@@ -426,6 +468,48 @@ def build_model(values: dict[str, Any], where: str) -> ModelSettings:
         retries=checked_count(llm, "retries", where, defaults.retries, minimum=0),
         weight=checked_positive_number(llm, "weight", where, defaults.weight),
     )
+
+
+def checked_number(section: dict[str, Any], key: str, where: str) -> float:
+    """Return the value of a required key that must hold a finite number."""
+    value = checked_optional_number(section, key, where)
+    if value is None:
+        raise ProblemError(f"{key!r} in {where} must be a number")
+    return value
+
+
+def build_grid(section: Any) -> tuple[FeatureSpec, ...]:
+    """Build the grid's dimensions from the grid section; code_complexity alone by default.
+
+    Each feature has a name, a range (low below high) and a number of bins; without one,
+    10, 5 or 3 bins for a grid of 1, 2 or 3 features (D18).
+    """
+    grid = checked_section(section, "the grid section", optional={"features"})
+    if "features" not in grid:
+        return DEFAULT_GRID
+    entries = grid["features"]
+    if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_GRID_FEATURES:
+        raise ProblemError(
+            f"'features' in the grid section must be a list of 1 to {MAX_GRID_FEATURES} features"
+        )
+    features = []
+    for number, entry in enumerate(entries, start=1):
+        where = f"feature {number} of the grid section"
+        spec = checked_section(entry, where, required={"name", "low", "high"}, optional={"bins"})
+        name = checked_text(spec, "name", where)
+        if name != CODE_COMPLEXITY:
+            raise ProblemError(
+                f"unknown grid feature {name!r} in {where}: the grid knows {CODE_COMPLEXITY}"
+            )
+        low = checked_number(spec, "low", where)
+        high = checked_number(spec, "high", where)
+        if not low < high:
+            raise ProblemError(f"'low' must be below 'high' in {where}")
+        bins = checked_count(spec, "bins", where, DEFAULT_BINS[len(entries)])
+        features.append(FeatureSpec(name, low, high, bins))
+    if len({feature.name for feature in features}) != len(features):
+        raise ProblemError("two features of the grid section have the same name")
+    return tuple(features)
 
 
 def checked_entry_functions(value: Any) -> tuple[str, ...]:

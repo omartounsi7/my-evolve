@@ -13,6 +13,9 @@ The checks, in this order (check_child):
 4. it is not a duplicate of an earlier program: no earlier program has the same syntax
    tree (D13, D24). Each program's tree is kept as a hash, its fingerprint, so the check
    is instant; comments and spacing are not part of the tree, so they do not count.
+
+Along the way they measure the child's code complexity, the MAP-Elites grid's built-in
+feature (D17): the number of syntax-tree nodes inside its evolve blocks.
 """
 
 import ast
@@ -115,6 +118,9 @@ class ChildChecks:
     reason: str | None
     # The hash of its syntax tree; None if it does not compile
     fingerprint: str | None
+    # Its syntax-tree nodes inside the evolve blocks (D17); None if it does not compile or
+    # its blocks are broken
+    code_complexity: int | None = None
 
 
 def fingerprint(tree: ast.Module) -> str:
@@ -123,6 +129,40 @@ def fingerprint(tree: ast.Module) -> str:
     Comments and spacing are not part of the tree, so they do not change it.
     """
     return hashlib.sha256(ast.dump(tree).encode("utf-8")).hexdigest()
+
+
+def block_lines(code: str) -> list[range]:
+    """Return the line numbers (from 1) of each evolve block's contents, markers excluded.
+
+    The markers are assumed to be in order, as split_evolve_blocks checks.
+    """
+    blocks = []
+    first = 0
+    for number, line in enumerate(code.splitlines(), start=1):
+        if line.strip() == START_MARKER:
+            first = number + 1
+        elif line.strip() == END_MARKER:
+            blocks.append(range(first, number))
+    return blocks
+
+
+def count_block_nodes(tree: ast.Module, code: str) -> int:
+    """Return the number of syntax-tree nodes inside the evolve blocks (D17).
+
+    A node counts if its first and last lines both fall inside one block. Nodes without
+    a position in the code (contexts such as Load, operators such as Add, a function's
+    arguments taken together) are not counted.
+    """
+    blocks = block_lines(code)
+    count = 0
+    for node in ast.walk(tree):
+        first = getattr(node, "lineno", None)
+        last = getattr(node, "end_lineno", None)
+        if first is None or last is None:
+            continue
+        if any(first in block and last in block for block in blocks):
+            count += 1
+    return count
 
 
 def defined_functions(tree: ast.Module) -> set[str]:
@@ -155,11 +195,13 @@ def check_child(
     difference = same_outside_code(code, initial_code)
     if difference is not None:
         return ChildChecks(difference, tree_hash)
+    # The blocks are sound from here on, so their contents can be measured.
+    complexity = count_block_nodes(tree, code)
     missing = [name for name in entry_functions if name not in defined_functions(tree)]
     if missing:
-        return ChildChecks(
-            f"the program must define the function {missing[0]}() at its top level", tree_hash
-        )
+        reason = f"the program must define the function {missing[0]}() at its top level"
+        return ChildChecks(reason, tree_hash, complexity)
     if tree_hash in known_fingerprints:
-        return ChildChecks(f"same program as {known_fingerprints[tree_hash]}", tree_hash)
-    return ChildChecks(None, tree_hash)
+        reason = f"same program as {known_fingerprints[tree_hash]}"
+        return ChildChecks(reason, tree_hash, complexity)
+    return ChildChecks(None, tree_hash, complexity)

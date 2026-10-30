@@ -6,7 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from my_evolve.problem import Problem, ProblemError
+from my_evolve.problem import FeatureSpec, Problem, ProblemError
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
 
@@ -208,6 +208,27 @@ class ProblemTest(unittest.TestCase):
             data = valid_data()
             data[section] = wrong
             with self.subTest(section=section, value=wrong), self.assertRaises(ProblemError):
+                Problem.from_dict(data)
+
+    def test_the_grid_section(self) -> None:
+        """code_complexity from -1 to 3 in 10 bins by default (D18)."""
+        default = (FeatureSpec("code_complexity", -1.0, 3.0, 10),)
+        self.assertEqual(Problem.from_dict(valid_data()).grid_features, default)
+        data = valid_data()
+        data["grid"] = {"features": [{"name": "code_complexity", "low": 0, "high": 2}]}
+        self.assertEqual(
+            Problem.from_dict(data).grid_features, (FeatureSpec("code_complexity", 0, 2, 10),)
+        )
+        for features, error in [
+            ([{"name": "code_complexity", "low": 2, "high": 2}], "'low' must be below 'high'"),
+            ([{"name": "code_complexity", "low": 0, "high": "3"}], "'high' .* must be a number"),
+            ([{"name": "radii_spread", "low": 0, "high": 1}], "unknown grid feature"),
+            ([{"name": "code_complexity", "low": 0, "high": 1, "bins": 0}], "'bins'"),
+            ([{"name": "code_complexity", "low": 0}], "missing key 'high'"),
+            ([], "1 to 3 features"),
+        ]:
+            data["grid"] = {"features": features}
+            with self.subTest(error=error), self.assertRaisesRegex(ProblemError, error):
                 Problem.from_dict(data)
 
     def test_the_islands_section(self) -> None:
