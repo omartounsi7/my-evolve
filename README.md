@@ -128,6 +128,7 @@ MY_EVOLVE_SLOW_TESTS=1 .venv/bin/python -m unittest discover tests
 .venv/bin/python -m mypy
 .venv/bin/python -m mypy examples/circle_packing/evaluation.py
 .venv/bin/python -m mypy examples/function_minimization/evaluation.py
+.venv/bin/python -m mypy examples/circle_packing_precise/evaluation.py
 
 # Check for common mistakes and style problems
 .venv/bin/python -m ruff check

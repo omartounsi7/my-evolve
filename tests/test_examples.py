@@ -1,5 +1,6 @@
 """Checks the example problems and the tests' toy problem, through their evaluation files."""
 
+import os
 import runpy
 import tempfile
 import unittest
@@ -97,6 +98,52 @@ class CirclePackingDrawingTest(unittest.TestCase):
             path = Path(folder) / "packing.png"
             load_evaluate(CIRCLE_PACKING_FOLDER, "visualize")(output_data, path)
             self.assertEqual(path.read_bytes()[:8], b"\x89PNG\r\n\x1a\n")
+
+
+PRECISE_FOLDER = REPOSITORY_FOLDER / "examples" / "circle_packing_precise"
+
+
+def grid_packing(grow: float = 0.0) -> dict[str, Any]:
+    """Return a namespace whose run_packing gives 25 circles of radius 0.1 on a 5 x 5 grid,
+    each touching its neighbours, and a 26th of radius 0; circle 12, in the middle, grown
+    by grow."""
+    centers = [[0.1 + 0.2 * i, 0.1 + 0.2 * j] for i in range(5) for j in range(5)] + [[0, 0]]
+    radii = [0.1] * 25 + [0.0]
+    radii[12] += grow
+    return packing_of(centers, radii)
+
+
+class PreciseCirclePackingTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evaluate = load_evaluate(PRECISE_FOLDER)
+        self.best = runpy.run_path(str(PRECISE_FOLDER / "evaluation.py"))["BEST_KNOWN_SUM"]
+
+    def test_a_legal_packing_scores_its_sum(self) -> None:
+        result = self.evaluate(grid_packing())
+        self.assertAlmostEqual(result.metrics["sum_radii"], 2.5, places=12)
+        self.assertAlmostEqual(result.score, 2.5 / self.best, places=12)
+        # Touching circles overlap by round-off, about 1e-17: that is not a violation to fix.
+        self.assertIn("within floating-point round-off", result.feedback)
+
+    def test_a_violation_is_shrunk_away_from_every_radius(self) -> None:
+        """Growing a circle by 5e-7 overlaps its neighbours by 5e-7: each of the 25 circles
+        loses it (the 26th, of radius 0, has nothing to lose)."""
+        result = self.evaluate(grid_packing(grow=5e-7))
+        self.assertAlmostEqual(result.metrics["worst_violation"], 5e-7, places=15)
+        self.assertAlmostEqual(result.metrics["sum_radii"], 2.5 + 5e-7 - 25 * 5e-7, places=12)
+        self.assertIn("Every radius was shrunk", result.feedback)
+        self.assertLess(result.score, self.evaluate(grid_packing()).score)
+
+    def test_a_violation_above_1e_6_is_illegal(self) -> None:
+        with self.assertRaisesRegex(InvalidProgram, "overlap by 2.000e-06"):
+            self.evaluate(grid_packing(grow=2e-6))
+
+    def test_the_initial_program_is_the_best_found(self) -> None:
+        """Its legal sum is the reference, 2.6359830849 (run on the host: about 45 s)."""
+        if not os.environ.get("MY_EVOLVE_SLOW_TESTS"):
+            self.skipTest("slow; set MY_EVOLVE_SLOW_TESTS=1")
+        result = self.evaluate(run_program(PRECISE_FOLDER / "initial_program.py"))
+        self.assertAlmostEqual(result.metrics["sum_radii"], self.best, places=9)
 
 
 class ToyProblemTest(unittest.TestCase):

@@ -1,0 +1,84 @@
+# Circle packing at full precision: 26 circles in the unit square, for going past the
+# best known packing (a sum of radii of 2.6359830849, found by the claude_3d_1 run).
+#
+# What differs from ../circle_packing/problem_claude_3d.yaml:
+# - the evaluation (evaluation.py here) scores only legal geometry: violations are shrunk
+#   away instead of tolerated, and 1.0 is the best sum found so far;
+# - the description says where the problem stands, and what can still improve it;
+# - each program gets one stage of 5 minutes and 4 CPUs;
+# - the initial program is that best packing's program (initial_program.py here).
+
+name: circle_packing_precise
+description: |
+  You are an expert mathematician specializing in circle packing problems, computational geometry and high-precision numerical optimization. Your task is to improve a program that produces an arrangement of 26 circles in a unit square, maximizing the sum of their radii.
+
+  Where the problem stands:
+  - The best sum found so far is 2.6359830849 (the AlphaEvolve paper reported 2.635; OpenEvolve, 2.635977). It is believed to be optimal or very close to it, so any improvement will be small, in the sixth decimal or beyond. Every such gain counts.
+  - The score is the legal sum of radii divided by 2.6359830849: a score above 1 beats the best packing known.
+  - The sum is measured exactly. The packing's worst violation (the most two circles overlap, or one sticks out of the square) is subtracted from every radius before summing, so a packing that relies on tolerance loses 26 times what it gains. Aim for packings that are exactly legal, with contacts that touch within about 1e-12.
+
+  What can still help:
+  - A different contact graph: which circles touch which, and which touch the walls. The best packings are rigid: every circle is held by its contacts.
+  - Polishing a candidate to full precision: solve the contact equations with Newton's method or a high-precision solver, rather than stopping a general optimizer at its default tolerance.
+  - Searching widely from many starting layouts (perturbed copies of the best packing, other row structures, random starts), then polishing only the best.
+  - The program has 4 CPUs and 5 minutes; stop the search well before that limit.
+
+  The program must keep run_packing(), which takes no arguments and returns
+  (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
+  (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
+  sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
+  and no two circles may overlap; violations up to 1e-6 are subtracted from the radii as
+  described above, and larger ones make the packing invalid. No radius may be negative.
+
+# The function every program must define, which the evaluation calls.
+entry_functions: [run_packing]
+
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - matplotlib==3.11.2
+  - numpy==2.5.4
+  - scipy==1.18.1
+
+# The LLMs: Appendix B's batch 2, Claude Haiku 5.5 and Claude Sonnet 5.5, through
+# Anthropic's OpenAI-compatible endpoint. The key is read from the variable
+# ANTHROPIC_API_KEY. No temperature: these models reject one.
+llm:
+  api_base: https://api.anthropic.com/v1/
+  api_key: ${ANTHROPIC_API_KEY}
+  models:
+    # Prices in dollars per million input and output tokens, for the summary's cost
+    # (Haiku's are for prompts up to 100,000 tokens; these stay far below).
+    - name: claude-haiku-5-5
+      weight: 0.8
+      price_input: 0.10
+      price_output: 0.50
+    - name: claude-sonnet-5-5
+      weight: 0.2
+      price_input: 2.00
+      price_output: 10.00
+
+# The prompt's budget, in characters (about 11,400 tokens).
+prompt:
+  max_chars: 40000
+
+# One grid per island (islands.count, 3 by default), each with these three dimensions:
+# code size, how much the radii vary, and whether the big circles are in the middle (-1)
+# or at the edges (+1). 3 bins each, the default for three features: 27 cells per island.
+# Code size is centred on the initial program, already a long one: from half its size to
+# twice it.
+grid:
+  features:
+    - {name: code_complexity, low: -1, high: 1}
+    - {name: radii_spread, low: 0, high: 1.5}
+    - {name: radius_centre_correlation, low: -1, high: 1}
+
+# One stage, which may last 5 minutes: at this precision, programs need long, careful
+# optimization (the original allows 60 s).
+evaluation:
+  stage_time_limit: 300
+
+# 4 CPUs per program (the default is 1): with 2 workers, 8 CPUs in all. Numeric libraries
+# get as many threads.
+sandbox:
+  memory: 2g
+  cpus: 4

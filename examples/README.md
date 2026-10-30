@@ -7,8 +7,16 @@ initial program, its evaluation file, and the problem file.
 |---|---|
 | Circle packing: 26 circles in the unit square, maximizing the sum of their radii | `circle_packing/` |
 | Function minimization: the global minimum of a function with many local minima | `function_minimization/` |
+| Circle packing at full precision, for going past the best packing known | `circle_packing_precise/` |
 
-The problems are OpenEvolve's, so that runs start from the same baseline as
+`circle_packing_precise/` is my-evolve's own; the others are OpenEvolve's. It scores only
+legal geometry (a violation is subtracted from every radius rather than tolerated), with
+1.0 for the best legal sum found so far, 2.6359830849, by the `claude_3d_1` run; its
+initial program is that run's best program, and its problem file gives each program one
+stage of 5 minutes and 4 CPUs, Claude's models, and a 3D grid. Its scores are not
+comparable with `circle_packing/`'s.
+
+The other problems are OpenEvolve's, so that runs start from the same baseline as
 OpenEvolve's and can be compared with them (D3).
 
 - Source: OpenEvolve, commit `da3d7011d6b87bf139f3291108be51536685828f`.
