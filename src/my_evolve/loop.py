@@ -341,6 +341,10 @@ class Loop:
         self.run_seed: int = seed
         self.rng: random.Random = random.Random(seed)
         self.prompt_builder: PromptBuilder = PromptBuilder(problem)
+        # Each model's settings, by name
+        self.model_settings: dict[str, ModelSettings] = {
+            model.name: model for model in problem.llm.models
+        }
         # Set by prepare
         self.database: Database | None = None
         # Iterations started and completed (failed and skipped ones included), those of
@@ -559,6 +563,7 @@ class Loop:
         if state.checks.fingerprint is not None:
             self.pending.pop(state.checks.fingerprint, None)
         reply = state.reply
+        self.check_context(state.number, reply)
         usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
         child = Program.new_child(
             state.parent,
@@ -604,6 +609,25 @@ class Loop:
             best_score_text(self.db),
         )
         self.after_completion()
+
+    def check_context(self, number: int, reply: LLMReply) -> None:
+        """Warn if a prompt, with the longest reply, did not fit in the model's context: the
+        server may have cut it. The problem file's check estimates tokens from characters;
+        this catches a tokenizer denser than estimated."""
+        model = self.model_settings.get(reply.model)
+        if model is None or model.context_length is None:
+            return
+        if reply.input_tokens + model.max_tokens > model.context_length:
+            logger.warning(
+                "Iteration %d: the prompt took %d tokens, which with %s's max_tokens of %d is "
+                "more than its context_length of %d: the server may have cut the prompt. "
+                "Lower max_chars in the prompt section.",
+                number,
+                reply.input_tokens,
+                model.name,
+                model.max_tokens,
+                model.context_length,
+            )
 
     def fail(self, state: IterationState, error: BaseException) -> None:
         """Record an iteration that failed before having a child, not through the program's

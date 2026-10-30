@@ -292,6 +292,12 @@ wording variations.
 programs are dropped, last first, with a warning in the log. Feedback and errors are each cut to 2,000
 characters (also in the problem file).
 
+A model may give its `context_length`, the tokens its server holds. A server such as Ollama silently cuts
+a prompt that does not fit, the system message first, so the budget plus the model's `max_tokens` must fit
+in it: counted at 3.5 characters per token (the fewest seen in the first plan's milestones, 3.55 to 4.49),
+a problem file that does not is refused. A prompt whose reported tokens, plus `max_tokens`, still exceed the
+context is reported in the log. Batch 1's problem files set 32,768 and a budget of 40,000 characters.
+
 ---
 
 ## 6. The LLM
@@ -586,7 +592,7 @@ The entries are numbered D60 to D70 and D72 to D79, in the order of the modules,
 | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
 | `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
 | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |
-| `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
+| `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices, `context_length`, D30), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
 
 **Dataclasses**:
 

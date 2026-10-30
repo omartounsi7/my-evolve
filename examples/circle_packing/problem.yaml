@@ -38,14 +38,21 @@ packages:
 #   OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 llm:
   api_base: http://localhost:11434/v1
+  # Ollama's context, as started above: the prompt's budget (max_chars below) plus each
+  # model's max_tokens must fit in it, or the problem file is refused.
+  context_length: 32768
   models:
     - name: qwen3-coder:30b
       weight: 0.8
     - name: qwen3:8b
       weight: 0.2
-      # It thinks at length: up to 14,600 tokens in the v1 branch's runs. The reply limit
-      # plus the prompt must fit in Ollama's context (32,768 tokens).
-      max_tokens: 24576
+      # It thinks at length: up to 14,600 tokens in the v1 branch's runs.
+      max_tokens: 20480
+
+# The prompt's budget, in characters: about 11,400 tokens, which with qwen3:8b's 20,480
+# fit in the 32,768 of the context (the longest prompt so far was about 25,000 characters).
+prompt:
+  max_chars: 40000
 
 # The grid of each island is code complexity alone (the default). The evaluation's stage 1
 # also gives radii_spread and radius_centre_correlation, so a 2D or 3D grid can use them:

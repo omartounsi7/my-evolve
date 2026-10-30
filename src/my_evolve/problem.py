@@ -14,6 +14,7 @@ The problem file is written in YAML. For now it holds:
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
       api_key: ${ANTHROPIC_API_KEY}        # optional: the variable holding the key
       max_tokens: 16384                    # optional: the longest reply, in tokens
+      context_length: 32768                # optional: the prompt and the reply must fit in it
       temperature: 0.7                     # optional; not for reasoning models
       reasoning_effort: medium             # optional; reasoning models only
       timeout: 300                         # optional: seconds to wait for a reply
@@ -105,8 +106,13 @@ SHARED_MODEL_KEYS = frozenset(
         "retries",
         "price_input",
         "price_output",
+        "context_length",
     }
 )
+# How many characters of prompt a token holds, at the least: 3.55 to 4.49 in the 110 calls
+# of the first plan's milestones (code and English, Qwen's tokenizer). Kept low, so that
+# the estimate of a prompt's tokens errs on the high side
+CHARS_PER_TOKEN = 3.5
 # A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
 PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
 
@@ -143,6 +149,10 @@ class ModelSettings:
     price_output: float | None = None
     # How often the ensemble draws it, relative to the other models' weights
     weight: float = 1.0
+    # The tokens its server can hold, the prompt and the reply together; None if not given.
+    # A server such as Ollama silently cuts a prompt that does not fit, so the prompt's
+    # budget plus max_tokens must fit in it
+    context_length: int | None = None
 
 
 @dataclass(frozen=True)
@@ -363,7 +373,7 @@ class Problem:
         )
         defaults = EvaluationSettings()
         sandbox_defaults = SandboxSettings()
-        return cls(
+        problem = cls(
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
             entry_functions=checked_entry_functions(top["entry_functions"]),
@@ -437,6 +447,32 @@ class Problem:
                 ),
             ),
         )
+        check_context(problem.llm, problem.prompt.max_chars)
+        return problem
+
+
+def prompt_tokens(characters: int) -> int:
+    """Return how many tokens a prompt of that many characters takes, at the most likely."""
+    return math.ceil(characters / CHARS_PER_TOKEN)
+
+
+def check_context(llm: LLMSettings, max_chars: int) -> None:
+    """Refuse a model whose context cannot hold the longest prompt and the longest reply.
+
+    The prompt's tokens are estimated from the prompt section's max_chars. Raises
+    ProblemError, saying what to lower, for the first model whose context is too small.
+    """
+    for model in llm.models:
+        if model.context_length is None:
+            continue
+        needed = prompt_tokens(max_chars) + model.max_tokens
+        if needed > model.context_length:
+            raise ProblemError(
+                f"{model.name}'s context_length of {model.context_length} tokens cannot hold "
+                f"the longest prompt (max_chars {max_chars}, about {prompt_tokens(max_chars)} "
+                f"tokens) and the longest reply (max_tokens {model.max_tokens}): {needed} "
+                "tokens. Lower max_chars in the prompt section, or the model's max_tokens"
+            )
 
 
 def checked_section(
@@ -575,6 +611,9 @@ def build_model(values: dict[str, Any], where: str) -> ModelSettings:
         price_input=checked_optional_number(llm, "price_input", where),
         price_output=checked_optional_number(llm, "price_output", where),
         weight=checked_positive_number(llm, "weight", where, defaults.weight),
+        context_length=(
+            checked_count(llm, "context_length", where, 1) if "context_length" in llm else None
+        ),
     )
 
 

@@ -631,6 +631,20 @@ class LoopTest(unittest.TestCase):
         lines = summary(problem, database, 1, "every iteration done")
         self.assertTrue(lines[-1].endswith(f"tokens, ${cost:.4f}."))
 
+    def test_a_prompt_too_long_for_the_context_is_reported(self) -> None:
+        """The server may have cut it: the log says so, and how to avoid it."""
+        problem = Problem.load(TOY_FOLDER / "problem.yaml")
+        model = replace(problem.llm.models[0], max_tokens=100, context_length=250)
+        problem = replace(problem, llm=replace(problem.llm, models=(model,)))
+        _, _, console = run_toy([reply_returning("5")], self.output, problem=problem)
+        self.assertRegex(
+            console,
+            r"Iteration 1: the prompt took \d+ tokens, which with fake-model's max_tokens of 100 "
+            r"is more than its context_length of 250: the server may have cut the prompt",
+        )
+        _, _, console = run_toy([reply_returning("5")], self.folder / "fits")
+        self.assertNotIn("may have cut", console)
+
     def test_every_llm_call_is_saved(self) -> None:
         """llm_calls.jsonl: one line per call, failed ones included; children keep their usage."""
         replies: list[str | Exception] = [

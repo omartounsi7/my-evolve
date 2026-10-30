@@ -48,7 +48,10 @@ time, with the problem file's `packages`.
 It also needs the problem file's model reachable: for the circle-packing example, a
 local [Ollama](https://ollama.com) server with `qwen3-coder:30b` pulled
 (`ollama pull qwen3-coder:30b`). Ollama silently cuts prompts longer than its context
-length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
+length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more. The problem file's
+`context_length` says how much the server holds: a problem file whose prompt budget
+(`max_chars`, counted as 3.5 characters per token) plus a model's `max_tokens` exceeds
+it is refused, and a prompt that turns out longer is reported in the log.
 
 ```bash
 .venv/bin/python scripts/run.py examples/circle_packing/initial_program.py examples/circle_packing/evaluation.py --config examples/circle_packing/problem.yaml --iterations 20 --output runs/circle_packing_1

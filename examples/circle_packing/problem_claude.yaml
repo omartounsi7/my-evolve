@@ -47,6 +47,11 @@ llm:
     - name: claude-sonnet-5-5
       weight: 0.2
 
+# The prompt's budget, in characters, the same as problem.yaml's, so that both batches
+# see the same prompts.
+prompt:
+  max_chars: 40000
+
 # OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
 evaluation:
   stage_time_limit: 60

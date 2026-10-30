@@ -30,6 +30,24 @@ class ProblemTest(unittest.TestCase):
         self.assertEqual(problem.llm.models[0].name, "some-model")
         self.assertEqual(problem.llm.models[0].api_base, "http://localhost:11434/v1")
 
+    def test_the_context_must_hold_the_longest_prompt_and_reply(self) -> None:
+        """40,000 characters are about 11,429 tokens, at 3.5 characters per token (D30)."""
+        data = valid_data()
+        data["prompt"] = {"max_chars": 40000}
+        data["llm"]["context_length"] = 32768
+        data["llm"]["models"] = [{"name": "a", "max_tokens": 21339}]
+        self.assertEqual(Problem.from_dict(data).llm.models[0].context_length, 32768)
+        data["llm"]["models"] = [{"name": "a"}, {"name": "b", "max_tokens": 21340}]
+        with self.assertRaisesRegex(
+            ProblemError, r"b's context_length of 32768 tokens cannot hold .* 32769 tokens"
+        ):
+            Problem.from_dict(data)
+        data["llm"]["models"] = [{"name": "b", "max_tokens": 21340, "context_length": 40000}]
+        self.assertEqual(Problem.from_dict(data).llm.models[0].context_length, 40000)
+        del data["llm"]["context_length"]
+        data["llm"]["models"] = [{"name": "b", "max_tokens": 99999}]
+        self.assertIsNone(Problem.from_dict(data).llm.models[0].context_length)
+
     def test_the_example_problem_files_load(self) -> None:
         """The repository's problem files are correct."""
         for path in [
