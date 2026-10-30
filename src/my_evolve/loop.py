@@ -306,8 +306,10 @@ class Loop:
         storage: Storage,
         seed: int,
         workers: int,
+        target_score: float | None = None,
+        patience: int | None = None,
     ) -> None:
-        """Gather what the run needs; prepare() then checks the start."""
+        """Gather what the run needs; prepare() or restore() then checks the start."""
         self.problem: Problem = problem
         self.initial_code: str = initial_code
         self.ensemble: Ensemble = ensemble
@@ -317,6 +319,10 @@ class Loop:
         self.storage: Storage = storage
         # How many iterations may be in flight at once
         self.workers: int = workers
+        # The run stops once the best score reaches target_score, or after patience
+        # completed iterations without a better best, when given (D37)
+        self.target_score: float | None = target_score
+        self.patience: int | None = patience
         # The run's seed, and its random generator: every draw of the run comes from it (D39)
         self.run_seed: int = seed
         self.rng: random.Random = random.Random(seed)
@@ -420,7 +426,8 @@ class Loop:
             )
         self.rng.seed(f"{self.run_seed}/{len(programs)}")
         self.database = self.make_database(programs[0].code_complexity)
-        self.db.replay(programs)
+        # Each child's completed count, so that patience counts on correctly (P4)
+        self.db.replay(programs, {row.program_id: row.completed for row in history})
         self.started = self.completed = len(history)
         self.done_before = finished
         best = self.db.best()
@@ -451,7 +458,7 @@ class Loop:
 
     def store(self, program: Program) -> None:
         """Add a program to the database and the run folder."""
-        self.db.add(program)
+        self.db.add(program, self.completed)
         self.storage.append_program(program)
         if self.db.best_id == program.id:
             self.storage.write_best(program)
@@ -540,8 +547,8 @@ class Loop:
             code_complexity=state.checks.code_complexity,
             program_id=state.child_id,
         )
-        self.store(child)
         self.completed += 1
+        self.store(child)
         self.count_error(result.status is Status.ERROR)
         self.storage.append_llm_call(
             {
@@ -599,11 +606,30 @@ class Loop:
         self.after_completion()
 
     def count_error(self, is_error: bool) -> None:
-        """Count an error in a row, or start the count again; stop the run at the limit."""
+        """Count an error in a row, or start the count again."""
         self.errors_in_a_row = self.errors_in_a_row + 1 if is_error else 0
-        if self.errors_in_a_row >= self.problem.max_errors_in_a_row and self.stop_reason is None:
-            logger.info("Stopping: %d errors in a row", self.errors_in_a_row)
-            self.stop_reason = "too many errors in a row"
+
+    def should_stop(self) -> str | None:
+        """Return why the run must stop starting iterations, or None (D37).
+
+        The iteration total is step's own test, and a model left is start_iteration's.
+        """
+        best_score = self.db.best_score()
+        if self.target_score is not None and best_score is not None:
+            if best_score >= self.target_score:
+                return "target score reached"
+        if self.patience is not None and self.completed - self.db.best_changed_at >= self.patience:
+            return "patience ran out"
+        if self.errors_in_a_row >= self.problem.max_errors_in_a_row:
+            return "too many errors in a row"
+        return None
+
+    def check_stop(self) -> None:
+        """Stop the run from starting iterations if it must (D37), logging why once."""
+        reason = self.should_stop() if self.stop_reason is None else None
+        if reason is not None:
+            logger.info("Stopping: %s", reason)
+            self.stop_reason = reason
 
     def skip(self, state: IterationState, error: BaseException) -> None:
         """Record an iteration that produced no child (main thread): it still counts (D34)."""
@@ -648,21 +674,22 @@ class Loop:
 
     def after_completion(self) -> None:
         """Every snapshot_every completed iterations, skipped ones included, save the best
-        program (D47); every migration_interval, migrate between islands (D23)."""
+        program (D47); every migration_interval, migrate between islands (D23). Then see
+        whether the run must stop."""
         completed = self.completed
         best = self.db.best()
         if completed % self.problem.snapshot_every == 0 and best is not None:
             self.storage.write_snapshot(best, completed)
-        if completed % self.problem.islands.migration_interval != 0:
-            return
-        arrivals = self.db.migrate(completed)
-        for arrival in arrivals:
-            self.store(arrival)
-        if arrivals:
-            verb = "moved" if self.problem.islands.mode == "move" else "copied"
-            logger.info(
-                "Migration after iteration %d: %d programs %s", completed, len(arrivals), verb
-            )
+        if completed % self.problem.islands.migration_interval == 0:
+            arrivals = self.db.migrate(completed)
+            for arrival in arrivals:
+                self.store(arrival)
+            if arrivals:
+                verb = "moved" if self.problem.islands.mode == "move" else "copied"
+                logger.info(
+                    "Migration after iteration %d: %d programs %s", completed, len(arrivals), verb
+                )
+        self.check_stop()
 
     def run_iterations(self) -> str:
         """Run iterations until enough have completed or the run stops; return why it stopped.
@@ -670,6 +697,8 @@ class Loop:
         The first Ctrl+C stops new iterations from starting, and the run ends once those
         in flight are done (D53). A second Ctrl+C, or SIGTERM, raises StopNow (D54).
         """
+        # A continued run may have reached its target, or run out of patience, already.
+        self.check_stop()
         pool = WorkerPool(self.workers)
         in_flight: dict[int, IterationState] = {}
         while True:
@@ -741,6 +770,8 @@ def run(
     problem_file: Path | None = None,
     command: Sequence[str] = (),
     workers: int = 1,
+    target_score: float | None = None,
+    patience: int | None = None,
 ) -> Database:
     """Evolve the initial program until `iterations` iterations are done, and return the
     database.
@@ -750,7 +781,9 @@ def run(
     fixes the random draws (with one worker and the same LLM replies, a run repeats
     exactly); without one, a seed is drawn. run_id identifies the run (its containers are
     labelled with it); without one, an id is made. Up to `workers` iterations are in
-    flight at once. Each iteration draws one model of the ensemble; an iteration whose
+    flight at once. The run stops early once the best score reaches target_score, or
+    after patience completed iterations without a better best, if given (D37). Each
+    iteration draws one model of the ensemble; an iteration whose
     LLM call fails is skipped, and the run stops when every model has been dropped. Every
     model is checked before the run. Messages go to the console (details too with
     verbose) and to log.txt in the output folder.
@@ -789,7 +822,18 @@ def run(
                 logger.warning("The run keeps its seed, %d: --seed %d is ignored", saved.seed, seed)
             seed = saved.seed
         seed = seed if seed is not None else random.SystemRandom().randrange(2**32)
-        loop = Loop(problem, initial_code, ensemble, evaluator, iterations, storage, seed, workers)
+        loop = Loop(
+            problem,
+            initial_code,
+            ensemble,
+            evaluator,
+            iterations,
+            storage,
+            seed,
+            workers,
+            target_score,
+            patience,
+        )
         logger.info("Seed: %d", seed)
         if saved is not None:
             loop.restore()
@@ -803,7 +847,13 @@ def run(
             "end": None,
             "command": list(command),
             "git_commit": git_commit(),
-            "flags": {"iterations": iterations, "workers": workers, "verbose": verbose},
+            "flags": {
+                "iterations": iterations,
+                "workers": workers,
+                "target_score": target_score,
+                "patience": patience,
+                "verbose": verbose,
+            },
             "llm": asdict(problem.llm),
             "system_message": loop.prompt_builder.system_message,
         }

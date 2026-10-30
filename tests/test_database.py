@@ -429,7 +429,7 @@ class MigrationTest(unittest.TestCase):
             stored.append(arrival)
         replayed = islands_of(2, migrants="random", mode="move", migration_share=1.0)
         state = replayed.rng.getstate()
-        replayed.replay(stored)
+        replayed.replay(stored, {})
         self.assertEqual(replayed.rng.getstate(), state)
         self.assertEqual(list(replayed.programs), list(database.programs))
         self.assertEqual(replayed.best_id, database.best_id)
@@ -438,6 +438,20 @@ class MigrationTest(unittest.TestCase):
             self.assertEqual(
                 replayed.islands[island].grid.elites, database.islands[island].grid.elites
             )
+
+    def test_a_replay_keeps_when_the_best_last_improved(self) -> None:
+        """Each child's completed count comes from the history; others take the one before."""
+        programs = [working(1.0), working(3.0), working(2.0), working(4.0, cell=3)]
+        database = one_island()
+        for count, program in enumerate(programs[:3]):
+            database.add(program, count)
+        self.assertEqual(database.best_changed_at, 1)
+        replayed = one_island()
+        replayed.replay(programs, {programs[1].id: 5, programs[2].id: 6})
+        self.assertEqual(replayed.best_changed_at, 6)
+        replayed = one_island()
+        replayed.replay(programs[:3], {programs[1].id: 5, programs[2].id: 6})
+        self.assertEqual(replayed.best_changed_at, 5)
 
     def test_one_island_has_nowhere_to_send(self) -> None:
         database = islands_of(1)

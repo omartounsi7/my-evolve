@@ -19,6 +19,7 @@ import tempfile
 import threading
 import time
 import unittest
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
@@ -52,19 +53,20 @@ def reply_returning(value: str) -> str:
 
 
 def run_toy(
-    replies: list[str | Exception],
+    replies: Sequence[str | Exception],
     output: Path,
     seed: int = 0,
     iterations: int | None = None,
     problem: Problem | None = None,
     evaluation: Path = TOY_FOLDER / "evaluation.py",
     initial_code: str | None = None,
+    **options: Any,
 ) -> tuple[Database, FakeLLM, str]:
     """Evolve the toy problem with a fake LLM; return the database, the LLM and the console text.
 
-    problem, evaluation and initial_code replace the toy's own.
+    problem, evaluation and initial_code replace the toy's own; options go to run.
     """
-    llm = FakeLLM(replies)
+    llm = FakeLLM(list(replies))
     console = io.StringIO()
     with contextlib.redirect_stdout(console):
         database = run(
@@ -75,6 +77,7 @@ def run_toy(
             iterations=iterations if iterations is not None else len(replies),
             output=output,
             seed=seed,
+            **options,
         )
     return database, llm, console.getvalue()
 
@@ -183,7 +186,16 @@ class LoopTest(unittest.TestCase):
         (session,) = info["sessions"]
         self.assertEqual(session["command"], ["scripts/run.py", "--iterations", "3"])
         self.assertEqual(session["end"], "every iteration done")
-        self.assertEqual(session["flags"], {"iterations": 3, "workers": 1, "verbose": False})
+        self.assertEqual(
+            session["flags"],
+            {
+                "iterations": 3,
+                "workers": 1,
+                "target_score": None,
+                "patience": None,
+                "verbose": False,
+            },
+        )
         self.assertEqual(session["llm"]["models"][0]["name"], "fake-model")
         self.assertIsNotNone(session["ended_at"])
         self.assertTrue(all(program.created_at for program in database.programs.values()))
@@ -424,6 +436,39 @@ class LoopTest(unittest.TestCase):
         _, console = self.run_toy_with(replies, 10)
         self.assertIn("Run finished: 5 iterations done, too many errors in a row.", console)
         self.assertNotIn("dropped", console)
+
+    def test_the_target_score_stops_the_run(self) -> None:
+        replies: list[str | Exception] = [reply_returning(str(n)) for n in (2, 9, 10, 3)]
+        _, llm, console = run_toy(replies, self.output, target_score=9.0)
+        self.assertEqual(len(llm.prompts), 2)
+        self.assertIn("Stopping: target score reached", console)
+        self.assertIn("Run finished: 2 iterations done, target score reached.", console)
+        self.assertEqual(self.session_end(), "target score reached")
+
+    def test_patience_counts_iterations_without_a_better_best(self) -> None:
+        """Skipped iterations count too."""
+        replies: list[str | Exception] = [
+            reply_returning("5"),
+            reply_returning("3"),
+            LLMError("fake-model", "down"),
+            reply_returning("9"),
+        ]
+        _, llm, console = run_toy(replies, self.output, patience=2)
+        self.assertEqual(len(llm.prompts), 3)
+        self.assertIn("Run finished: 3 iterations done, patience ran out.", console)
+
+    def test_patience_counts_on_after_a_resume(self) -> None:
+        """The best's completed count survives the resume (P4); a run already out of
+        patience asks for nothing more."""
+        replies = [reply_returning(n) for n in ("5", "3")]
+        run_toy(list(replies), self.output, iterations=2, patience=3)
+        more = [reply_returning(n) for n in ("4", "2", "1")]
+        _, llm, console = run_toy(more, self.output, iterations=10, patience=3)
+        self.assertEqual(len(llm.prompts), 2)
+        self.assertIn("Run finished: 4 iterations done, patience ran out.", console)
+        _, llm, console = run_toy([], self.output, iterations=10, patience=2)
+        self.assertEqual(llm.prompts, [])
+        self.assertIn("Run finished: 4 iterations done, patience ran out.", console)
 
     def test_an_error_in_the_main_thread_stops_the_run_at_once(self) -> None:
         """The disk refusing a write is not an iteration's error: the run stops, and says so."""

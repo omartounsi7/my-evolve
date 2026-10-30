@@ -60,6 +60,8 @@ length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
 | `--iterations` | How many iterations in all, those of earlier sessions included | required |
 | `--output` | The run folder; a folder holding a run continues it | `runs/<problem>_<date>_<time>` |
 | `--workers` | How many iterations may be in flight at once | 1 |
+| `--target-score` | Stop once the best score reaches it | none |
+| `--patience` | Stop after this many iterations, skipped ones included, without a better best score | none |
 | `--seed` | The seed of the run's random draws (a continued run keeps its own) | drawn, and printed |
 | `--unsafe-local-sandbox` | Run programs as plain processes, without any isolation: tests and trusted code only | off |
 | `--verbose` | Show each iteration's details on the console (`log.txt` always has them) | off |

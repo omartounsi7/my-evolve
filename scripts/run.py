@@ -2,8 +2,8 @@
 
 Usage:
     python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE
-        --iterations N [--output FOLDER] [--workers W] [--seed S] [--unsafe-local-sandbox]
-        [--verbose]
+        --iterations N [--output FOLDER] [--workers W] [--target-score T] [--patience P]
+        [--seed S] [--unsafe-local-sandbox] [--verbose]
 
 The run folder defaults to runs/<problem name>_<date>_<time>. Running the same command
 with --output naming an existing run folder continues that run: --iterations is the total,
@@ -75,6 +75,14 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         type=positive_integer,
         default=1,
         help="how many iterations may be in flight at once (default 1)",
+    )
+    parser.add_argument(
+        "--target-score", type=float, help="stop once the best score reaches it (default: none)"
+    )
+    parser.add_argument(
+        "--patience",
+        type=positive_integer,
+        help="stop after this many iterations without a better best score (default: none)",
     )
     parser.add_argument("--seed", type=int, help="fixes the random draws (default: drawn)")
     parser.add_argument(
@@ -150,6 +158,8 @@ def main(arguments: list[str]) -> int:
                 parsed.config,
                 ["scripts/run.py", *arguments],
                 parsed.workers,
+                parsed.target_score,
+                parsed.patience,
             )
         finally:
             # Whatever happened, no container of the run outlives it.

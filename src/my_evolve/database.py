@@ -22,7 +22,7 @@ import math
 import random
 import statistics
 from abc import ABC, abstractmethod
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 
 from my_evolve.grid import Grid
@@ -174,6 +174,8 @@ class Database:
         self.children: dict[str, int] = {}
         # The id of the program with the highest score; the earliest one on a tie
         self.best_id: str | None = None
+        # The number of completed iterations when the best last improved (for --patience)
+        self.best_changed_at: int = 0
         # How many islands there are, and how they exchange programs
         self.island_settings: IslandSettings = islands or IslandSettings()
         # The islands
@@ -186,8 +188,11 @@ class Database:
         # The run's random generator
         self.rng: random.Random = rng
 
-    def add(self, program: Program) -> None:
+    def add(self, program: Program, completed: int = 0) -> None:
         """Store a program; if it works and beats the best score, it becomes the best.
+
+        completed is the number of iterations completed once the program is added: the
+        best's, for --patience (D37).
 
         A program made on an island joins that island's list, and, if it works, is
         offered its cell of the island's grid. An LLM child counts for its parent whatever
@@ -220,14 +225,20 @@ class Database:
         # Strictly higher: on a tie, the earlier program stays the best.
         if best_score is None or score > best_score:
             self.best_id = program.id
+            self.best_changed_at = completed
 
-    def replay(self, programs: Sequence[Program]) -> None:
+    def replay(self, programs: Sequence[Program], completed: Mapping[str, int]) -> None:
         """Add saved programs again, in the order they were stored, to rebuild a run (D49).
 
-        Migrations were stored as their records, so they replay too; nothing is drawn.
+        completed gives each child's number of completed iterations, from history.csv
+        (the first plan's P4); a program it lacks (the initial program, a copy, a migrant)
+        has that of the child before it. Migrations were stored as their records, so they
+        replay too; nothing is drawn.
         """
+        count = 0
         for program in programs:
-            self.add(program)
+            count = completed.get(program.id, count)
+            self.add(program, count)
 
     def best(self) -> Program | None:
         """Return the program with the highest score (None while no program works)."""
