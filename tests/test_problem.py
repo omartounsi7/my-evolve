@@ -176,14 +176,19 @@ class ProblemTest(unittest.TestCase):
 
     def test_the_precise_problem_file_for_qwen(self) -> None:
         """circle_packing_precise's problem_qwen.yaml differs from its problem.yaml, for
-        Claude, only in its llm section: the local models of circle_packing."""
+        Claude, only in its models, qwen3:8b first, and its grid, without the correlation."""
         folder = REPOSITORY_FOLDER / "examples" / "circle_packing_precise"
         claude = Problem.load(folder / "problem.yaml")
         qwen = Problem.load(folder / "problem_qwen.yaml")
-        local = Problem.load(REPOSITORY_FOLDER / "examples" / "circle_packing" / "problem.yaml")
-        self.assertEqual(qwen.llm, local.llm)
-        self.assertEqual(replace(claude, llm=qwen.llm), qwen)
-        self.assertEqual(claude.fingerprint_without_llm(), qwen.fingerprint_without_llm())
+        self.assertEqual(
+            [(model.name, model.weight) for model in qwen.llm.models],
+            [("qwen3-coder:30b", 0.2), ("qwen3:8b", 0.8)],
+        )
+        self.assertEqual(
+            [(feature.name, feature.bins) for feature in qwen.grid_features],
+            [("code_complexity", 5), ("radii_spread", 5)],
+        )
+        self.assertEqual(replace(claude, llm=qwen.llm, grid_features=qwen.grid_features), qwen)
 
     def test_entry_functions(self) -> None:
         """Required: a list of one or more function names."""

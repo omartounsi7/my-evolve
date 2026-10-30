@@ -9,8 +9,8 @@
 # - each program gets one stage of 5 minutes and 4 CPUs.
 # The initial program is OpenEvolve's, as in ../circle_packing.
 #
-# problem.yaml with Ollama's qwen models instead of Claude's: everything but the llm
-# section is the same, so that runs with either can be compared.
+# problem.yaml with Ollama's qwen models instead of Claude's, qwen3:8b getting most of
+# the requests, and a 2D grid (code size and radii spread). Everything else is the same.
 
 name: circle_packing_precise
 description: |
@@ -52,10 +52,11 @@ llm:
   # model's max_tokens must fit in it, or the problem file is refused.
   context_length: 32768
   models:
+    # Here qwen3:8b, which thinks before it answers, writes most of the children.
     - name: qwen3-coder:30b
-      weight: 0.8
-    - name: qwen3:8b
       weight: 0.2
+    - name: qwen3:8b
+      weight: 0.8
       # It thinks at length: up to 14,600 tokens in the v1 branch's runs.
       max_tokens: 20480
 
@@ -64,14 +65,13 @@ llm:
 prompt:
   max_chars: 40000
 
-# One grid per island (islands.count, 3 by default), each with these three dimensions:
-# code size, how much the radii vary, and whether the big circles are in the middle (-1)
-# or at the edges (+1). 3 bins each, the default for three features: 27 cells per island.
+# One grid per island (islands.count, 3 by default), each with these two dimensions:
+# code size and how much the radii vary. 5 bins each, the default for two features: 25
+# cells per island.
 grid:
   features:
     - {name: code_complexity, low: 0, high: 2.5}
     - {name: radii_spread, low: 0, high: 1.5}
-    - {name: radius_centre_correlation, low: -1, high: 1}
 
 # One stage, which may last 5 minutes: at this precision, programs need long, careful
 # optimization (the original allows 60 s).

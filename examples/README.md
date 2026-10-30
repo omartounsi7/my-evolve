@@ -15,8 +15,8 @@ radius rather than tolerated), with no reference dividing it; neither its evalua
 its prompt refers to any earlier result. Its initial program is OpenEvolve's, without the
 comment naming AlphaEvolve's score, and its problem file gives each program one stage of
 5 minutes and 4 CPUs, Claude's models, and a 3D grid; `problem_qwen.yaml` is the same with
-the local qwen models of `circle_packing/problem.yaml`. Its scores are sums of radii, not
-`circle_packing/`'s ratios.
+the local qwen models, qwen3:8b writing most children, and a 2D grid. Its scores are sums
+of radii, not `circle_packing/`'s ratios.
 
 The other problems are OpenEvolve's, so that runs start from the same baseline as
 OpenEvolve's and can be compared with them (D3).
