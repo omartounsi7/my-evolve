@@ -8,8 +8,9 @@ same process as the code that computes its score.
 
 A session has a deadline: past it, the worker is killed and StageTimeout raised. A
 reader thread collects the worker's messages in a queue, so that waiting for an answer
-can stop at the deadline. What the program prints goes to a temporary file, whose end
-is added to every failure; a message the host is not waiting for is ignored.
+can stop at the deadline. What the program prints is read by a thread of its own, which
+keeps only its end, added to every failure: a program printing without end costs neither
+memory nor disk. A message the host is not waiting for is ignored.
 
 Two sandboxes start workers:
 - DockerSandbox, the default: a fresh container for each session, without network, with
@@ -42,6 +43,15 @@ from my_evolve.sandbox_protocol import Message, NotPlainData, decode, encode, re
 CLOSE_WAIT_SECONDS = 5.0
 # How much of the end of the program's output a failure keeps, in characters
 ERROR_TAIL_CHARS = 2000
+# How much of the program's output is kept, in bytes: four at most per character in UTF-8
+OUTPUT_KEPT_BYTES = 4 * ERROR_TAIL_CHARS
+# How many bytes the output's reader takes at a time
+OUTPUT_CHUNK_BYTES = 65536
+# Before the output's end is read, how long its reader must have been waiting for more,
+# with nothing left to read, in seconds; and how long to wait for that at most (a program
+# printing without pause never lets its reader wait)
+OUTPUT_SETTLE_SECONDS = 0.02
+OUTPUT_SETTLE_LIMIT_SECONDS = 0.5
 # The exit codes of a process killed by SIGKILL, which is what running out of memory
 # usually brings: in Docker, and as a plain subprocess
 KILLED_EXIT_CODES = (137, -9)
@@ -105,6 +115,68 @@ def read_messages(stream: IO[str], messages: "queue.Queue[Message | None]") -> N
             return
 
 
+class OutputTail:
+    """The end of what a session's workers printed, read by a thread of its own.
+
+    Only the last OUTPUT_KEPT_BYTES are kept, however much the program prints. The
+    worker writes its output before the answer that follows it, so once the reader has
+    caught up with the pipe (it waits for more), the end includes everything printed
+    before that answer.
+    """
+
+    def __init__(self) -> None:
+        # The end of the output, as bytes
+        self.data: bytearray = bytearray()
+        self.lock: threading.Lock = threading.Lock()
+        # The thread reading the current worker's output
+        self.reader: threading.Thread | None = None
+        # Since when the reader has been waiting for more output (time.monotonic); None
+        # while it is busy
+        self.waiting_since: float | None = None
+
+    def follow(self, stream: IO[Any]) -> None:
+        """Start reading a new worker's output; it ends when the stream does."""
+        self.reader = threading.Thread(target=self.read_all, args=(stream,), daemon=True)
+        self.reader.start()
+
+    def read_all(self, stream: IO[Any]) -> None:
+        """Read the stream to its end, keeping its last bytes. Runs in the reader thread."""
+        descriptor = stream.fileno()
+        while True:
+            self.waiting_since = time.monotonic()
+            try:
+                chunk = os.read(descriptor, OUTPUT_CHUNK_BYTES)
+            except OSError:
+                chunk = b""
+            self.waiting_since = None
+            if not chunk:
+                return
+            with self.lock:
+                self.data += chunk
+                del self.data[: max(0, len(self.data) - OUTPUT_KEPT_BYTES)]
+
+    def settle(self) -> None:
+        """Wait, briefly, until the reader has read everything printed so far."""
+        limit = time.monotonic() + OUTPUT_SETTLE_LIMIT_SECONDS
+        while time.monotonic() < limit and self.reader is not None and self.reader.is_alive():
+            since = self.waiting_since
+            if since is not None and time.monotonic() - since >= OUTPUT_SETTLE_SECONDS:
+                return
+            time.sleep(OUTPUT_SETTLE_SECONDS / 4)
+
+    def text(self) -> str:
+        """Return the end of the output, at most ERROR_TAIL_CHARS characters."""
+        self.settle()
+        with self.lock:
+            text = self.data.decode("utf-8", errors="replace")
+        return text[-ERROR_TAIL_CHARS:]
+
+    def finish(self, timeout: float) -> None:
+        """Wait for the reader of a worker that has ended to read the rest of its output."""
+        if self.reader is not None:
+            self.reader.join(timeout)
+
+
 class SandboxSession:
     """One loaded program, in one worker process at a time, until the stage's deadline.
 
@@ -138,8 +210,8 @@ class SandboxSession:
         self.alive: bool = False
         # True once a worker was killed because the deadline passed
         self.timed_out: bool = False
-        # Where the program's output goes (what it prints, and Python's own messages)
-        self.error_file: IO[bytes] = tempfile.TemporaryFile()
+        # The end of the program's output (what it prints, and Python's own messages)
+        self.output: OutputTail = OutputTail()
 
     def restart(self) -> None:
         """Start a fresh worker and load the program into it, ending any worker still running.
@@ -158,15 +230,15 @@ class SandboxSession:
                 self.sandbox.command(self.name, self.stage_limit),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
-                # A file, not a pipe: a program printing without end fills a file, not memory.
-                stderr=self.error_file,
+                stderr=subprocess.PIPE,
                 text=True,
                 encoding="utf-8",
                 env=self.sandbox.environment(),
             )
         except OSError as error:
             raise SandboxError(f"cannot start the worker: {error}") from error
-        assert self.process.stdout is not None
+        assert self.process.stdout is not None and self.process.stderr is not None
+        self.output.follow(self.process.stderr)
         self.messages = queue.Queue()
         self.reader = threading.Thread(
             target=read_messages, args=(self.process.stdout, self.messages), daemon=True
@@ -220,7 +292,9 @@ class SandboxSession:
                 ) from None
             if answer is None:
                 self.alive = False
-                raise self.failure(describe_exit(self.process.wait()))
+                exit_code = self.process.wait()
+                self.output.finish(CLOSE_WAIT_SECONDS)
+                raise self.failure(describe_exit(exit_code))
             if answer.get("type") in expected and answer.get("id") == message.get("id"):
                 return answer
 
@@ -230,12 +304,7 @@ class SandboxSession:
 
     def error_tail(self) -> str:
         """Return the end of what the program printed so far."""
-        self.error_file.seek(0, 2)
-        size = self.error_file.tell()
-        # Four bytes at most per character, in UTF-8.
-        self.error_file.seek(max(0, size - 4 * ERROR_TAIL_CHARS))
-        text = self.error_file.read().decode("utf-8", errors="replace")
-        return text[-ERROR_TAIL_CHARS:]
+        return self.output.text()
 
     def call(
         self,
@@ -298,8 +367,10 @@ class SandboxSession:
                 pass
         if self.reader is not None:
             self.reader.join(timeout=CLOSE_WAIT_SECONDS)
-        if self.process.stdout:
-            self.process.stdout.close()
+        self.output.finish(CLOSE_WAIT_SECONDS)
+        for stream in (self.process.stdout, self.process.stderr):
+            if stream:
+                stream.close()
 
     def close(self) -> None:
         """End the session: close the worker's input, so that it stops, and kill it if it
@@ -316,7 +387,6 @@ class SandboxSession:
                 self.kill()
             self.release()
         self.alive = False
-        self.error_file.close()
 
 
 class RemoteFunction:

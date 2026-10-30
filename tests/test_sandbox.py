@@ -136,7 +136,19 @@ class MisbehavingProgramTest(unittest.TestCase):
         self.assertTrue(description.startswith("ValueError: x\n\nTraceback"))
         self.assertTrue(description.endswith("The end of the program's output:\nstep 42 reached"))
 
-    def test_endless_printing_fills_a_file_not_memory(self) -> None:
+    def test_endless_printing_is_kept_neither_on_disk_nor_in_memory(self) -> None:
+        """A program printing without end until the stage's deadline: only the end of its
+        output is kept (it once went to a file, which grew by about 1 GB a second)."""
+        session = LocalSandbox().start(
+            "import sys\ndef f():\n    while True:\n        sys.stdout.write('x' * 9999 + '\\n')\n",
+            stage_limit=2.0,
+        )
+        self.addCleanup(session.close)
+        with self.assertRaises(StageTimeout):
+            session.call("f")
+        self.assertLessEqual(len(session.output.data), 4 * 2000)
+
+    def test_endless_printing_keeps_only_the_end(self) -> None:
         """A program printing a lot keeps working, and only the end of its output is kept."""
         session = self.start(
             "def f():\n    for i in range(200_000):\n        print('line', i)\n    return 1 / 0\n"
