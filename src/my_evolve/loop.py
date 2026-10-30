@@ -4,7 +4,7 @@ Each iteration runs the six steps of the AlphaEvolve diagram:
 
     parent, examples = database.sample(example_count)
     prompt = prompt_builder.build(parent, examples, best_score)
-    reply = llm.complete(prompt)
+    reply = ensemble.draw(rng).complete(prompt)
     parsed = parse_reply(reply)          # the program and its description
     result = evaluator.evaluate(parsed.code)
     database.add(Program.new_child(parent, parsed.code, result, iteration))
@@ -26,7 +26,7 @@ from typing import Any
 from my_evolve.checks import MarkerError, check_child, split_evolve_blocks
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
-from my_evolve.llm import LLM, LLMError
+from my_evolve.llm import Ensemble, LLMError, NoModelLeft
 from my_evolve.problem import Problem
 from my_evolve.program import LLMUsage, Program, Result
 from my_evolve.prompt import PromptBuilder
@@ -94,7 +94,7 @@ def best_score_text(database: Database) -> str:
 def run(
     problem: Problem,
     initial_code: str,
-    llm: LLM,
+    ensemble: Ensemble,
     evaluator: Evaluator,
     iterations: int,
     output: Path,
@@ -106,15 +106,17 @@ def run(
     Every program and every LLM call is saved in the output folder as soon as it
     exists. seed fixes the random draws (with the same LLM replies, a run repeats
     exactly); without one, a seed is drawn and printed. run_id identifies the run (its
-    containers are labelled with it); without one, an id is made. An iteration whose
-    LLM call fails is skipped.
+    containers are labelled with it); without one, an id is made. Each iteration draws
+    one model of the ensemble; an iteration whose LLM call fails is skipped, and the run
+    stops when every model has been dropped. Every model is checked before the run.
 
     A child that fails a check (it does not compile, changes code outside the evolve
     blocks, lacks an entry function, or repeats an earlier program) is rejected, and
     costs no evaluation.
 
-    Raises RunError if the output folder already holds a run, if the initial program
-    fails the checks, or if it does not work: evolution needs a working start.
+    Raises RunError if the output folder already holds a run, if a model does not
+    answer its check, if the initial program fails the checks, or if it does not work:
+    evolution needs a working start.
     """
     if (output / PROGRAMS_FILE).exists():
         raise RunError(f"{output} already holds a run; choose another output folder")
@@ -131,7 +133,13 @@ def run(
         raise RunError(f"the initial program fails the checks: {checks.reason}")
     print(f"Seed: {seed}")
 
-    database = Database(random.Random(seed))
+    try:
+        ensemble.check_all()
+    except LLMError as error:
+        raise RunError(f"a model did not answer its check: {error}") from None
+    # The run's random generator: every draw of the run comes from it (D39)
+    rng = random.Random(seed)
+    database = Database(rng)
     prompt_builder = PromptBuilder(problem)
 
     def store(program: Program) -> None:
@@ -156,15 +164,22 @@ def run(
 
     for iteration in range(1, iterations + 1):
         parent, examples = database.sample(problem.prompt.example_programs)
+        try:
+            llm = ensemble.draw(rng)
+        except NoModelLeft as error:
+            print(f"Stopping: {error}")
+            break
         prompt = prompt_builder.build(parent, examples, database.best_score())
         call: dict[str, Any] = {"iteration": iteration, "user_message": prompt.user}
         try:
             reply = llm.complete(prompt)
         except LLMError as error:
-            call.update(program_id=None, model=error.model, reply=None, error=str(error))
+            ensemble.record_failure(llm.name)
+            call.update(program_id=None, model=llm.name, reply=None, error=str(error))
             append_line(output / LLM_CALLS_FILE, call)
-            print(f"Iteration {iteration}/{iterations}: skipped, no reply ({error})")
+            print(f"Iteration {iteration}/{iterations}, {llm.name}: skipped, no reply ({error})")
             continue
+        ensemble.record_success(llm.name)
         parsed = parse_reply(reply.text, parent.code)
         checks = check_child(
             parsed.code, initial_code, problem.entry_functions, database.fingerprints
@@ -187,7 +202,7 @@ def run(
         call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
         append_line(output / LLM_CALLS_FILE, call)
         print(
-            f"Iteration {iteration}/{iterations}: {describe(child)} "
+            f"Iteration {iteration}/{iterations}, {llm.name}: {describe(child)} "
             f"(best {best_score_text(database)})"
         )
     return database

@@ -1,14 +1,16 @@
 """Checks the LLM classes."""
 
 import os
+import random
 import unittest
+from collections import Counter
 from types import SimpleNamespace
 from typing import Any
 
 from fakes import FakeLLM
 
-from my_evolve.llm import LLMError, MissingKeyError, OpenAICompatibleLLM
-from my_evolve.problem import ModelSettings
+from my_evolve.llm import Ensemble, LLMError, MissingKeyError, NoModelLeft, OpenAICompatibleLLM
+from my_evolve.problem import LLMSettings, ModelSettings
 from my_evolve.prompt import Prompt
 
 PROMPT = Prompt(system="You write programs.", user="Write the improved program.")
@@ -126,6 +128,63 @@ class KeyTest(unittest.TestCase):
     def test_the_timeout_and_retries_reach_the_client(self) -> None:
         llm = OpenAICompatibleLLM(model("m", timeout=12.0, retries=0))
         self.assertEqual((llm.client.timeout, llm.client.max_retries), (12.0, 0))
+
+
+class EnsembleTest(unittest.TestCase):
+    def ensemble(self, max_failures: int = 3) -> Ensemble:
+        """Return an ensemble of three fake models, weighted 0.6, 0.3 and 0.1."""
+        models = [FakeLLM([], name) for name in ("a", "b", "c")]
+        return Ensemble(models, [0.6, 0.3, 0.1], max_failures)
+
+    def test_draws_follow_the_weights(self) -> None:
+        """With a seeded generator, each model is drawn about as often as its weight says."""
+        ensemble = self.ensemble()
+        rng = random.Random(0)
+        counts = Counter(ensemble.draw(rng).name for _ in range(10_000))
+        for name, weight in [("a", 0.6), ("b", 0.3), ("c", 0.1)]:
+            self.assertAlmostEqual(counts[name] / 10_000, weight, delta=0.02)
+        again = [ensemble.draw(random.Random(5)).name for _ in range(3)]
+        self.assertEqual(again, [ensemble.draw(random.Random(5)).name for _ in range(3)])
+
+    def test_a_model_failing_in_a_row_is_dropped_and_the_weights_rescaled(self) -> None:
+        """3 failures in a row drop a model; a success in between starts the count again."""
+        ensemble = self.ensemble()
+        ensemble.record_failure("a")
+        ensemble.record_failure("a")
+        ensemble.record_success("a")
+        ensemble.record_failure("a")
+        ensemble.record_failure("a")
+        self.assertIn("a", ensemble.active)
+        with self.assertLogs("my_evolve.llm", "WARNING") as logs:
+            ensemble.record_failure("a")
+        self.assertIn("a failed 3 times in a row", logs.output[0])
+        rng = random.Random(0)
+        counts = Counter(ensemble.draw(rng).name for _ in range(4_000))
+        self.assertEqual(counts["a"], 0)
+        self.assertAlmostEqual(counts["b"] / 4_000, 0.75, delta=0.03)
+
+    def test_no_model_left(self) -> None:
+        ensemble = self.ensemble(max_failures=1)
+        with self.assertLogs("my_evolve.llm", "WARNING"):
+            for name in ("a", "b", "c"):
+                ensemble.record_failure(name)
+        with self.assertRaises(NoModelLeft):
+            ensemble.draw(random.Random(0))
+
+    def test_check_all_stops_at_the_first_model_that_fails(self) -> None:
+        good = OpenAICompatibleLLM(model("good"))
+        good.client = StubClient(response("OK", None))  # type: ignore[assignment]
+        bad = OpenAICompatibleLLM(model("bad"))
+        bad.client = StubClient(response("", None))  # type: ignore[assignment]
+        Ensemble([good], [1.0], 3).check_all()
+        with self.assertRaisesRegex(LLMError, "bad: the reply is empty"):
+            Ensemble([good, bad], [1.0, 1.0], 3).check_all()
+
+    def test_an_ensemble_from_the_problem_file(self) -> None:
+        settings = LLMSettings(models=(model("a", weight=2.0), model("b")), max_failures_in_a_row=4)
+        ensemble = Ensemble.from_settings(settings)
+        self.assertEqual([llm.name for llm in ensemble.models], ["a", "b"])
+        self.assertEqual((ensemble.weights, ensemble.max_failures), ({"a": 2.0, "b": 1.0}, 4))
 
 
 class FakeLLMTest(unittest.TestCase):

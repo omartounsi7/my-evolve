@@ -17,7 +17,7 @@ from fakes import FakeLLM
 
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
-from my_evolve.llm import LLMError
+from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem
 from my_evolve.program import Status
@@ -49,7 +49,7 @@ def run_toy(
         database = run(
             problem=Problem.load(TOY_FOLDER / "problem.yaml"),
             initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
-            llm=llm,
+            ensemble=Ensemble([llm], [1.0], max_failures=3),
             evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
             iterations=iterations if iterations is not None else len(replies),
             output=output,
@@ -100,9 +100,11 @@ class LoopTest(unittest.TestCase):
 
         # The console has one line per iteration.
         self.assertIn("Initial program: score 1.000000", console)
-        self.assertIn("Iteration 1/5: score 5.000000 (best 5.000000)", console)
-        self.assertIn("Iteration 2/5: failed: ZeroDivisionError: division by zero", console)
-        self.assertIn("Iteration 4/5: skipped, no reply (fake-model: the server is down)", console)
+        self.assertIn("Iteration 1/5, fake-model: score 5.000000 (best 5.000000)", console)
+        self.assertIn("Iteration 2/5, fake-model: failed: ZeroDivisionError: division by", console)
+        self.assertIn(
+            "Iteration 4/5, fake-model: skipped, no reply (fake-model: the server is down)", console
+        )
 
     def test_the_run_folder(self) -> None:
         """programs.jsonl has one line per program; best_program.py holds the best one."""
@@ -114,6 +116,39 @@ class LoopTest(unittest.TestCase):
         best_file = (self.output / "best_program.py").read_text()
         self.assertTrue(best_file.startswith("# Best program of the run: score 4.0, iteration 1"))
         self.assertIn("    return 4\n", best_file)
+
+    def test_a_failing_model_is_dropped_and_the_run_stops_without_models(self) -> None:
+        """Each iteration draws a model; a model failing 3 times in a row is dropped."""
+        down = LLMError("down-model", "the server is down")
+        good = FakeLLM([reply_returning(str(n)) for n in range(2, 8)], name="good-model")
+        bad = FakeLLM([down, down, down], name="down-model")
+        console = io.StringIO()
+        with contextlib.redirect_stdout(console), self.assertLogs("my_evolve.llm", "WARNING"):
+            database = run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([good, bad], [1.0, 1.0], max_failures=3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=9,
+                output=self.output,
+                seed=1,
+            )
+        self.assertEqual(len(bad.prompts), 3)
+        self.assertEqual(len(database.programs), 1 + 6)
+        self.assertIn("good-model: score", console.getvalue())
+        # With no model left, the run stops before its last iterations.
+        lonely = FakeLLM([down], name="lonely")
+        with contextlib.redirect_stdout(console), self.assertLogs("my_evolve.llm", "WARNING"):
+            run(
+                problem=Problem.load(TOY_FOLDER / "problem.yaml"),
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([lonely], [1.0], max_failures=1),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=5,
+                output=self.folder / "second",
+                seed=1,
+            )
+        self.assertIn("Stopping: every model has been dropped", console.getvalue())
 
     def test_a_duplicate_costs_no_evaluation(self) -> None:
         """A child identical to an earlier program (comments aside) is rejected."""
@@ -188,7 +223,7 @@ class LoopTest(unittest.TestCase):
                 initial_code=(
                     "# EVOLVE-BLOCK-START\ndef solve():\n    return 11\n# EVOLVE-BLOCK-END\n"
                 ),
-                llm=FakeLLM([]),
+                ensemble=Ensemble([FakeLLM([])], [1.0], max_failures=3),
                 evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=1,
                 output=self.output,
@@ -205,7 +240,7 @@ class LoopTest(unittest.TestCase):
             run(
                 problem=Problem.load(TOY_FOLDER / "problem.yaml"),
                 initial_code="def solve():\n    return 1\n",
-                llm=FakeLLM([]),
+                ensemble=Ensemble([FakeLLM([])], [1.0], max_failures=3),
                 evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=1,
                 output=self.output,
@@ -242,15 +277,15 @@ class RunScriptTest(unittest.TestCase):
             "--unsafe-local-sandbox",
         ]
 
-    def test_the_script_runs_with_an_unreachable_llm(self) -> None:
-        """The toy problem's LLM address has no server: the iteration is skipped, the run ends."""
+    def test_a_model_that_does_not_answer_stops_the_run_at_once(self) -> None:
+        """The toy problem's model address has no server: its check fails before any run."""
         with tempfile.TemporaryDirectory() as folder:
             output = Path(folder) / "run"
             completed = self.run_script(*self.toy_arguments(output), "--seed", "1")
-            self.assertEqual(completed.returncode, 0, completed.stderr)
-            self.assertIn("Seed: 1\nInitial program: score 1.000000", completed.stdout)
-            self.assertIn("Iteration 1/1: skipped, no reply", completed.stdout)
-            self.assertEqual(len((output / "programs.jsonl").read_text().splitlines()), 1)
+            self.assertEqual(completed.returncode, 1, completed.stdout)
+            self.assertIn("a model did not answer its check: fake-model:", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertFalse(output.exists())
 
     def test_wrong_arguments_are_usage_errors(self) -> None:
         """A number of iterations below 1, or a missing file, stops the script at once."""

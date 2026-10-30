@@ -7,16 +7,22 @@ The problem file is written in YAML. For now it holds:
       What the program must do, shown to the LLM in every prompt.
     entry_functions: [run_packing]         # the functions every program must define
     packages: [numpy==2.5.4]               # optional: what programs may import, exact versions
-    llm:
-      model: qwen3-coder:30b               # the model's name, as its server knows it
+    llm:                                   # laid out like openevolve's llm section
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
       api_key: ${ANTHROPIC_API_KEY}        # optional: the variable holding the key
       max_tokens: 16384                    # optional: the longest reply, in tokens
       temperature: 0.7                     # optional; not for reasoning models
       reasoning_effort: medium             # optional; reasoning models only
-      reasoning: false                     # optional; guessed from the name if absent
       timeout: 300                         # optional: seconds to wait for a reply
       retries: 2                           # optional: retries of a failed request
+      max_failures_in_a_row: 3             # optional: a model failing this often is dropped
+      models:                              # the ensemble: one model is drawn per iteration
+        - name: qwen3-coder:30b            # the model's name, as its server knows it
+          weight: 0.8                      # optional (1): how often it is drawn, relatively
+        - name: qwen3:8b
+          weight: 0.2
+          reasoning: false                 # optional; guessed from the name if absent
+          max_tokens: 24576                # any shared key, for this model only
     evaluation:                            # optional
       stage_time_limit: 60                 # seconds each cascade stage may take
       thresholds: [0.5]                    # stage k + 1 runs if stage k's score reaches the k-th
@@ -47,6 +53,10 @@ KEY_VARIABLE_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 # The beginnings of the names of OpenAI's reasoning models, which refuse max_tokens and
 # temperature and need max_completion_tokens (as openevolve guesses them)
 REASONING_MODEL_PREFIXES = ("o1", "o3", "o4", "gpt-5", "gpt-oss")
+# The keys of the llm section that apply to every model, unless a model sets its own
+SHARED_MODEL_KEYS = frozenset(
+    {"api_base", "api_key", "max_tokens", "temperature", "reasoning_effort", "timeout", "retries"}
+)
 # A package with its exact version, such as "numpy==2.5.4": nothing else is accepted
 PACKAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*==[A-Za-z0-9][A-Za-z0-9.+!_-]*")
 
@@ -77,6 +87,18 @@ class ModelSettings:
     timeout: float = 300.0
     # How many times the openai package retries a failed request: the only layer of retries
     retries: int = 2
+    # How often the ensemble draws it, relative to the other models' weights
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class LLMSettings:
+    """The ensemble of models that write the programs (D31, D34)."""
+
+    # The models, each with its weight
+    models: tuple[ModelSettings, ...]
+    # A model failing this many times in a row is dropped for the rest of the run
+    max_failures_in_a_row: int = 3
 
 
 @dataclass(frozen=True)
@@ -121,8 +143,8 @@ class Problem:
     name: str
     # What the program must do, including the contract of its entry functions
     description: str
-    # The LLM that writes the programs
-    llm: ModelSettings
+    # The models that write the programs
+    llm: LLMSettings
     # The packages programs may import besides the standard library, such as "numpy==2.5.4"
     packages: tuple[str, ...] = ()
     # The functions every program must define at its top level, such as ("run_packing",)
@@ -178,7 +200,7 @@ class Problem:
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
             entry_functions=checked_entry_functions(top["entry_functions"]),
-            llm=build_model(top["llm"]),
+            llm=build_llm(top["llm"]),
             packages=checked_packages(top.get("packages", [])),
             evaluation=EvaluationSettings(
                 stage_time_limit=checked_positive_number(
@@ -284,25 +306,47 @@ def checked_optional_number(section: dict[str, Any], key: str, where: str) -> fl
     return float(value)
 
 
-def build_model(section: Any) -> ModelSettings:
-    """Build a model's settings from the llm section, checking every value."""
+def build_llm(section: Any) -> LLMSettings:
+    """Build the ensemble's settings from the llm section, checking every value (D72).
+
+    The section's values other than models and max_failures_in_a_row apply to every
+    model; a model's own value wins over them, as in openevolve.
+    """
     where = "the llm section"
     llm = checked_section(
-        section,
-        where,
-        required={"model", "api_base"},
-        optional={
-            "api_key",
-            "max_tokens",
-            "temperature",
-            "reasoning_effort",
-            "reasoning",
-            "timeout",
-            "retries",
-        },
+        section, where, required={"models"}, optional=SHARED_MODEL_KEYS | {"max_failures_in_a_row"}
     )
+    shared = {key: value for key, value in llm.items() if key in SHARED_MODEL_KEYS}
+    entries = llm["models"]
+    if not isinstance(entries, list) or not entries:
+        raise ProblemError("'models' in the llm section must be a list of one model or more")
+    models = []
+    for number, entry in enumerate(entries, start=1):
+        own = checked_section(
+            entry,
+            f"model {number} of the llm section",
+            required={"name"},
+            optional=SHARED_MODEL_KEYS | {"weight", "reasoning"},
+        )
+        models.append(build_model({**shared, **own}, f"model {number} of the llm section"))
+    names = [model.name for model in models]
+    if len(set(names)) != len(names):
+        raise ProblemError("two models of the llm section have the same name")
+    return LLMSettings(
+        models=tuple(models),
+        max_failures_in_a_row=checked_count(
+            llm, "max_failures_in_a_row", where, LLMSettings(models=()).max_failures_in_a_row
+        ),
+    )
+
+
+def build_model(values: dict[str, Any], where: str) -> ModelSettings:
+    """Build one model's settings from its merged values, checking every value."""
+    llm = values
+    if "api_base" not in llm:
+        raise ProblemError(f"missing key 'api_base' for {where}, or in the llm section")
     defaults = ModelSettings(name="", api_base="")
-    name = checked_text(llm, "model", where)
+    name = checked_text(llm, "name", where)
     reasoning = llm.get("reasoning", is_reasoning_model(name))
     if not isinstance(reasoning, bool):
         raise ProblemError(f"'reasoning' in {where} must be true or false, got {reasoning!r}")
@@ -330,6 +374,7 @@ def build_model(section: Any) -> ModelSettings:
         reasoning=reasoning,
         timeout=checked_positive_number(llm, "timeout", where, defaults.timeout),
         retries=checked_count(llm, "retries", where, defaults.retries, minimum=0),
+        weight=checked_positive_number(llm, "weight", where, defaults.weight),
     )
 
 

@@ -17,7 +17,7 @@ def valid_data() -> dict[str, Any]:
         "name": "toy",
         "description": "Return a number.",
         "entry_functions": ["solve"],
-        "llm": {"model": "some-model", "api_base": "http://localhost:11434/v1"},
+        "llm": {"api_base": "http://localhost:11434/v1", "models": [{"name": "some-model"}]},
     }
 
 
@@ -27,8 +27,8 @@ class ProblemTest(unittest.TestCase):
         problem = Problem.from_dict(valid_data())
         self.assertEqual(problem.name, "toy")
         self.assertEqual(problem.description, "Return a number.")
-        self.assertEqual(problem.llm.name, "some-model")
-        self.assertEqual(problem.llm.api_base, "http://localhost:11434/v1")
+        self.assertEqual(problem.llm.models[0].name, "some-model")
+        self.assertEqual(problem.llm.models[0].api_base, "http://localhost:11434/v1")
 
     def test_the_example_problem_files_load(self) -> None:
         """The repository's problem files are correct."""
@@ -52,17 +52,51 @@ class ProblemTest(unittest.TestCase):
 
     def test_the_model_settings_and_their_defaults(self) -> None:
         """Unset settings are None (not sent); max_tokens, timeout and retries have defaults."""
-        llm = Problem.from_dict(valid_data()).llm
+        model = Problem.from_dict(valid_data()).llm.models[0]
         self.assertEqual(
-            (llm.api_key_env, llm.temperature, llm.reasoning_effort, llm.reasoning),
+            (model.api_key_env, model.temperature, model.reasoning_effort, model.reasoning),
             (None, None, None, False),
         )
-        self.assertEqual((llm.max_tokens, llm.timeout, llm.retries), (16_384, 300.0, 2))
+        self.assertEqual((model.max_tokens, model.timeout, model.retries), (16_384, 300.0, 2))
+        self.assertEqual(
+            (model.weight, Problem.from_dict(valid_data()).llm.max_failures_in_a_row), (1.0, 3)
+        )
+
+    def test_shared_values_and_a_models_own(self) -> None:
+        """The section's values apply to every model; a model's own value wins."""
         data = valid_data()
-        data["llm"].update(api_key="${MY_KEY}", temperature=0.7, max_tokens=4096, retries=0)
+        data["llm"].update(api_key="${MY_KEY}", temperature=0.7, max_failures_in_a_row=5)
+        data["llm"]["models"] = [
+            {"name": "a", "weight": 0.8},
+            {"name": "b", "weight": 0.2, "temperature": 0.1, "api_base": "http://other/v1"},
+        ]
         llm = Problem.from_dict(data).llm
-        self.assertEqual((llm.api_key_env, llm.temperature, llm.max_tokens), ("MY_KEY", 0.7, 4096))
-        self.assertEqual(llm.retries, 0)
+        first, second = llm.models
+        self.assertEqual((first.temperature, second.temperature), (0.7, 0.1))
+        self.assertEqual((first.api_key_env, second.api_key_env), ("MY_KEY", "MY_KEY"))
+        self.assertEqual(
+            (first.api_base, second.api_base), ("http://localhost:11434/v1", "http://other/v1")
+        )
+        self.assertEqual(
+            ([first.weight, second.weight], llm.max_failures_in_a_row), ([0.8, 0.2], 5)
+        )
+
+    def test_wrong_ensembles_are_refused(self) -> None:
+        for models, error in [
+            ([], "a list of one model or more"),
+            ([{"name": "a"}, {"name": "a"}], "the same name"),
+            ([{"name": "a", "weight": 0}], "'weight' .* above 0"),
+            ([{"name": "a", "colour": "red"}], "unknown key 'colour' in model 1"),
+            ([{"weight": 1}], "missing key 'name' in model 1"),
+        ]:
+            data = valid_data()
+            data["llm"]["models"] = models
+            with self.subTest(error=error), self.assertRaisesRegex(ProblemError, error):
+                Problem.from_dict(data)
+        data = valid_data()
+        del data["llm"]["api_base"]
+        with self.assertRaisesRegex(ProblemError, "missing key 'api_base'"):
+            Problem.from_dict(data)
 
     def test_a_key_written_in_the_file_is_refused(self) -> None:
         """Only ${VARIABLE}: problem files can be shared without leaking a key."""
@@ -82,28 +116,35 @@ class ProblemTest(unittest.TestCase):
             ("qwen3-coder:30b", False),
         ]:
             data = valid_data()
-            data["llm"]["model"] = name
+            data["llm"]["models"] = [{"name": name}]
             with self.subTest(name=name):
-                self.assertEqual(Problem.from_dict(data).llm.reasoning, reasoning)
+                self.assertEqual(Problem.from_dict(data).llm.models[0].reasoning, reasoning)
         data = valid_data()
-        data["llm"].update(model="o4-mini", temperature=0.5)
+        data["llm"]["models"] = [{"name": "o4-mini", "temperature": 0.5}]
         with self.assertRaisesRegex(ProblemError, "reasoning model, which refuses a temperature"):
             Problem.from_dict(data)
-        data["llm"].update(model="qwen3:8b", temperature=None, reasoning_effort="high")
+        data["llm"]["models"] = [{"name": "qwen3:8b", "reasoning_effort": "high"}]
         with self.assertRaisesRegex(ProblemError, "for reasoning models only"):
             Problem.from_dict(data)
-        data["llm"]["reasoning"] = True
-        self.assertEqual(Problem.from_dict(data).llm.reasoning_effort, "high")
+        data["llm"]["models"][0]["reasoning"] = True
+        self.assertEqual(Problem.from_dict(data).llm.models[0].reasoning_effort, "high")
 
     def test_the_example_problem_files_for_claude(self) -> None:
-        """problem_claude.yaml differs only in its llm section."""
+        """problem_claude.yaml differs only in its llm section: Appendix B's two batches."""
         for name in ("circle_packing", "function_minimization"):
             folder = REPOSITORY_FOLDER / "examples" / name
             with self.subTest(name=name):
                 local = Problem.load(folder / "problem.yaml")
                 claude = Problem.load(folder / "problem_claude.yaml")
-                self.assertEqual(claude.llm.name, "claude-haiku-5-5")
-                self.assertEqual(claude.llm.api_key_env, "ANTHROPIC_API_KEY")
+                self.assertEqual(
+                    [(model.name, model.weight) for model in local.llm.models],
+                    [("qwen3-coder:30b", 0.8), ("qwen3:8b", 0.2)],
+                )
+                self.assertEqual(
+                    [(model.name, model.weight) for model in claude.llm.models],
+                    [("claude-haiku-5-5", 0.8), ("claude-sonnet-5-5", 0.2)],
+                )
+                self.assertEqual(claude.llm.models[0].api_key_env, "ANTHROPIC_API_KEY")
                 self.assertEqual(replace(claude, llm=local.llm), local)
 
     def test_entry_functions(self) -> None:
@@ -186,8 +227,8 @@ class ProblemTest(unittest.TestCase):
     def test_a_missing_key_is_refused(self) -> None:
         """Each required key must be there."""
         data = valid_data()
-        del data["llm"]["model"]
-        with self.assertRaisesRegex(ProblemError, "missing key 'model' in the llm section"):
+        del data["llm"]["models"]
+        with self.assertRaisesRegex(ProblemError, "missing key 'models' in the llm section"):
             Problem.from_dict(data)
 
     def test_values_must_be_text(self) -> None:

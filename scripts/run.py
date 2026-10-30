@@ -18,7 +18,7 @@ import uuid
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
-from my_evolve.llm import MissingKeyError, OpenAICompatibleLLM
+from my_evolve.llm import Ensemble, MissingKeyError
 from my_evolve.loop import RunError, run
 from my_evolve.problem import Problem, ProblemError
 from my_evolve.sandbox import DockerSandbox, LocalSandbox, Sandbox, SandboxError, ensure_image
@@ -96,13 +96,13 @@ def main(arguments: list[str]) -> int:
             problem.evaluation.stage_time_limit,
             problem.evaluation.thresholds,
         )
-        llm = OpenAICompatibleLLM(problem.llm)
+        ensemble = Ensemble.from_settings(problem.llm)
         sandbox.remove_leftovers()
         try:
             run(
                 problem,
                 initial_code,
-                llm,
+                ensemble,
                 evaluator,
                 parsed.iterations,
                 parsed.output,

@@ -33,10 +33,19 @@ packages:
   - numpy==2.5.4
   - scipy==1.18.1
 
-# The LLM: Appendix B's main model of batch 1, on a local Ollama server.
+# The LLMs: Appendix B's batch 1, two models on a local Ollama server, which keeps both
+# loaded. Start Ollama with a context length that holds the prompt and the reply:
+#   OLLAMA_CONTEXT_LENGTH=32768 ollama serve
 llm:
-  model: qwen3-coder:30b
   api_base: http://localhost:11434/v1
+  models:
+    - name: qwen3-coder:30b
+      weight: 0.8
+    - name: qwen3:8b
+      weight: 0.2
+      # It thinks at length: up to 14,600 tokens in the v1 branch's runs. The reply limit
+      # plus the prompt must fit in Ollama's context (32,768 tokens).
+      max_tokens: 24576
 
 # OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
 evaluation:

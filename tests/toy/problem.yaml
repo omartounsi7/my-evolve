@@ -4,6 +4,8 @@ description: |
   Write solve(), which takes no arguments and returns a number. The bigger the
   number, the better, but it must not be more than 10.
 entry_functions: [solve]
+# A model at an address where nothing listens: the tests use a fake one instead.
 llm:
-  model: fake-model
   api_base: http://localhost:1/v1
+  models:
+    - name: fake-model

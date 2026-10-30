@@ -24,13 +24,17 @@ packages:
   - numpy==2.5.4
   - scipy==1.18.1
 
-# The LLM: Appendix B's main model of batch 2, Claude Haiku 5.5, through Anthropic's
-# OpenAI-compatible endpoint. The key is read from the variable ANTHROPIC_API_KEY.
-# No temperature: these models reject one.
+# The LLMs: Appendix B's batch 2, Claude Haiku 5.5 and Claude Sonnet 5.5, through
+# Anthropic's OpenAI-compatible endpoint. The key is read from the variable
+# ANTHROPIC_API_KEY. No temperature: these models reject one.
 llm:
-  model: claude-haiku-5-5
   api_base: https://api.anthropic.com/v1/
   api_key: ${ANTHROPIC_API_KEY}
+  models:
+    - name: claude-haiku-5-5
+      weight: 0.8
+    - name: claude-sonnet-5-5
+      weight: 0.2
 
 # OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 1.3.
 evaluation:

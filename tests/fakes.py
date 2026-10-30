@@ -17,6 +17,9 @@ class FakeLLM(LLM):
         # Every prompt received, in order
         self.prompts: list[Prompt] = []
 
+    def check(self) -> None:
+        """Answer the start-up check without using up a reply written in advance."""
+
     def complete(self, prompt: Prompt) -> LLMReply:
         """Return the next reply written in advance (or raise it, if it is an exception).
 
