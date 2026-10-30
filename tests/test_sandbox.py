@@ -46,6 +46,31 @@ def end():
     os._exit(7)
 """
 
+# A program that hands its own functions to other processes, as searches over several
+# CPUs do: the processes must find them in the program's module
+POOL_PROGRAM = """\
+import multiprocessing
+from concurrent.futures import ProcessPoolExecutor
+
+OFFSET = 1000
+
+
+def square(x):
+    return x * x + OFFSET
+
+
+def with_pool(method):
+    with multiprocessing.get_context(method).Pool(2) as pool:
+        return sum(pool.map(square, range(4)))
+
+
+def with_executor():
+    with ProcessPoolExecutor(2) as executor:
+        return sum(executor.map(square, range(4)))
+"""
+# What both functions return: 0 + 1 + 4 + 9, plus OFFSET four times
+POOL_TOTAL = 4014
+
 
 class SessionTest(unittest.TestCase):
     def test_calls_and_globals(self) -> None:
@@ -182,6 +207,35 @@ class MisbehavingProgramTest(unittest.TestCase):
         )
         self.assertEqual(session.call("f"), 5)
         self.assertEqual(session.call("f"), 5)
+
+
+class ProcessPoolTest(unittest.TestCase):
+    def test_programs_can_hand_their_functions_to_other_processes(self) -> None:
+        """Pools work, whichever way they start processes: the program is a module others
+        can import (pickling its functions once failed, and programs fell back to one CPU
+        without saying so)."""
+        session = LocalSandbox().start(POOL_PROGRAM, stage_limit=60.0)
+        self.addCleanup(session.close)
+        for method in ("fork", "spawn", "forkserver"):
+            with self.subTest(method=method):
+                self.assertEqual(session.call("with_pool", (method,)), POOL_TOTAL)
+        self.assertEqual(session.call("with_executor"), POOL_TOTAL)
+
+    def test_the_program_is_the_module_program(self) -> None:
+        """Its __name__ is "program", its main part does not run, and tracebacks still name
+        the program's lines."""
+        session = LocalSandbox().start(
+            "NAME = __name__\nif __name__ == '__main__':\n    NAME = 'main'\n"
+            "def f():\n    return [][1]\n",
+            stage_limit=30.0,
+        )
+        self.addCleanup(session.close)
+        self.assertEqual(session.get("NAME"), "program")
+        with self.assertRaises(ProgramFailure) as caught:
+            session.call("f")
+        self.assertIn(
+            'File "<program>", line 5, in f\n    return [][1]', caught.exception.describe()
+        )
 
 
 # Run in a process group of its own, as a terminal runs my-evolve: it starts a session,

@@ -1064,8 +1064,12 @@ than the stage's (D42):
 1. Keep a private copy of standard output for the protocol, then point standard output at standard
    error, so that what the program prints goes to the error output the host captures.
 2. Read the `load` message.
-3. Run the code in a fresh namespace whose `__name__` is `program`, so the program's
-   `if __name__ == "__main__":` part never runs.
+3. Run the code as a module named `program`, so the program's `if __name__ == "__main__":` part
+   never runs. The module is a real one: registered in `sys.modules`, its code saved as `program.py` in
+   a temporary folder (in `/tmp`, in a container) put first in the import path. Processes the program
+   starts (multiprocessing, `concurrent.futures`) thus find the functions it hands them: forked ones in
+   the modules they inherit, spawned ones by importing the file. In a plain namespace, pickling the
+   functions failed, and programs offered several CPUs fell back to one without saying so.
 4. Anything raised, exit requests included: send `load_failed` and stop.
 5. Send `loaded` with the program's top-level names and their kinds.
 6. For each following message: look the name up in the namespace; for `get`, take its value; for `call`,

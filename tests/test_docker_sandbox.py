@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 
 from docker_check import docker_is_available
-from test_sandbox import interrupt_the_group
+from test_sandbox import POOL_PROGRAM, POOL_TOTAL, interrupt_the_group
 
 from my_evolve.evaluation_api import ProgramFailure, StageTimeout
 from my_evolve.evaluator import Evaluator
@@ -97,6 +97,14 @@ class IsolationTest(unittest.TestCase):
             "variables.get('OMP_NUM_THREADS')\n"
         )
         self.assertEqual(session.call("who"), (65534, None, "1"))
+
+    def test_process_pools_work(self) -> None:
+        """A program may spread its work over processes, on the read-only file system."""
+        session = self.start(POOL_PROGRAM, SandboxSettings(cpus=2))
+        for method in ("fork", "spawn", "forkserver"):
+            with self.subTest(method=method):
+                self.assertEqual(session.call("with_pool", (method,)), POOL_TOTAL)
+        self.assertEqual(session.call("with_executor"), POOL_TOTAL)
 
     def test_the_memory_limit(self) -> None:
         """A program using more memory than allowed is stopped, and the failure says why."""
