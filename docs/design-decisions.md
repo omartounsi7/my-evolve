@@ -205,7 +205,10 @@ programs (D21). Every program is kept (D22). CVT MAP-Elites may replace the fixe
 **Decision.** A fixed grid, known when the run starts and never changed. The problem file gives each feature
 a range (`low`, `high`) and a number of bins; a value outside the range goes to the nearest end bin.
 - `code_complexity` is normalized against the initial program: log2(nodes inside the blocks ÷ nodes inside
-  the initial program's blocks); default range −1 to +3 (half to eight times the initial size).
+  the initial program's blocks); default range 0 to 2.5 (the initial size to about 5.7 times it; 10 bins of
+  about 19% each). It was −1 to +3, but children only grew in the first plan's milestones (a log2 ratio of
+  0 to 1.31 for circle packing, 0.34 to 2.2 for function minimization), so the bins below 0 stayed empty
+  and each island used 2 or 3 of its 10 cells. A smaller child goes to the first bin.
 - Circle packing ranges: `radii_spread` 0 to 1, `radius_centre_correlation` −1 to +1.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
@@ -588,7 +591,7 @@ The entries are numbered D60 to D70 and D72 to D79, in the order of the modules,
 | top level | `name` (required), `description` (required; includes the entry functions' contract, D4), `entry_functions` (required, e.g. `[run_packing]`), `packages` (list of `name==version`, empty), `snapshot_every` (10, D47), `max_errors_in_a_row` (3, D38) |
 | `evaluation` | `stage_time_limit` (60 s, D41), `thresholds` (list: stage k+1 runs if stage k's score reaches the k-th value, D9) |
 | `sandbox` | `memory` (`1g`), `cpus` (1), `max_processes` (64), D41 |
-| `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from −1 to +3; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
+| `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from 0 to 2.5; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
 | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
 | `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
 | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |

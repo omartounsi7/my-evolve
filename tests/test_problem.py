@@ -238,8 +238,8 @@ class ProblemTest(unittest.TestCase):
                 Problem.from_dict(data)
 
     def test_the_grid_section(self) -> None:
-        """code_complexity from -1 to 3 in 10 bins by default (D18)."""
-        default = (FeatureSpec("code_complexity", -1.0, 3.0, 10),)
+        """code_complexity from 0 to 2.5 in 10 bins by default (D18)."""
+        default = (FeatureSpec("code_complexity", 0.0, 2.5, 10),)
         self.assertEqual(Problem.from_dict(valid_data()).grid_features, default)
         data = valid_data()
         data["grid"] = {"features": [{"name": "code_complexity", "low": 0, "high": 2}]}

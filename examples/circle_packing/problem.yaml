@@ -58,7 +58,7 @@ prompt:
 # also gives radii_spread and radius_centre_correlation, so a 2D or 3D grid can use them:
 #   grid:
 #     features:
-#       - {name: code_complexity, low: -1, high: 3}
+#       - {name: code_complexity, low: 0, high: 2.5}
 #       - {name: radii_spread, low: 0, high: 1}
 #       - {name: radius_centre_correlation, low: -1, high: 1}
 

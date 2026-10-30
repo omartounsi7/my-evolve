@@ -31,7 +31,13 @@ from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import Ensemble, LLMError
 from my_evolve.loop import Loop, RunError, StopNow, run, stop_on_sigterm, summary
-from my_evolve.problem import IslandSettings, ParentSettings, Problem
+from my_evolve.problem import (
+    CODE_COMPLEXITY,
+    FeatureSpec,
+    IslandSettings,
+    ParentSettings,
+    Problem,
+)
 from my_evolve.program import Origin, Result, Status
 from my_evolve.sandbox import LocalSandbox
 from my_evolve.storage import HistoryRow, Storage
@@ -802,7 +808,15 @@ class LoopTest(unittest.TestCase):
     def test_a_migration_left_undone_is_made_when_continuing(self) -> None:
         """A run stopped between iteration 2's history row and the migration due after it."""
         islands = IslandSettings(count=2, migration_interval=2)
-        toy = replace(Problem.load(TOY_FOLDER / "problem.yaml"), islands=islands, snapshot_every=2)
+        # A range below 0, so that the toy's children, smaller than the initial program,
+        # get cells of their own, and the islands elites to send.
+        grid = (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 10),)
+        toy = replace(
+            Problem.load(TOY_FOLDER / "problem.yaml"),
+            islands=islands,
+            snapshot_every=2,
+            grid_features=grid,
+        )
         run_toy(
             [reply_returning("2"), reply_returning("3")], self.output, iterations=2, problem=toy
         )

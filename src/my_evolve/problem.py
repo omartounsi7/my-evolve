@@ -42,8 +42,8 @@ The problem file is written in YAML. For now it holds:
     grid:                                  # optional: the grid of each island (D17, D18)
       features:                            # its dimensions, 1 to 3
         - name: code_complexity            # nodes inside the evolve blocks, as log2 of
-          low: -1                          #   their ratio to the initial program's
-          high: 3                          # values outside low..high go to the end bins
+          low: 0                           #   their ratio to the initial program's
+          high: 2.5                        # values outside low..high go to the end bins
           bins: 10                         # optional: 10, 5 or 3 for 1, 2 or 3 features
         - name: radii_spread               # any other name: an output feature, which
           low: 0                           #   the evaluation's stage 1 must give
@@ -201,9 +201,11 @@ class FeatureSpec:
     bins: int
 
 
-# The grid when the problem file gives none: code complexity, from half to eight times the
-# initial program's size, in 10 bins (D18)
-DEFAULT_GRID = (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 10),)
+# The grid when the problem file gives none: code complexity, from the initial program's size
+# to about 5.7 times it, in 10 bins of about 19% each (D18). Children have only grown in the
+# first plan's milestones (up to 2.5 times the size, a log2 ratio of 1.31), so a range
+# below 0 would hold nothing; a smaller child goes to the first bin
+DEFAULT_GRID = (FeatureSpec(CODE_COMPLEXITY, 0.0, 2.5, 10),)
 
 
 @dataclass(frozen=True)
