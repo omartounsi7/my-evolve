@@ -5,11 +5,13 @@ diagram calls apply_diff. It also describes the program between <DESCRIPTION> an
 </DESCRIPTION> (D15). Finding the code follows my-alphaevolve's rules (D68): the
 reasoning of thinking models is dropped; among the code blocks, the valid Python ones
 are kept, then those that do not merely repeat the parent, then the longest; a block cut
-short and a reply without any block are handled too.
+short and a reply without any block are handled too. Windows line endings become plain
+ones, and a block indented as a whole (inside a list, say) loses that indentation.
 """
 
 import ast
 import re
+import textwrap
 from dataclasses import dataclass
 
 # A code block: a line starting with three backticks (and an optional language name),
@@ -70,6 +72,15 @@ def is_same_program(first_code: str, second_code: str) -> bool:
         return False
 
 
+def unindented(block: str) -> str:
+    """Return a code block without the indentation all its lines share, if they all have
+    some (a block inside a list); any other block exactly as it is."""
+    lines = [line for line in block.splitlines() if line.strip()]
+    if lines and all(line[0] in " \t" for line in lines):
+        return textwrap.dedent(block)
+    return block
+
+
 def choose_code_block(code_blocks: list[str], reply: str, parent_code: str | None) -> str:
     """Return the code block of a reply most likely to be the new program.
 
@@ -112,6 +123,7 @@ def extract_code(reply: str, parent_code: str | None = None) -> str:
     code_blocks: list[str] = CODE_BLOCK_PATTERN.findall(reply)
     if not code_blocks:
         code_blocks = ONE_LINE_CODE_BLOCK_PATTERN.findall(reply)
+    code_blocks = [unindented(block) for block in code_blocks]
 
     if code_blocks:
         code = choose_code_block(code_blocks, reply, parent_code)
@@ -140,6 +152,6 @@ def parse_reply(reply: str, parent_code: str | None = None) -> ParsedReply:
 
     A reply without a description is still accepted if its code is usable.
     """
-    without_thinking = THINKING_PATTERN.sub("", reply)
+    without_thinking = THINKING_PATTERN.sub("", reply.replace("\r\n", "\n"))
     description, rest = extract_description(without_thinking)
     return ParsedReply(code=extract_code(rest, parent_code), description=description)

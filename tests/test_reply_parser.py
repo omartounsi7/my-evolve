@@ -2,7 +2,7 @@
 
 import unittest
 
-from my_evolve.reply_parser import extract_code, parse_reply
+from my_evolve.reply_parser import ParsedReply, extract_code, parse_reply
 
 # The marker that opens and closes a code block, named so the tests stay readable
 FENCE = "```"
@@ -100,6 +100,11 @@ class TestExtractCode(unittest.TestCase):
         code = f'TEXT = """\n{FENCE}python\nprint(1)\n{FENCE}\n"""\nx = 1\n'
         self.assertEqual(extract_code(f"{FENCE}python\n{code}{FENCE}\n"), code)
 
+    def test_a_block_indented_as_a_whole_loses_that_indentation(self) -> None:
+        """As inside a numbered list; the indentation within the code is kept."""
+        reply = f"1. The program:\n   {FENCE}python\n   def f():\n       return 1\n   {FENCE}\n"
+        self.assertEqual(extract_code(reply), "def f():\n    return 1\n")
+
     def test_empty_reply_gives_no_code(self) -> None:
         self.assertEqual(extract_code(""), "")
         self.assertEqual(extract_code(f"{FENCE}python\n{FENCE}"), "")
@@ -116,6 +121,12 @@ class TestParseReply(unittest.TestCase):
         parsed = parse_reply(reply)
         self.assertEqual(parsed.description, "A hexagonal grid, then a local search.")
         self.assertEqual(parsed.code, "x = 1\n")
+
+    def test_windows_line_endings(self) -> None:
+        reply = (
+            f"<DESCRIPTION>Ones.</DESCRIPTION>\r\n{FENCE}python\r\nx = 1\r\ny = 2\r\n{FENCE}\r\n"
+        )
+        self.assertEqual(parse_reply(reply), ParsedReply("x = 1\ny = 2\n", "Ones."))
 
     def test_the_tags_in_any_letter_case(self) -> None:
         parsed = parse_reply(f"<description>Rings.</Description>\n{FENCE}\nx = 1\n{FENCE}")
