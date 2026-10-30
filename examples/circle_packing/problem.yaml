@@ -47,6 +47,14 @@ llm:
       # plus the prompt must fit in Ollama's context (32,768 tokens).
       max_tokens: 24576
 
+# The grid of each island is code complexity alone (the default). The evaluation's stage 1
+# also gives radii_spread and radius_centre_correlation, so a 2D or 3D grid can use them:
+#   grid:
+#     features:
+#       - {name: code_complexity, low: -1, high: 3}
+#       - {name: radii_spread, low: 0, high: 1}
+#       - {name: radius_centre_correlation, low: -1, high: 1}
+
 # OpenEvolve's cascade: 60 s per stage; stage 2 runs if stage 1 scores at least 0.5.
 evaluation:
   stage_time_limit: 60

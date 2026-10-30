@@ -12,7 +12,9 @@ and maximum, so its cells drift: differences.md, Part D, openevolve item 6).
 
 The built-in feature, code_complexity, is the number of syntax-tree nodes inside the
 evolve blocks, written as log2 of its ratio to the initial program's: 0 for the initial
-program's size, 1 for twice it, -1 for half (D18).
+program's size, 1 for twice it, -1 for half (D18). Any other feature is an output
+feature: a number the evaluation's stage 1 computes from what the program returns, such
+as how much the radii of a circle packing vary (D17).
 """
 
 import math
@@ -44,17 +46,21 @@ class Grid:
     def feature_values(self, program: Program) -> list[float]:
         """Return the program's value for each feature of the grid, in order.
 
-        Raises ValueError for a program whose code complexity was not measured.
+        Raises ValueError for a program whose code complexity was not measured, or whose
+        result lacks an output feature.
         """
         values = []
         for feature in self.features:
-            if feature.name != CODE_COMPLEXITY:
-                raise ValueError(f"the grid does not know the feature {feature.name!r}")
-            if program.code_complexity is None:
-                raise ValueError(f"program {program.id} has no code complexity")
-            # Each count taken as at least 1, so that the logarithm exists.
-            ratio = max(program.code_complexity, 1) / max(self.reference_nodes, 1)
-            values.append(math.log2(ratio))
+            if feature.name == CODE_COMPLEXITY:
+                if program.code_complexity is None:
+                    raise ValueError(f"program {program.id} has no code complexity")
+                # Each count taken as at least 1, so that the logarithm exists.
+                ratio = max(program.code_complexity, 1) / max(self.reference_nodes, 1)
+                values.append(math.log2(ratio))
+            elif feature.name in program.result.features:
+                values.append(program.result.features[feature.name])
+            else:
+                raise ValueError(f"program {program.id} has no feature {feature.name!r}")
         return values
 
     def cell_of(self, program: Program) -> Cell:

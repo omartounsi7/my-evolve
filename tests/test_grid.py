@@ -53,6 +53,24 @@ class BinTest(unittest.TestCase):
         self.assertEqual(grid.cell_of(program(100, 1.0)), (2, 0))
 
 
+class OutputFeatureTest(unittest.TestCase):
+    def test_an_output_feature_comes_from_the_result(self) -> None:
+        """A 2D grid: code complexity, then the spread of the radii, from 0 to 1 in 5 bins."""
+        grid = Grid(
+            (FeatureSpec(CODE_COMPLEXITY, -1.0, 3.0, 5), FeatureSpec("radii_spread", 0.0, 1.0, 5)),
+            reference_nodes=100,
+        )
+        result = Result(Status.OK, score=1.0, features={"radii_spread": 0.45})
+        packing = Program("x = 1\n", result, code_complexity=100)
+        self.assertEqual(grid.feature_values(packing), [0.0, 0.45])
+        self.assertEqual(grid.cell_of(packing), (1, 2))
+
+    def test_a_missing_output_feature_is_refused(self) -> None:
+        grid = Grid((FeatureSpec("radii_spread", 0.0, 1.0, 5),), reference_nodes=100)
+        with self.assertRaisesRegex(ValueError, "has no feature 'radii_spread'"):
+            grid.cell_of(program(100, 1.0))
+
+
 class PlaceTest(unittest.TestCase):
     def setUp(self) -> None:
         self.grid = Grid(FEATURES, reference_nodes=100)

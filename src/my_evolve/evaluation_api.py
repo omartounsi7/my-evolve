@@ -30,6 +30,10 @@ class StageResult:
     metrics: dict[str, float] = field(default_factory=dict)
     # What the LLM should know about the program, such as "Circles 3 and 7 nearly touch"
     feedback: str = ""
+    # Named numbers describing the program's output, for the MAP-Elites grid (D17), such as
+    # the spread of the radii; read from stage 1 only, which must give every output feature
+    # the problem's grid names
+    features: dict[str, float] = field(default_factory=dict)
 
 
 class InvalidProgram(Exception):

@@ -34,6 +34,9 @@ The problem file is written in YAML. For now it holds:
           low: -1                          #   their ratio to the initial program's
           high: 3                          # values outside low..high go to the end bins
           bins: 10                         # optional: 10, 5 or 3 for 1, 2 or 3 features
+        - name: radii_spread               # any other name: an output feature, which
+          low: 0                           #   the evaluation's stage 1 must give
+          high: 1
     parents:                               # optional: how parents are chosen (D19)
       strategy: weighted                   # ShinkaEvolve's rule
       lambda: 1.0                          # how sharply it favours the better programs
@@ -147,7 +150,8 @@ class SandboxSettings:
 class FeatureSpec:
     """One dimension of the MAP-Elites grid (D17, D18)."""
 
-    # The feature's name; code_complexity is the built-in one
+    # The feature's name: code_complexity, built in, or an output feature, which the
+    # evaluation file's stage 1 gives
     name: str
     # The range cut into equal bins; a value outside it goes to the nearest end bin
     low: float
@@ -217,6 +221,13 @@ class Problem:
     islands: IslandSettings = field(default_factory=IslandSettings)
     # The dimensions of each island's MAP-Elites grid
     grid_features: tuple[FeatureSpec, ...] = DEFAULT_GRID
+
+    @property
+    def output_feature_names(self) -> tuple[str, ...]:
+        """Return the grid's features other than code_complexity: those the evaluation gives."""
+        return tuple(
+            feature.name for feature in self.grid_features if feature.name != CODE_COMPLEXITY
+        )
 
     @classmethod
     def load(cls, path: Path) -> "Problem":
@@ -481,8 +492,9 @@ def checked_number(section: dict[str, Any], key: str, where: str) -> float:
 def build_grid(section: Any) -> tuple[FeatureSpec, ...]:
     """Build the grid's dimensions from the grid section; code_complexity alone by default.
 
-    Each feature has a name, a range (low below high) and a number of bins; without one,
-    10, 5 or 3 bins for a grid of 1, 2 or 3 features (D18).
+    Each feature has a name (code_complexity, or an output feature the evaluation gives),
+    a range (low below high) and a number of bins; without one, 10, 5 or 3 bins for a grid
+    of 1, 2 or 3 features (D18).
     """
     grid = checked_section(section, "the grid section", optional={"features"})
     if "features" not in grid:
@@ -497,10 +509,6 @@ def build_grid(section: Any) -> tuple[FeatureSpec, ...]:
         where = f"feature {number} of the grid section"
         spec = checked_section(entry, where, required={"name", "low", "high"}, optional={"bins"})
         name = checked_text(spec, "name", where)
-        if name != CODE_COMPLEXITY:
-            raise ProblemError(
-                f"unknown grid feature {name!r} in {where}: the grid knows {CODE_COMPLEXITY}"
-            )
         low = checked_number(spec, "low", where)
         high = checked_number(spec, "high", where)
         if not low < high:

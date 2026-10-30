@@ -6,6 +6,10 @@ second threshold, 0.75, has no stage to gate). Both stages call run_packing() on
 it the same way, as OpenEvolve's do: the sum of the radii divided by 2.635, if the packing
 is legal. Every program OpenEvolve scores above 0 gets exactly the same score here.
 
+Stage 1 also gives two output features for the MAP-Elites grid (D17): radii_spread, how
+much the radii vary, and radius_centre_correlation, whether the big circles are in the
+middle (-1) or at the edges (+1). A problem file's grid may use either, or both.
+
 Where OpenEvolve gives a score of 0, this evaluation says why instead:
 - a packing that breaks a rule of the problem (wrong number of circles, NaN, a negative
   radius, a circle outside the square, two circles overlapping) raises InvalidProgram;
@@ -13,6 +17,7 @@ Where OpenEvolve gives a score of 0, this evaluation says why instead:
   ProgramFailure: the program does not keep its contract.
 """
 
+import math
 from collections.abc import Mapping
 from typing import Any
 
@@ -105,8 +110,36 @@ def score_packing(radii: Any) -> StageResult:
     return StageResult(score=score, metrics={"sum_radii": float(sum_radii), "target_ratio": score})
 
 
+def output_features(centers: Any, radii: Any) -> dict[str, float]:
+    """Return the packing's two output features for the grid (D17).
+
+    - radii_spread: std(radii) / mean(radii); 0 when every circle has the same size, and
+      when the mean is 0.
+    - radius_centre_correlation: the Pearson correlation between each circle's radius and
+      the distance from its centre to (0.5, 0.5): -1 means big circles in the middle, +1
+      big circles at the edges; 0 when the radii or the distances are all equal, where the
+      correlation is undefined.
+    """
+    radii = np.asarray(radii, dtype=float)
+    centers = np.asarray(centers, dtype=float)
+    mean = float(np.mean(radii))
+    spread = float(np.std(radii)) / mean if mean > 0 else 0.0
+    distances = np.sqrt(np.sum((centers - 0.5) ** 2, axis=1))
+    if np.ptp(radii) == 0 or np.ptp(distances) == 0:
+        correlation = 0.0
+    else:
+        correlation = float(np.corrcoef(radii, distances)[0, 1])
+    return {
+        "radii_spread": spread,
+        "radius_centre_correlation": correlation if math.isfinite(correlation) else 0.0,
+    }
+
+
 def evaluate_stage1(namespace: Mapping[str, Any]) -> StageResult:
-    """Stage 1: call run_packing() once, check the packing and score it (OpenEvolve's stage 1)."""
+    """Stage 1: call run_packing() once, check the packing and score it (OpenEvolve's stage 1).
+
+    Also gives the packing's output features.
+    """
     centers, radii, _ = call_run_packing(namespace)
     check_packing(centers, radii)
     result = score_packing(radii)
@@ -115,7 +148,7 @@ def evaluate_stage1(namespace: Mapping[str, Any]) -> StageResult:
         f"overlapping. Sum of radii: {result.metrics['sum_radii']:.6f} "
         f"(the target, {TARGET_VALUE}, scores 1)."
     )
-    return StageResult(result.score, result.metrics, feedback)
+    return StageResult(result.score, result.metrics, feedback, output_features(centers, radii))
 
 
 def evaluate_stage2(namespace: Mapping[str, Any]) -> StageResult:

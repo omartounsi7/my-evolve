@@ -95,6 +95,7 @@ def main(arguments: list[str]) -> int:
             sandbox,
             problem.evaluation.stage_time_limit,
             problem.evaluation.thresholds,
+            problem.output_feature_names,
         )
         ensemble = Ensemble.from_settings(problem.llm)
         sandbox.remove_leftovers()

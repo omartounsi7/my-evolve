@@ -180,12 +180,17 @@ def spin():
 """
 
 
-def cascade(stages: str, thresholds: list[float], limit: float = 30.0) -> Evaluator:
+def cascade(
+    stages: str,
+    thresholds: list[float],
+    limit: float = 30.0,
+    output_features: list[str] | None = None,
+) -> Evaluator:
     """Return an evaluator for an evaluation file holding these stage functions."""
     folder = Path(tempfile.mkdtemp())
     path = folder / "evaluation.py"
     path.write_text("from my_evolve.evaluation_api import InvalidProgram, StageResult\n\n" + stages)
-    return Evaluator(path, LocalSandbox(), limit, thresholds)
+    return Evaluator(path, LocalSandbox(), limit, thresholds, output_features or [])
 
 
 class CascadeTest(unittest.TestCase):
@@ -284,6 +289,50 @@ class CascadeTest(unittest.TestCase):
                     cascade(stages, thresholds)
         with self.assertRaisesRegex(EvaluationFileError, "needs 0 threshold"):
             cascade("def evaluate(namespace):\n    return StageResult(1)\n", [0.5])
+
+
+class OutputFeatureTest(unittest.TestCase):
+    def test_features_come_from_stage_1_only(self) -> None:
+        """Every program's features are measured the same way: by stage 1."""
+        evaluator = cascade(
+            "def evaluate_stage1(namespace):\n"
+            "    return StageResult(0.6, features={'spread': 0.2, 'other': 1.0})\n"
+            "def evaluate_stage2(namespace):\n"
+            "    return StageResult(0.9, features={'spread': 0.8})\n",
+            [0.5],
+            output_features=["spread"],
+        )
+        result = evaluator.evaluate(COUNTING_PROGRAM)
+        self.assertEqual((result.score, result.features), (0.9, {"spread": 0.2, "other": 1.0}))
+
+    def test_a_later_failure_keeps_the_features(self) -> None:
+        evaluator = cascade(
+            "def evaluate_stage1(namespace):\n"
+            "    return StageResult(0.6, features={'spread': 0.2})\n"
+            "def evaluate_stage2(namespace):\n"
+            "    return StageResult(namespace['boom']())\n",
+            [0.5],
+            output_features=["spread"],
+        )
+        result = evaluator.evaluate(COUNTING_PROGRAM)
+        self.assertEqual((result.status, result.features), (Status.OK, {"spread": 0.2}))
+
+    def test_a_missing_or_infinite_feature_is_an_error(self) -> None:
+        """The evaluation file's fault: status error."""
+        for features, error in [
+            ("{}", "stage 1 must give the grid's feature 'spread'"),
+            ("{'spread': float('inf')}", "the feature 'spread' must be a finite number"),
+            ("{'spread': 'wide'}", "the feature 'spread' must be a number"),
+        ]:
+            with self.subTest(features=features):
+                evaluator = cascade(
+                    f"def evaluate(namespace):\n    return StageResult(1.0, features={features})\n",
+                    [],
+                    output_features=["spread"],
+                )
+                result = evaluator.evaluate(COUNTING_PROGRAM)
+                self.assertEqual(result.status, Status.ERROR)
+                self.assertIn(error, result.error or "")
 
 
 class ErrorStatusTest(unittest.TestCase):

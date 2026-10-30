@@ -34,6 +34,8 @@ class Result:
     error: str | None = None
     # Named numbers about the run, from the evaluation file; saved, not shown to the LLM
     metrics: dict[str, float] = field(default_factory=dict)
+    # Named numbers describing the program's output, from stage 1, for the grid (D17)
+    features: dict[str, float] = field(default_factory=dict)
     # What the evaluation file wants the LLM to know about the program; None if nothing
     feedback: str | None = None
     # How long the evaluation took, in seconds
@@ -71,6 +73,7 @@ class Result:
             "score": self.score,
             "error": self.error,
             "metrics": self.metrics,
+            "features": self.features,
             "feedback": self.feedback,
             "duration": self.duration,
             "stage_reached": self.stage_reached,

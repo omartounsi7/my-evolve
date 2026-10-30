@@ -222,14 +222,33 @@ class ProblemTest(unittest.TestCase):
         for features, error in [
             ([{"name": "code_complexity", "low": 2, "high": 2}], "'low' must be below 'high'"),
             ([{"name": "code_complexity", "low": 0, "high": "3"}], "'high' .* must be a number"),
-            ([{"name": "radii_spread", "low": 0, "high": 1}], "unknown grid feature"),
             ([{"name": "code_complexity", "low": 0, "high": 1, "bins": 0}], "'bins'"),
             ([{"name": "code_complexity", "low": 0}], "missing key 'high'"),
             ([], "1 to 3 features"),
+            ([{"name": f"f{n}", "low": 0, "high": 1} for n in range(4)], "1 to 3 features"),
+            ([{"name": "a", "low": 0, "high": 1}, {"name": "a", "low": 0, "high": 2}], "same name"),
         ]:
             data["grid"] = {"features": features}
             with self.subTest(error=error), self.assertRaisesRegex(ProblemError, error):
                 Problem.from_dict(data)
+
+    def test_output_features_and_default_bins(self) -> None:
+        """Any other name is an output feature; 5 bins each for 2 features, 3 for 3."""
+        data = valid_data()
+        data["grid"] = {
+            "features": [
+                {"name": "code_complexity", "low": -1, "high": 3},
+                {"name": "radii_spread", "low": 0, "high": 1},
+            ]
+        }
+        problem = Problem.from_dict(data)
+        self.assertEqual([feature.bins for feature in problem.grid_features], [5, 5])
+        self.assertEqual(problem.output_feature_names, ("radii_spread",))
+        data["grid"]["features"].append({"name": "c", "low": -1, "high": 1, "bins": 4})
+        problem = Problem.from_dict(data)
+        self.assertEqual([feature.bins for feature in problem.grid_features], [3, 3, 4])
+        self.assertEqual(problem.output_feature_names, ("radii_spread", "c"))
+        self.assertEqual(Problem.from_dict(valid_data()).output_feature_names, ())
 
     def test_the_islands_section(self) -> None:
         self.assertEqual(Problem.from_dict(valid_data()).islands.count, 3)

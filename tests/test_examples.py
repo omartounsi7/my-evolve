@@ -61,6 +61,32 @@ class CirclePackingTest(unittest.TestCase):
             self.evaluate(packing_of([[0.5, 0.5]], [0.1]))
 
 
+class CirclePackingFeatureTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evaluate = load_evaluate(CIRCLE_PACKING_FOLDER, "evaluate_stage1")
+
+    def test_the_initial_programs_features(self) -> None:
+        """The spread of the radii, and their correlation with the distance to the centre."""
+        namespace = run_program(CIRCLE_PACKING_FOLDER / "initial_program.py")
+        centers, radii, _ = namespace["run_packing"]()
+        features = self.evaluate(namespace).features
+        self.assertAlmostEqual(features["radii_spread"], np.std(radii) / np.mean(radii))
+        distances = np.linalg.norm(centers - 0.5, axis=1)
+        self.assertAlmostEqual(
+            features["radius_centre_correlation"], np.corrcoef(radii, distances)[0, 1]
+        )
+        # Its big circle is in the middle, and smaller ones around it.
+        self.assertLess(features["radius_centre_correlation"], 0.0)
+
+    def test_equal_circles_have_no_spread_and_no_correlation(self) -> None:
+        """A 5 x 5 grid of equal circles, and a 26th of radius 0 in a corner."""
+        centers = [[0.1 + 0.2 * i, 0.1 + 0.2 * j] for i in range(5) for j in range(5)]
+        equal = packing_of(centers + [[0.5, 0.5]], [0.0] * 26)
+        self.assertEqual(
+            self.evaluate(equal).features, {"radii_spread": 0.0, "radius_centre_correlation": 0.0}
+        )
+
+
 class ToyProblemTest(unittest.TestCase):
     def setUp(self) -> None:
         self.evaluate = load_evaluate(TOY_FOLDER)

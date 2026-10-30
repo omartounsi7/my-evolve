@@ -62,6 +62,7 @@ def make_evaluator(problem_name: str, sandbox: Sandbox) -> Evaluator:
         sandbox,
         problem.evaluation.stage_time_limit,
         problem.evaluation.thresholds,
+        problem.output_feature_names,
     )
 
 

@@ -97,24 +97,34 @@ def checked_number(value: Any, what: str) -> float:
     return float(value)
 
 
-def checked(outcome: Any) -> StageResult:
-    """Return what evaluate returned, if it is a StageResult that can be saved as it is.
+def checked_numbers(values: Any, what: str) -> dict[str, float]:
+    """Return a dictionary of named finite numbers, such as the metrics. Raises ValueError
+    otherwise."""
+    if not isinstance(values, dict) or not all(isinstance(name, str) for name in values):
+        raise ValueError(f"the {what} must be a dictionary with text keys")
+    return {
+        name: checked_number(value, f"the {what[:-1]} {name!r}") for name, value in values.items()
+    }
+
+
+def checked(outcome: Any, required_features: Sequence[str] = ()) -> StageResult:
+    """Return what a stage returned, if it is a StageResult that can be saved as it is, with
+    every feature in required_features.
 
     Raises ValueError otherwise: a mistake of the evaluation file, not of the program.
     """
     if not isinstance(outcome, StageResult):
         raise ValueError(f"evaluate must return a StageResult, got {type(outcome).__name__}")
-    if not isinstance(outcome.metrics, dict) or not all(
-        isinstance(name, str) for name in outcome.metrics
-    ):
-        raise ValueError("the metrics must be a dictionary with text keys")
     if not isinstance(outcome.feedback, str):
         raise ValueError(f"the feedback must be text, got {type(outcome.feedback).__name__}")
-    metrics = {
-        name: checked_number(value, f"the metric {name!r}")
-        for name, value in outcome.metrics.items()
-    }
-    return StageResult(checked_number(outcome.score, "the score"), metrics, outcome.feedback)
+    metrics = checked_numbers(outcome.metrics, "metrics")
+    features = checked_numbers(outcome.features, "features")
+    for name in required_features:
+        if name not in features:
+            raise ValueError(f"stage 1 must give the grid's feature {name!r}")
+    return StageResult(
+        checked_number(outcome.score, "the score"), metrics, outcome.feedback, features
+    )
 
 
 def join_feedback(*parts: str | None) -> str | None:
@@ -151,11 +161,13 @@ class Evaluator:
         sandbox: Sandbox,
         stage_time_limit: float,
         thresholds: Sequence[float] = (),
+        output_features: Sequence[str] = (),
     ) -> None:
         """Load the evaluation file and find its stages.
 
         sandbox runs the programs; each stage may last stage_time_limit seconds; stage
-        k + 1 runs only if stage k's score reaches thresholds[k - 1]. Raises
+        k + 1 runs only if stage k's score reaches thresholds[k - 1]; stage 1 must give
+        every feature named in output_features (the grid's, D17). Raises
         EvaluationFileError if the file has no stage, or if the thresholds are not one
         per stage after the first.
         """
@@ -175,6 +187,8 @@ class Evaluator:
         self.sandbox: Sandbox = sandbox
         # How long one stage may last, in seconds, loading the program included
         self.stage_time_limit: float = stage_time_limit
+        # The features stage 1 must give, for the grid
+        self.output_features: tuple[str, ...] = tuple(output_features)
 
     def evaluate(self, code: str) -> Result:
         """Run the program through the cascade, each stage in a fresh sandbox session.
@@ -190,7 +204,8 @@ class Evaluator:
         """Run the stages in order, and merge what they return (D9); no duration yet.
 
         - A later stage's score replaces the earlier one; its metrics are added to the
-          earlier ones, replacing those with the same name; feedback is gathered.
+          earlier ones, replacing those with the same name; feedback is gathered. The
+          features are stage 1's, so every program's are measured the same way.
         - The next stage runs only if this stage's score reaches its threshold.
         - An illegal answer at any stage makes the program invalid, and an error at any
           stage (not the program's fault) makes the result an error.
@@ -201,7 +216,8 @@ class Evaluator:
         feedback: str | None = None
         stage_reached = 0
         for number, stage in enumerate(self.stages, start=1):
-            outcome = self.run_stage(stage, code)
+            required = self.output_features if number == 1 else ()
+            outcome = self.run_stage(stage, code, required)
             if isinstance(outcome, Result):
                 # The stage did not give a score.
                 gathered = join_feedback(feedback, outcome.feedback)
@@ -212,11 +228,15 @@ class Evaluator:
                     score=merged.score,
                     error=f"stage {number}: {outcome.error}",
                     metrics=merged.metrics,
+                    features=merged.features,
                     feedback=gathered,
                     stage_reached=stage_reached,
                 )
-            metrics = {**merged.metrics, **outcome.metrics} if merged else outcome.metrics
-            merged = StageResult(outcome.score, metrics)
+            if merged is None:
+                merged = StageResult(outcome.score, outcome.metrics, features=outcome.features)
+            else:
+                metrics = {**merged.metrics, **outcome.metrics}
+                merged = StageResult(outcome.score, metrics, features=merged.features)
             feedback = join_feedback(feedback, outcome.feedback)
             stage_reached = number
             if number < len(self.stages) and outcome.score < self.thresholds[number - 1]:
@@ -226,15 +246,18 @@ class Evaluator:
             Status.OK,
             score=merged.score,
             metrics=merged.metrics,
+            features=merged.features,
             feedback=feedback,
             stage_reached=stage_reached,
         )
 
-    def run_stage(self, stage: EvaluateFunction, code: str) -> StageResult | Result:
+    def run_stage(
+        self, stage: EvaluateFunction, code: str, required_features: Sequence[str] = ()
+    ) -> StageResult | Result:
         """Run one stage on the program in a fresh sandbox session, with its own time limit.
 
-        Returns what the stage returned, checked, or the Result of a program that gave no
-        score at this stage.
+        Returns what the stage returned, checked (with required_features in it), or the
+        Result of a program that gave no score at this stage.
         """
         try:
             session = self.sandbox.start(code, self.stage_time_limit)
@@ -246,7 +269,7 @@ class Evaluator:
             return Result.failure(Status.ERROR, f"sandbox: {error}")
         outcome: StageResult | Result
         try:
-            outcome = checked(stage(ProgramNamespace(session)))
+            outcome = checked(stage(ProgramNamespace(session)), required_features)
         except InvalidProgram as invalid:
             outcome = Result.failure(Status.INVALID, invalid.reason, invalid.feedback or None)
         except ProgramFailure as failure:

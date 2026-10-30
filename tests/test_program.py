@@ -18,6 +18,7 @@ class ResultTest(unittest.TestCase):
                 "score": None,
                 "error": "ValueError: bad",
                 "metrics": {},
+                "features": {},
                 "feedback": None,
                 "duration": 0.0,
                 "stage_reached": 0,
