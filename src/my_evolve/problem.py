@@ -7,6 +7,7 @@ The problem file is written in YAML. For now it holds:
       What the program must do, shown to the LLM in every prompt.
     entry_functions: [run_packing]         # the functions every program must define
     packages: [numpy==2.5.4]               # optional: what programs may import, exact versions
+    snapshot_every: 10                     # optional: completed iterations between snapshots
     llm:                                   # laid out like openevolve's llm section
       api_base: http://localhost:11434/v1  # the server's OpenAI-compatible address
       api_key: ${ANTHROPIC_API_KEY}        # optional: the variable holding the key
@@ -247,6 +248,8 @@ class Problem:
     packages: tuple[str, ...] = ()
     # The functions every program must define at its top level, such as ("run_packing",)
     entry_functions: tuple[str, ...] = ()
+    # How many completed iterations pass between two snapshots of the best program (D47)
+    snapshot_every: int = 10
     # How programs are evaluated
     evaluation: EvaluationSettings = field(default_factory=EvaluationSettings)
     # The limits of the Docker sandbox
@@ -289,6 +292,7 @@ class Problem:
             required={"name", "description", "entry_functions", "llm"},
             optional={
                 "packages",
+                "snapshot_every",
                 "evaluation",
                 "sandbox",
                 "prompt",
@@ -344,6 +348,7 @@ class Problem:
             name=checked_text(top, "name", "the problem file"),
             description=checked_text(top, "description", "the problem file"),
             entry_functions=checked_entry_functions(top["entry_functions"]),
+            snapshot_every=checked_count(top, "snapshot_every", "the problem file", 10),
             llm=build_llm(top["llm"]),
             packages=checked_packages(top.get("packages", [])),
             evaluation=EvaluationSettings(

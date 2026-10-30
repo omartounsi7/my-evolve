@@ -3,6 +3,7 @@
 import enum
 import uuid
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -120,6 +121,11 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
+def creation_time() -> str:
+    """Return the current time, in UTC, as ISO 8601 text."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 @dataclass(frozen=True)
 class Program:
     """One program of the run: its code, its result, and where it came from.
@@ -153,6 +159,8 @@ class Program:
     code_complexity: int | None = None
     # Identifies the program everywhere: in the database and in the saved files
     id: str = field(default_factory=new_id)
+    # When it was made, in UTC
+    created_at: str = field(default_factory=creation_time)
 
     @classmethod
     def new_child(
@@ -220,5 +228,6 @@ class Program:
             "fingerprint": self.fingerprint,
             "example_ids": list(self.example_ids),
             "code_complexity": self.code_complexity,
+            "created_at": self.created_at,
             "code": self.code,
         }

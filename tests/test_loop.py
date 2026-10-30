@@ -5,6 +5,7 @@ It keeps passing at every step, and grows with every phase.
 """
 
 import contextlib
+import csv
 import io
 import json
 import os
@@ -122,8 +123,52 @@ class LoopTest(unittest.TestCase):
         self.assertEqual([entry["id"] for entry in saved], list(database.programs))
         self.assertEqual([entry["result"]["score"] for entry in saved], [1.0, 1.0, 4.0, 2.0])
         best_file = (self.output / "best_program.py").read_text()
-        self.assertTrue(best_file.startswith("# Best program of the run: score 4.0, iteration 1"))
+        self.assertTrue(best_file.startswith("# Best program of the run\n# Score: 4.0\n"))
+        self.assertIn("# Iteration: 1\n", best_file)
+        self.assertIn("# Description:\n#   Returns 4.\n", best_file)
         self.assertIn("    return 4\n", best_file)
+
+    def test_history_snapshots_and_the_session(self) -> None:
+        """history.csv has a row per completed iteration; snapshots every 2 iterations;
+        problem.yaml is copied; run.json records the session and how it ended."""
+        problem = replace(Problem.load(TOY_FOLDER / "problem.yaml"), snapshot_every=2)
+        replies: list[str | Exception] = [
+            reply_returning("4"),
+            LLMError("fake-model", "down"),
+            reply_returning("2"),
+        ]
+        with contextlib.redirect_stdout(io.StringIO()):
+            database = run(
+                problem=problem,
+                initial_code=(TOY_FOLDER / "initial_program.py").read_text(),
+                ensemble=Ensemble([FakeLLM(replies)], [1.0], 3),
+                evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
+                iterations=3,
+                output=self.output,
+                seed=0,
+                problem_file=TOY_FOLDER / "problem.yaml",
+                command=["scripts/run.py", "--iterations", "3"],
+            )
+        with (self.output / "history.csv").open() as file:
+            rows = list(csv.DictReader(file))
+        self.assertEqual([row["status"] for row in rows], ["ok", "skipped", "ok"])
+        self.assertEqual([row["best_score"] for row in rows], ["4.0", "4.0", "4.0"])
+        self.assertEqual((rows[1]["program_id"], rows[1]["score"]), ("", ""))
+        self.assertEqual(rows[0]["model"], "fake-model")
+        snapshots = sorted(path.name for path in (self.output / "best").iterdir())
+        self.assertEqual(snapshots, ["iteration_0000.py", "iteration_0002.py"])
+        self.assertIn("# Score: 4.0", (self.output / "best" / "iteration_0002.py").read_text())
+        self.assertEqual(
+            (self.output / "problem.yaml").read_text(), (TOY_FOLDER / "problem.yaml").read_text()
+        )
+        info = json.loads((self.output / "run.json").read_text())
+        (session,) = info["sessions"]
+        self.assertEqual(session["command"], ["scripts/run.py", "--iterations", "3"])
+        self.assertEqual(session["end"], "every iteration done")
+        self.assertEqual(session["flags"], {"iterations": 3, "verbose": False})
+        self.assertEqual(session["llm"]["models"][0]["name"], "fake-model")
+        self.assertIsNotNone(session["ended_at"])
+        self.assertTrue(all(program.created_at for program in database.programs.values()))
 
     def test_a_failing_model_is_dropped_and_the_run_stops_without_models(self) -> None:
         """Each iteration draws a model; a model failing 3 times in a row is dropped."""
@@ -348,7 +393,7 @@ class LoopTest(unittest.TestCase):
         self.assertEqual((child.llm.model, child.llm.output_tokens), ("fake-model", words))
         info = json.loads((self.output / "run.json").read_text())
         self.assertEqual(info["seed"], 3)
-        self.assertEqual(info["system_message"], llm.prompts[0].system)
+        self.assertEqual(info["sessions"][0]["system_message"], llm.prompts[0].system)
         self.assertEqual(len(info["run_id"]), 32)
 
     def test_the_same_seed_repeats_the_run(self) -> None:
@@ -464,6 +509,23 @@ class RunScriptTest(unittest.TestCase):
             written = "".join(path.read_text() for path in output.rglob("*") if path.is_file())
             for text in (completed.stdout, completed.stderr, written):
                 self.assertNotIn("sk-very-secret-value", text)
+
+    def test_the_default_run_folder(self) -> None:
+        """Without --output, the run folder is runs/<problem>_<date>_<time>, from where it runs."""
+        with tempfile.TemporaryDirectory() as folder:
+            arguments = self.toy_arguments(Path("unused"))
+            index = arguments.index("--output")
+            del arguments[index : index + 2]
+            subprocess.run(
+                [sys.executable, str(RUN_SCRIPT), *arguments],
+                capture_output=True,
+                text=True,
+                timeout=60,
+                cwd=folder,
+            )
+            (run_folder,) = (Path(folder) / "runs").iterdir()
+            self.assertRegex(run_folder.name, r"^toy_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
+            self.assertTrue((run_folder / "log.txt").exists())
 
     def test_wrong_arguments_are_usage_errors(self) -> None:
         """A number of iterations below 1, or a missing file, stops the script at once."""

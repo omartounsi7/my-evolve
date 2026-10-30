@@ -58,12 +58,25 @@ length; start it with `OLLAMA_CONTEXT_LENGTH=32768` or more.
 |---|---|---|
 | `--config` | The problem file: the problem's description and its LLM | required |
 | `--iterations` | How many children to ask the LLM for | required |
-| `--output` | The run folder; it must not hold a run already | required |
+| `--output` | The run folder; it must not hold a run already | `runs/<problem>_<date>_<time>` |
 | `--seed` | The seed of the run's random draws | drawn, and printed |
 | `--unsafe-local-sandbox` | Run programs as plain processes, without any isolation: tests and trusted code only | off |
+| `--verbose` | Show each iteration's details on the console (`log.txt` always has them) | off |
 
-The console shows one line per iteration. The run folder holds every program
-(`programs.jsonl`, one line of JSON each) and the best one (`best_program.py`).
+The console shows one line per iteration (`--verbose` adds details), and a summary at
+the end. The run folder holds:
+
+| File | Contents |
+|---|---|
+| `programs.jsonl` | Every program, one line of JSON each, written as it is stored |
+| `llm_calls.jsonl` | Every LLM call: the user message, the reply, the tokens |
+| `history.csv` | One row per completed iteration: the progress of the run |
+| `best_program.py` | The best program so far, under a comment header |
+| `best/iteration_0010.py`, ... | The best program every `snapshot_every` iterations |
+| `run.json` | The run's id, its seed, and one record per session |
+| `problem.yaml` | A copy of the problem file |
+| `log.txt` | Everything logged, with the time |
+
 Ctrl+C stops the run; every program evaluated so far is already saved.
 
 ## Everyday commands

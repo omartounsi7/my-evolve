@@ -2,7 +2,9 @@
 
 Usage:
     python scripts/run.py INITIAL_PROGRAM EVALUATION_FILE --config PROBLEM_FILE
-        --iterations N --output FOLDER [--seed S] [--unsafe-local-sandbox] [--verbose]
+        --iterations N [--output FOLDER] [--seed S] [--unsafe-local-sandbox] [--verbose]
+
+The run folder defaults to runs/<problem name>_<date>_<time>.
 
 Programs run in Docker containers, so Docker must be installed and running.
 
@@ -15,6 +17,7 @@ Example, from the repository root:
 import argparse
 import sys
 import uuid
+from datetime import datetime
 from pathlib import Path
 
 from my_evolve.evaluator import EvaluationFileError, Evaluator
@@ -54,7 +57,9 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         "--iterations", type=positive_integer, required=True, help="how many children to ask for"
     )
     parser.add_argument(
-        "--output", type=Path, required=True, help="the run folder, where programs are saved"
+        "--output",
+        type=Path,
+        help="the run folder, where everything is saved (default: runs/<problem>_<date>_<time>)",
     )
     parser.add_argument("--seed", type=int, help="fixes the random draws (default: drawn)")
     parser.add_argument(
@@ -70,6 +75,11 @@ def parse_arguments(arguments: list[str]) -> argparse.Namespace:
         if not path.is_file():
             parser.error(f"no such file: {path}")
     return parsed
+
+
+def default_output(problem_name: str) -> Path:
+    """Return the default run folder: runs/, the problem's name, the date and the time (D45)."""
+    return Path("runs") / f"{problem_name}_{datetime.now():%Y-%m-%d_%H-%M-%S}"
 
 
 def make_sandbox(problem: Problem, unsafe_local: bool, run_id: str) -> Sandbox:
@@ -89,6 +99,7 @@ def main(arguments: list[str]) -> int:
     parsed = parse_arguments(arguments)
     try:
         problem = Problem.load(parsed.config)
+        output = parsed.output or default_output(problem.name)
         initial_code = parsed.initial_program.read_text(encoding="utf-8")
         # Identifies the run, and labels its containers; saved in run.json.
         run_id = uuid.uuid4().hex
@@ -109,10 +120,12 @@ def main(arguments: list[str]) -> int:
                 ensemble,
                 evaluator,
                 parsed.iterations,
-                parsed.output,
+                output,
                 parsed.seed,
                 run_id,
                 parsed.verbose,
+                parsed.config,
+                ["scripts/run.py", *arguments],
             )
         finally:
             # Whatever happened, no container of the run outlives it.
@@ -123,9 +136,9 @@ def main(arguments: list[str]) -> int:
         return 1
     except KeyboardInterrupt:
         # Every program evaluated so far is already saved.
-        print(f"\nStopped by Ctrl+C. The programs so far are in {parsed.output}")
+        print(f"\nStopped by Ctrl+C. The programs so far are in {output}")
         return 130
-    print(f"Done. The programs are in {parsed.output}")
+    print(f"Done. The run folder is {output}")
     return 0
 
 

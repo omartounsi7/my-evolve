@@ -10,22 +10,20 @@ Each iteration runs the six steps of the AlphaEvolve diagram:
     result = evaluator.evaluate(parsed.code)
     database.add(Program.new_child(parent, parsed.code, result, iteration))
 
-For now iterations run one after another, and the run folder holds:
-- programs.jsonl: one line per program, appended as it is stored;
-- llm_calls.jsonl: one line per LLM call, failed ones included: the user message, the
-  reply, the tokens and the duration;
-- run.json: the run's id, its seed and the system message, written once;
-- best_program.py: the best program so far;
-- log.txt: everything logged, with the time (logs.py).
-The run ends with a summary: iterations done and why the run stopped, the best score,
-the children by status, and the tokens and cost of each model (D51).
+For now iterations run one after another. Everything is saved in the run folder as it
+happens (storage.py), and logged to the console and log.txt (logs.py). The run ends with
+a summary: iterations done and why the run stopped, the best score, the children by
+status, and the tokens and cost of each model (D51).
 """
 
-import json
 import logging
 import random
+import subprocess
 import uuid
 from collections import Counter
+from collections.abc import Sequence
+from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -38,12 +36,7 @@ from my_evolve.problem import ModelSettings, Problem
 from my_evolve.program import LLMUsage, Origin, Program, Result
 from my_evolve.prompt import PromptBuilder
 from my_evolve.reply_parser import parse_reply
-
-# The files of the run folder
-PROGRAMS_FILE = "programs.jsonl"
-LLM_CALLS_FILE = "llm_calls.jsonl"
-RUN_FILE = "run.json"
-BEST_PROGRAM_FILE = "best_program.py"
+from my_evolve.storage import HistoryRow, RunInfo, Storage
 
 # The longest error shown on the console, in characters (programs.jsonl keeps it whole)
 MAX_CONSOLE_ERROR = 200
@@ -53,34 +46,6 @@ logger = logging.getLogger(__name__)
 
 class RunError(Exception):
     """Raised when a run cannot start; the message says why."""
-
-
-def append_line(path: Path, record: dict[str, Any]) -> None:
-    """Add one record to a JSON-lines file."""
-    # allow_nan=False: scores are finite numbers or null, so the file is plain JSON.
-    line = json.dumps(record, allow_nan=False)
-    with path.open("a", encoding="utf-8") as file:
-        file.write(line + "\n")
-
-
-def append_program(folder: Path, program: Program) -> None:
-    """Add the program to programs.jsonl, as one line of JSON."""
-    append_line(folder / PROGRAMS_FILE, program.to_dict())
-
-
-def write_run_info(folder: Path, run_id: str, seed: int, system_message: str) -> None:
-    """Write run.json: what identifies the run, and the system message of every prompt."""
-    info = {"run_id": run_id, "seed": seed, "system_message": system_message}
-    (folder / RUN_FILE).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-
-
-def write_best_program(folder: Path, program: Program) -> None:
-    """Rewrite best_program.py: the program's code, under a comment saying what it is."""
-    header = (
-        f"# Best program of the run: score {program.result.score}, "
-        f"iteration {program.iteration}, id {program.id}\n\n"
-    )
-    (folder / BEST_PROGRAM_FILE).write_text(header + program.code, encoding="utf-8")
 
 
 def describe(program: Program) -> str:
@@ -142,6 +107,26 @@ def summary(problem: Problem, database: Database, completed: int, reason: str) -
     return lines
 
 
+def now() -> str:
+    """Return the current time, in UTC, as ISO 8601 text."""
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def git_commit() -> str | None:
+    """Return the commit of the my-evolve code that runs, or None if it is not known."""
+    try:
+        found = subprocess.run(
+            ["git", "-C", str(Path(__file__).parent), "rev-parse", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return found.stdout.strip() or None if found.returncode == 0 else None
+
+
 def run(
     problem: Problem,
     initial_code: str,
@@ -152,17 +137,19 @@ def run(
     seed: int | None = None,
     run_id: str | None = None,
     verbose: bool = False,
+    problem_file: Path | None = None,
+    command: Sequence[str] = (),
 ) -> Database:
     """Evolve the initial program for that many iterations, and return the database.
 
-    Every program and every LLM call is saved in the output folder as soon as it
-    exists. seed fixes the random draws (with the same LLM replies, a run repeats
-    exactly); without one, a seed is drawn and printed. run_id identifies the run (its
-    containers are labelled with it); without one, an id is made. Each iteration draws
-    one model of the ensemble; an iteration whose LLM call fails is skipped, and the run
-    stops when every model has been dropped. Every model is checked before the run.
-    Messages go to the console (details too with verbose) and to log.txt in the output
-    folder.
+    Everything is saved in the output folder as soon as it exists (storage.py), with a
+    copy of problem_file, if given, and the command line in the session's record. seed
+    fixes the random draws (with the same LLM replies, a run repeats exactly); without
+    one, a seed is drawn. run_id identifies the run (its containers are labelled with
+    it); without one, an id is made. Each iteration draws one model of the ensemble; an
+    iteration whose LLM call fails is skipped, and the run stops when every model has
+    been dropped. Every model is checked before the run. Messages go to the console
+    (details too with verbose) and to log.txt in the output folder.
 
     A child that fails a check (it does not compile, changes code outside the evolve
     blocks, lacks an entry function, or repeats an earlier program) is rejected, and
@@ -172,11 +159,24 @@ def run(
     answer its check, if the initial program fails the checks, or if it does not work:
     evolution needs a working start.
     """
-    if (output / PROGRAMS_FILE).exists():
+    storage = Storage(output)
+    if storage.holds_a_run():
         raise RunError(f"{output} already holds a run; choose another output folder")
     setup_logging(output, verbose)
     try:
-        return evolve(problem, initial_code, ensemble, evaluator, iterations, output, seed, run_id)
+        return evolve(
+            problem,
+            initial_code,
+            ensemble,
+            evaluator,
+            iterations,
+            storage,
+            seed if seed is not None else random.SystemRandom().randrange(2**32),
+            run_id or uuid.uuid4().hex,
+            {"iterations": iterations, "verbose": verbose},
+            problem_file,
+            command,
+        )
     finally:
         stop_logging()
 
@@ -187,15 +187,14 @@ def evolve(
     ensemble: Ensemble,
     evaluator: Evaluator,
     iterations: int,
-    output: Path,
-    seed: int | None,
-    run_id: str | None,
+    storage: Storage,
+    seed: int,
+    run_id: str,
+    flags: dict[str, Any],
+    problem_file: Path | None,
+    command: Sequence[str],
 ) -> Database:
     """Run the loop, once logging is set up (see run)."""
-    if seed is None:
-        seed = random.SystemRandom().randrange(2**32)
-    if run_id is None:
-        run_id = uuid.uuid4().hex
     try:
         split_evolve_blocks(initial_code)
     except MarkerError as error:
@@ -223,13 +222,16 @@ def evolve(
     def store(program: Program) -> None:
         """Add the program to the database and the run folder."""
         database.add(program)
-        append_program(output, program)
+        storage.append_program(program)
         if database.best_id == program.id:
-            write_best_program(output, program)
+            storage.write_best(program)
 
     def after_completion(completed: int) -> None:
-        """Migrate between islands when due: every migration_interval completed iterations,
-        skipped ones included (D23)."""
+        """Every snapshot_every completed iterations, skipped ones included, save the best
+        program (D47); every migration_interval, migrate between islands (D23)."""
+        best = database.best()
+        if completed % problem.snapshot_every == 0 and best is not None:
+            storage.write_snapshot(best, completed)
         if completed % problem.islands.migration_interval != 0:
             return
         arrivals = database.migrate(completed)
@@ -240,6 +242,20 @@ def evolve(
             logger.info(
                 "Migration after iteration %d: %d programs %s", completed, len(arrivals), verb
             )
+
+    def history_row(iteration: int, child: Program | None, model: str) -> HistoryRow:
+        """Return the history row of a completed iteration; child is None if it was skipped."""
+        best = database.best()
+        return HistoryRow(
+            iteration=iteration,
+            completed=iteration,
+            program_id=child.id if child else "",
+            status=child.result.status.value if child else "skipped",
+            score=child.result.score if child else None,
+            best_score=database.best_score(),
+            best_id=best.id if best else "",
+            model=model,
+        )
 
     initial = Program(
         initial_code,
@@ -252,97 +268,120 @@ def evolve(
             f"the initial program does not work ({initial.result.status.value}): "
             f"{initial.result.error}"
         )
-    output.mkdir(parents=True, exist_ok=True)
-    write_run_info(output, run_id, seed, prompt_builder.system_message)
+    info = RunInfo(run_id=run_id, seed=seed)
+    session: dict[str, Any] = {
+        "started_at": now(),
+        "ended_at": None,
+        "end": None,
+        "command": list(command),
+        "git_commit": git_commit(),
+        "flags": flags,
+        "llm": asdict(problem.llm),
+        "system_message": prompt_builder.system_message,
+    }
+    info.sessions.append(session)
+    storage.write_run_info(info)
+    if problem_file is not None:
+        storage.save_problem(problem_file)
     store(initial)
     for copy in database.seed_islands(initial):
         store(copy)
+    storage.write_snapshot(initial, 0)
     logger.info(
         "Initial program: %s, copied to %d islands", describe(initial), len(database.islands)
     )
 
     completed = 0
     reason = "every iteration done"
-    for iteration in range(1, iterations + 1):
-        island = database.sample_island()
-        parent, examples = database.sample(island, problem.prompt.example_programs)
-        try:
-            llm = ensemble.draw(rng)
-        except NoModelLeft as error:
-            logger.info("Stopping: %s", error)
-            reason = "no LLM model left"
-            break
-        logger.debug(
-            "Iteration %d: island %d, parent %s (%s), examples %s, model %s",
-            iteration,
-            island,
-            parent.id,
-            describe(parent),
-            [example.id for example in examples],
-            llm.name,
-        )
-        prompt = prompt_builder.build(parent, examples, database.best_score())
-        call: dict[str, Any] = {"iteration": iteration, "user_message": prompt.user}
-        try:
-            reply = llm.complete(prompt)
-        except LLMError as error:
-            ensemble.record_failure(llm.name)
-            call.update(program_id=None, model=llm.name, reply=None, error=str(error))
-            append_line(output / LLM_CALLS_FILE, call)
+    try:
+        for iteration in range(1, iterations + 1):
+            island = database.sample_island()
+            parent, examples = database.sample(island, problem.prompt.example_programs)
+            try:
+                llm = ensemble.draw(rng)
+            except NoModelLeft as error:
+                logger.info("Stopping: %s", error)
+                reason = "no LLM model left"
+                break
+            logger.debug(
+                "Iteration %d: island %d, parent %s (%s), examples %s, model %s",
+                iteration,
+                island,
+                parent.id,
+                describe(parent),
+                [example.id for example in examples],
+                llm.name,
+            )
+            prompt = prompt_builder.build(parent, examples, database.best_score())
+            call: dict[str, Any] = {"iteration": iteration, "user_message": prompt.user}
+            try:
+                reply = llm.complete(prompt)
+            except LLMError as error:
+                ensemble.record_failure(llm.name)
+                call.update(program_id=None, model=llm.name, reply=None, error=str(error))
+                storage.append_llm_call(call)
+                storage.append_history(history_row(iteration, None, llm.name))
+                logger.info(
+                    "Iteration %d/%d, island %d, %s: skipped, no reply (%s)",
+                    iteration,
+                    iterations,
+                    island,
+                    llm.name,
+                    error,
+                )
+                completed = iteration
+                after_completion(iteration)
+                continue
+            ensemble.record_success(llm.name)
+            parsed = parse_reply(reply.text, parent.code)
+            checks = check_child(
+                parsed.code, initial_code, problem.entry_functions, database.fingerprints
+            )
+            if checks.reason is not None:
+                result = Result.rejected(checks.reason)
+            else:
+                result = evaluator.evaluate(parsed.code)
+                logger.debug(
+                    "Iteration %d: LLM %.1f s, evaluation %.1f s (stage %d reached)",
+                    iteration,
+                    reply.duration,
+                    result.duration,
+                    result.stage_reached,
+                )
+            usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
+            child = Program.new_child(
+                parent,
+                parsed.code,
+                result,
+                iteration,
+                island=island,
+                llm=usage,
+                description=parsed.description,
+                fingerprint=checks.fingerprint,
+                example_ids=prompt.example_ids,
+                code_complexity=checks.code_complexity,
+            )
+            store(child)
+            call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
+            storage.append_llm_call(call)
+            storage.append_history(history_row(iteration, child, llm.name))
             logger.info(
-                "Iteration %d/%d, island %d, %s: skipped, no reply (%s)",
+                "Iteration %d/%d, island %d, %s: %s (best %s)",
                 iteration,
                 iterations,
                 island,
                 llm.name,
-                error,
+                describe(child),
+                best_score_text(database),
             )
             completed = iteration
             after_completion(iteration)
-            continue
-        ensemble.record_success(llm.name)
-        parsed = parse_reply(reply.text, parent.code)
-        checks = check_child(
-            parsed.code, initial_code, problem.entry_functions, database.fingerprints
-        )
-        if checks.reason is not None:
-            result = Result.rejected(checks.reason)
-        else:
-            result = evaluator.evaluate(parsed.code)
-            logger.debug(
-                "Iteration %d: LLM %.1f s, evaluation %.1f s (stage %d reached)",
-                iteration,
-                reply.duration,
-                result.duration,
-                result.stage_reached,
-            )
-        usage = LLMUsage(reply.model, reply.input_tokens, reply.output_tokens, reply.duration)
-        child = Program.new_child(
-            parent,
-            parsed.code,
-            result,
-            iteration,
-            island=island,
-            llm=usage,
-            description=parsed.description,
-            fingerprint=checks.fingerprint,
-            example_ids=prompt.example_ids,
-            code_complexity=checks.code_complexity,
-        )
-        store(child)
-        call.update(program_id=child.id, reply=reply.text, error=None, **usage.to_dict())
-        append_line(output / LLM_CALLS_FILE, call)
-        logger.info(
-            "Iteration %d/%d, island %d, %s: %s (best %s)",
-            iteration,
-            iterations,
-            island,
-            llm.name,
-            describe(child),
-            best_score_text(database),
-        )
-        completed = iteration
-        after_completion(iteration)
+    except BaseException as error:
+        reason = "interrupted" if isinstance(error, KeyboardInterrupt) else f"failed: {error!r}"
+        raise
+    finally:
+        session.update(ended_at=now(), end=reason)
+        storage.write_run_info(info)
     for line in summary(problem, database, completed, reason):
         logger.info(line)
     return database
