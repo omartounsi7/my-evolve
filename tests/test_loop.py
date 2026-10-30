@@ -772,6 +772,19 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(database.best_score(), 5.0)
         self.assertIn("# Score: 5.0", (self.output / "best_program.py").read_text())
 
+    def test_a_run_stopped_while_seeding_the_islands_is_continued(self) -> None:
+        """Islands left without their copy of the initial program get it."""
+        toy = replace(Problem.load(TOY_FOLDER / "problem.yaml"), islands=IslandSettings(count=3))
+        run_toy([], self.output, iterations=0, problem=toy)
+        programs_file = self.output / "programs.jsonl"
+        lines = programs_file.read_text().splitlines(keepends=True)
+        programs_file.write_text("".join(lines[:2]))
+        replies = [reply_returning(str(n)) for n in range(2, 8)]
+        database, _, console = run_toy(replies, self.output, iterations=6, problem=toy)
+        self.assertIn("Run finished: 6 iterations done, every iteration done.", console)
+        copies = [p.island for p in database.programs.values() if p.origin is Origin.COPY]
+        self.assertEqual(sorted(copies[:3]), [0, 1, 2])
+
     def test_draws_after_resuming_are_not_the_first_draws_again(self) -> None:
         """The generator is reseeded from the seed and the number of programs (D39)."""
         run_toy([reply_returning(str(n)) for n in (2, 3)], self.output, seed=5, iterations=2)

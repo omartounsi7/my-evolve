@@ -420,8 +420,9 @@ class Loop:
     def restore(self) -> None:
         """Continue a run (D49): rebuild its database from the run folder.
 
-        Children of iterations without a history row are dropped first (P3), and
-        best_program.py rewritten from the rebuilt database. The initial program is not
+        Children of iterations without a history row are dropped first (P3), islands
+        still lacking their copy of the initial program get it, and best_program.py is
+        rewritten from the rebuilt database. The initial program is not
         evaluated again. The random generator is reseeded from the seed and the number of
         programs, so that draws continue instead of repeating the first session's (D39).
         Raises RunError if the run cannot continue.
@@ -445,6 +446,13 @@ class Loop:
         self.db.replay(programs, {row.program_id: row.completed for row in history})
         self.started = self.completed = len(history)
         self.done_before = finished
+        # A run stopped while the initial program was being copied to the islands: the
+        # islands left without a copy get theirs, as they would have.
+        unseeded = [island for island in self.db.islands if not island.program_ids]
+        for island in unseeded:
+            self.store(programs[0].copy_to(island.index, iteration=0))
+        if unseeded:
+            self.storage.write_snapshot(programs[0], 0)
         best = self.db.best()
         if best is not None:
             self.storage.write_best(best)
