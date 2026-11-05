@@ -176,7 +176,7 @@ class ProblemTest(unittest.TestCase):
 
     def test_the_precise_problem_file_for_qwen(self) -> None:
         """circle_packing_precise's problem_qwen.yaml differs from its problem.yaml, for
-        Claude, only in its models, its single example program, and its grid, without the
+        Claude, only in its models, qwen3-coder:30b first, and its grid, without the
         correlation."""
         folder = REPOSITORY_FOLDER / "examples" / "circle_packing_precise"
         claude = Problem.load(folder / "problem.yaml")
@@ -189,11 +189,7 @@ class ProblemTest(unittest.TestCase):
             [(feature.name, feature.bins) for feature in qwen.grid_features],
             [("code_complexity", 5), ("radii_spread", 5)],
         )
-        self.assertEqual(qwen.prompt.example_programs, 1)
-        self.assertEqual(
-            replace(claude, llm=qwen.llm, grid_features=qwen.grid_features, prompt=qwen.prompt),
-            qwen,
-        )
+        self.assertEqual(replace(claude, llm=qwen.llm, grid_features=qwen.grid_features), qwen)
 
     def test_entry_functions(self) -> None:
         """Required: a list of one or more function names."""

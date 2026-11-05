@@ -10,8 +10,8 @@
 # The initial program is OpenEvolve's, as in ../circle_packing.
 #
 # problem.yaml with Ollama's qwen models instead of Claude's, qwen3-coder:30b getting
-# most of the requests, one example program per prompt, and a 2D grid (code size and
-# radii spread). Everything else is the same.
+# most of the requests, and a 2D grid (code size and radii spread). Everything else is the
+# same.
 
 name: circle_packing_precise
 description: |
@@ -62,10 +62,8 @@ llm:
       max_tokens: 20480
 
 # The prompt's budget, in characters: about 11,400 tokens, which with qwen3:8b's 20,480
-# fit in the 32,768 of the context. One example program besides the parent: in
-# runs/qwen_2d_2, with two, 172 of 300 prompts were over this budget and left one out.
+# fit in the 32,768 of the context.
 prompt:
-  example_programs: 1
   max_chars: 40000
 
 # One grid per island (islands.count, 3 by default), each with these two dimensions:
