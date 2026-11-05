@@ -227,6 +227,22 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   (the highest 1.27): all of them shared the top bin.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
+- `circle_packing_precise` sets its own ranges, from the working children of its first runs: code complexity
+  2.0 to 3.5 in 5 bins, `radii_spread` 0 to 0.5 in 5, `radius_centre_correlation` −0.6 to 0.6 in 4. With the
+  ranges above, `claude_3d_2`'s 94 working children shared 3 of 27 cells (all in the top code-complexity
+  bin and the first spread bin), and `qwen_2d_2`'s 96 shared 7 of 25.
+
+**Future work: binning that adapts.** A fixed range is right only if it was guessed right; a wrong one
+wastes cells for the whole run, as above. Two ways to fix this, not implemented yet:
+- *A grid without edges:* each feature has a bin width and no range; a program's bin is ⌊value ÷ width⌋, and
+  the archive holds only occupied cells, so it grows as programs land in new ones (one cell at iteration 0).
+  Cells keep a fixed meaning, nothing is clamped, and continuing a run gives the same grid. It needs a cap
+  on cells per island (`max_cells`), and the report's grid pictures must draw only the reached extent.
+  Preferred.
+- *Re-binning at fixed points:* every N iterations, each feature's range is recomputed from the 5th to the
+  95th percentile of the working programs, and every island's programs are placed again.
+openevolve's running min-max (bins stretched by every new value, earlier programs left in their cells) is
+not one of them: its cells drift, and a single outlier squashes everything else into a few bins.
 
 ### D19. Choosing a parent
 **Decision.** Two strategies, chosen in the problem file; failed programs are never candidates.

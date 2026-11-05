@@ -112,6 +112,13 @@ draws into the run folder's `report/` folder, with matplotlib:
 
 The run folder itself is only read, so a run still in progress can be reported on.
 
+## Future work
+
+- **Binning that adapts to where programs land.** The MAP-Elites grid is fixed when the run starts, so a
+  wrong range wastes most cells (in `runs/claude_3d_2`, 94 children shared 3 of 27). The preferred fix, a
+  grid without edges that grows as programs reach new cells, is described in
+  [docs/design-decisions.md](docs/design-decisions.md), under D18.
+
 ## Everyday commands
 
 These are written for Linux and macOS. On Windows, replace `.venv/bin/python`
