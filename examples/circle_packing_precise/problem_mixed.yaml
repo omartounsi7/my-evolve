@@ -6,7 +6,7 @@
 #   violations are shrunk away instead of tolerated, and no reference divides the sum;
 # - the description says how the score is measured, gives no hints on how to solve the
 #   problem, and refers to no earlier result;
-# - each program gets one stage of 5 minutes and 3 CPUs.
+# - each program gets one stage of 60 seconds and 3 CPUs.
 # The initial program is OpenEvolve's, as in ../circle_packing.
 #
 # problem.yaml with three models from three makers in one ensemble: qwen3-coder:30b
@@ -23,7 +23,7 @@ description: |
   circles, or past a wall) is first subtracted from every radius, so make contacts exact
   to about 1e-12. An overlap above 1e-6 makes the packing invalid.
 
-  The program has 3 CPUs and 5 minutes; it fails if it runs past that limit.
+  The program has 3 CPUs and 60 seconds; it must return within that time, or it fails.
 
   The evolve block must define construct_packing(), which takes no arguments and
   returns (centers, radii, sum_of_radii): a (26, 2) numpy array of centres, a (26,)
@@ -88,10 +88,11 @@ grid:
     - {name: radii_spread, low: 0, high: 1, bins: 3}
     - {name: radius_centre_correlation, low: -1, high: 1, bins: 3}
 
-# One stage, which may last 5 minutes: at this precision, programs need long, careful
-# optimization (the original allows 60 s).
+# One stage of 60 s, OpenEvolve's limit. It was 5 minutes, but programs that do not
+# watch the clock then ran until killed: in runs/mixed_3d_1, 2 of the first 5 children
+# timed out after 300 s each.
 evaluation:
-  stage_time_limit: 300
+  stage_time_limit: 60
 
 # 3 CPUs per program (the default is 1): with 2 workers, 6 of the machine's 8, leaving 2
 # for Docker, the loop, Ollama and the desktop (with 4 each, programs that stop on a
