@@ -50,7 +50,7 @@ The problem file is written in YAML. For now it holds:
           high: 1.5
     parents:                               # optional: how parents are chosen (D19)
       strategy: weighted                   # ShinkaEvolve's rule, or openevolve
-      lambda: 1.0                          # weighted: how sharply it favours better programs
+      lambda: 10.0                         # weighted: how sharply it favours better programs
       archive_size: 10                     # openevolve: the best programs it draws from
     prompt:                                # optional
       example_programs: 2                  # other programs shown besides the parent
@@ -232,8 +232,8 @@ class ParentSettings:
 
     # The rule: "weighted", ShinkaEvolve's, or "openevolve"
     strategy: str = "weighted"
-    # How sharply the weighted rule favours programs above the median (λ; ShinkaEvolve: 10)
-    lam: float = 1.0
+    # How sharply the weighted rule favours programs above the median (λ; ShinkaEvolve's 10)
+    lam: float = 10.0
     # How many of the run's best programs form the archive openevolve's rule draws from (D21)
     archive_size: int = 10
 

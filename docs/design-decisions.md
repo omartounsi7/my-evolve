@@ -94,7 +94,7 @@ score. The other five, by when the program stopped and whose fault it was:
 
 A program that passes stage 1 and fails or times out in a later stage keeps its earlier result: status `ok`,
 with the later stage's error recorded (D9). A failed program has no score (`null` in JSON, never
-`-Infinity`) and an error message. Failed programs are stored and saved, shown as example programs (D26),
+`-Infinity`) and an error message. Failed programs are stored and saved, never shown as example programs (D26),
 counted as children (D19), used for duplicate detection (D13), and never chosen as parents.
 
 ### D8. Where the program and the evaluator run
@@ -131,9 +131,9 @@ the k-th threshold.
 **Decision.** Evaluators write feedback text as they check a program, like openevolve's artifacts ("Circles 3
 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); both problems'
 evaluators do so for every check. When a program crashes or times out, the framework records the error and
-the end of its error output. The prompt shows the feedback of the parent and of every example program, and
-the error of every failed example program and of a parent's failed later stage, each cut to a size limit
-(D30). No LLM writes feedback.
+the end of its error output. The prompt shows the feedback of the parent and of every example program (all
+of them work, D26), and the error of a parent's failed later stage, each cut to a size limit (D30). No LLM
+writes feedback.
 
 ---
 
@@ -145,10 +145,15 @@ little as it wants (D12). No SEARCH/REPLACE diffs.
 
 ### D12. Which code may change
 **Decision.** Only the code inside the evolve blocks (`# EVOLVE-BLOCK-START` … `# EVOLVE-BLOCK-END`), which the
-initial programs keep (D3). The prompt says so, and that the markers must stay as they are (Appendix A). A
-child that changes code outside the blocks, or moves, removes, adds or alters a marker, is rejected before
-evaluation (D13), so the mistake is recorded and can be shown to the LLM (D26); openevolve's
-`enforce_evolve_blocks` reverts such edits silently instead.
+initial programs keep (D3). The prompt says so, that the markers must stay, and that the code outside them is
+kept whatever the reply has there (Appendix A). The child is the reply's blocks put back into the initial
+program's code outside them (`with_fixed_code`): what the reply wrote outside the blocks is dropped, as
+openevolve's `enforce_evolve_blocks` does. A reply whose markers are broken (moved, removed, added or altered),
+or whose blocks are not as many as the initial program's, is rejected before evaluation (D13).
+
+*Why the fixed code is put back rather than checked:* in `runs/qwen_2d_2`, 91 of 300 qwen3-coder:30b children
+were rejected for the code outside the block: 67 replies stopped at `# EVOLVE-BLOCK-END`, and 24 made
+`run_packing()` call itself. Their blocks were never evaluated, and their parents were drawn again.
 
 ### D13. Checks before a child is evaluated
 **Decision.** Four checks, on the host, without running the program, in this order. They apply to children
@@ -157,7 +162,9 @@ that fails one is stored with status `rejected` and the reason, and is not evalu
 1. It compiles (`ast.parse`); a reply without code fails here.
 2. It keeps the evolve blocks exactly where the initial program has them: the same markers in the same order,
    and the same code outside them, compared line by line ignoring blank lines and spaces at the ends of lines
-   (spaces at the start of lines count, since indentation has meaning in Python).
+   (spaces at the start of lines count, since indentation has meaning in Python). The child's code outside
+   the blocks has already been replaced by the initial program's (D12), so only broken markers, or a
+   different number of blocks, fail here.
 3. It defines, at the top level, every entry function the problem file lists (`run_packing`, `run_search`).
 4. It is not a duplicate of any program already in the database: no earlier program has the same syntax tree
    (comments and spacing do not count). Each program's tree is stored as a hash (its fingerprint), so the check
@@ -220,6 +227,23 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   (the highest 1.27): all of them shared the top bin.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
+- `circle_packing_precise` uses 3 bins per feature, 27 cells per island, 81 over 3 islands, for runs of a
+  few hundred iterations: code complexity 0 to 3 (bins [0, 1), [1, 2), [2, +∞)), `radii_spread` 0 to 1,
+  `radius_centre_correlation` −1 to 1. Its first runs filled few cells whatever the ranges: with the ranges
+  above, `claude_3d_2`'s 94 working children shared 3 of 27 cells, and replayed into this grid they share
+  6 (92 of them in the top code-complexity bin).
+
+**Future work: binning that adapts.** A fixed range is right only if it was guessed right; a wrong one
+wastes cells for the whole run, as above. Two ways to fix this, not implemented yet:
+- *A grid without edges:* each feature has a bin width and no range; a program's bin is ⌊value ÷ width⌋, and
+  the archive holds only occupied cells, so it grows as programs land in new ones (one cell at iteration 0).
+  Cells keep a fixed meaning, nothing is clamped, and continuing a run gives the same grid. It needs a cap
+  on cells per island (`max_cells`), and the report's grid pictures must draw only the reached extent.
+  Preferred.
+- *Re-binning at fixed points:* every N iterations, each feature's range is recomputed from the 5th to the
+  95th percentile of the working programs, and every island's programs are placed again.
+openevolve's running min-max (bins stretched by every new value, earlier programs left in their cells) is
+not one of them: its cells drift, and a single outlier squashes everything else into a few bins.
 
 ### D19. Choosing a parent
 **Decision.** Two strategies, chosen in the problem file; failed programs are never candidates.
@@ -227,8 +251,10 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   elites with probability proportional to sigmoid(λ × (score − median) / spread) × 1 / (1 + children).
   - The median and the spread are those of the island's elites' scores. The spread is their median absolute
     deviation, or their standard deviation if that is 0; if both are 0, every elite's sigmoid term is 0.5.
-  - λ is set in the problem file, default 1 (ShinkaEvolve's 10 makes almost every draw go to the elites above
-    the median, defeating the grid's diversity).
+  - λ is set in the problem file, default 10, ShinkaEvolve's value: almost every draw goes to an elite above
+    the median, and the children term spreads the draws among those. The default was 1, so as not to undo
+    the grid's diversity; but in `runs/qwen_2d_2` the most drawn parents were then two copies of a 1.30
+    packing (20 and 19 children) and the initial program (15), while the island's best stood at 2.49.
   - "Children" counts every child the program has had, whatever its status (each cost an LLM call), except
     `error` ones. A copied migrant starts at 0 on its new island; a moved one keeps its count (D23).
 - **openevolve's rule**, adapted to grids: 20% of the time a uniform draw among the island's elites, 70% a
@@ -280,15 +306,21 @@ holds what changes: the example programs, then the parent, then the request.
 ### D26. Example programs
 **Decision.** Besides the parent, the prompt shows example programs ("inspirations" in openevolve and
 ShinkaEvolve), 2 by default (set in the problem file).
-- They are drawn at random among every program made on the iteration's island (not only its elites: also its
-  failed programs and the working ones that lost their cell), except the parent, `error` programs, and
-  children without code. They are shown in the order drawn.
-- They are not labelled good or bad: the prompt calls them previous attempts, and shows for each its score
-  (or its status if it failed), description, feedback and, if it failed, its error (D10, D27).
+- They are drawn at random, without replacement, among the iteration's island's elites other than the parent:
+  working programs, each the best of its grid cell, so they differ in kind. They are shown in the order drawn.
+- Programs that do not work (`rejected`, `failed`, `timeout`, `invalid`, `error`), and working ones that lost
+  their cell, stay in the database (for the record, continuing a run, the duplicate check and the children
+  counts) but are never shown. ShinkaEvolve, too, draws its inspirations among correct programs only.
+- The prompt calls them previous attempts, and shows for each its score, description and feedback (D10, D27).
+
+*Why only elites:* the examples were once drawn among every program made on the island, failed ones
+included, so that the LLM could learn from mistakes. In `runs/qwen_2d_2`, 253 of the 417 examples shown were
+rejected programs (192 for the code outside the block, 61 duplicates), only 22 had failed when run, and only
+126 of the 300 prompts showed a working example.
 
 ### D27. Scores in the prompt
-**Decision.** The prompt says higher scores are better, and shows the score of the parent and of every working
-example program, the status of every failed one, and the best score reached so far in the run. It shows no
+**Decision.** The prompt says higher scores are better, and shows the score of the parent and of every example
+program (all of them work, D26), and the best score reached so far in the run. It shows no
 metrics, no hints such as "fitness improved", and no limits of the sandbox.
 
 ### D28. Advice drawn from the whole run
@@ -601,7 +633,7 @@ The entries are numbered D60 to D70 and D72 to D79, in the order of the modules,
 | `sandbox` | `memory` (`1g`), `cpus` (1), `max_processes` (64), D41 |
 | `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from 0 to 2.5; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
 | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
-| `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
+| `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (10.0), `archive_size` (10), D19, D21 |
 | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |
 | `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices, `context_length`, D30), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
 
@@ -1449,8 +1481,9 @@ than it does, using what the previous attempts show.
 {description from the problem file, including the contract of the entry functions}
 
 # Rules
-- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`.
-  Leave everything else, the markers included, exactly as it is. Return the whole file.
+- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`, and
+  keep the markers. The code outside them is fixed: it is kept as it is, whatever your
+  reply has there. Return the whole file.
 - You may import Python's standard library and: {allowed packages}. Nothing else is installed.
 - Higher scores are better.
 - In the description, say what the program does, for a reader who has never seen any

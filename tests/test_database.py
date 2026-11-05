@@ -38,9 +38,9 @@ def one_island(seed: int = 0, parents: ParentSettings | None = None) -> Database
     return Database(random.Random(seed), parents, ONE_ISLAND, TEST_GRID)
 
 
-def filled_database(seed: int = 0) -> Database:
+def filled_database(seed: int = 0, parents: ParentSettings | None = None) -> Database:
     """Return a one-island database holding five working programs and five failed ones."""
-    database = one_island(seed)
+    database = one_island(seed, parents)
     for score in range(5):
         database.add(working(float(score)))
         database.add(failed())
@@ -67,36 +67,31 @@ class DatabaseTest(unittest.TestCase):
         self.assertIs(database.best(), first)
         self.assertEqual(database.best_score(), 2.0)
 
-    def test_parents_work_and_examples_are_other_programs(self) -> None:
-        """Parents are working programs; examples are distinct and never the parent."""
+    def test_parents_and_examples_are_distinct_elites(self) -> None:
+        """Parents and examples are working programs, elites of the island; examples are
+        distinct and never the parent."""
         database = filled_database()
+        elites = {elite.id for elite in database.islands[0].elites()}
         for _ in range(200):
             parent, examples = database.sample(0, 2)
-            self.assertTrue(parent.result.is_ok)
             self.assertEqual(len(examples), 2)
             drawn = [parent, *examples]
             self.assertEqual(len({program.id for program in drawn}), len(drawn))
+            self.assertTrue({program.id for program in drawn} <= elites)
 
-    def test_failed_programs_can_be_examples(self) -> None:
-        """With the initial program alone working, the failed program is its example."""
-        database = one_island()
-        initial = working(1.0)
-        broken = failed()
-        database.add(initial)
-        database.add(broken)
-        self.assertEqual(database.sample(0, 2), (initial, [broken]))
-
-    def test_errors_and_children_without_code_are_never_examples(self) -> None:
-        """An error is not the program's fault; a reply without code shows nothing."""
+    def test_programs_that_do_not_work_are_never_examples(self) -> None:
+        """Failed, rejected and error programs stay in the database, but are never shown:
+        with the parent the only working program, there is no example."""
         database = one_island()
         parent = working(1.0)
         database.add(parent)
+        database.add(failed())
         database.add(Program("x = 2\n", Result.failure(Status.ERROR, "down"), island=0))
         database.add(Program("", Result.rejected("no code in the reply"), island=0))
-        rejected = Program("x = (\n", Result.rejected("does not compile"), island=0)
-        database.add(rejected)
+        database.add(Program("x = (\n", Result.rejected("does not compile"), island=0))
+        self.assertEqual(len(database.programs), 5)
         for _ in range(50):
-            self.assertEqual(database.sample_examples(0, parent, 3), [rejected])
+            self.assertEqual(database.sample(0, 3), (parent, []))
 
     def test_the_same_seed_draws_the_same(self) -> None:
         """Two databases with the same seed and programs make the same draws."""
@@ -110,17 +105,27 @@ class DatabaseTest(unittest.TestCase):
             )
 
     def test_every_working_program_can_be_drawn(self) -> None:
-        """The draw is not stuck on the best: every working program is drawn sometimes."""
-        database = filled_database()
+        """With a gentle lambda, the draw is not stuck on the best: every working program is
+        drawn sometimes."""
+        database = filled_database(parents=ParentSettings(lam=1.0))
         parents = {database.sample(0, 2)[0].result.score for _ in range(200)}
         self.assertEqual(parents, {0.0, 1.0, 2.0, 3.0, 4.0})
+
+    def test_the_default_lambda_draws_from_the_median_up(self) -> None:
+        """With lambda 10, ShinkaEvolve's and the default, the programs below the median are
+        all but never drawn; those above it are drawn about 4 times in 5, the median 1 in 5."""
+        database = filled_database()
+        counts = Counter(database.sample(0, 2)[0].result.score for _ in range(1000))
+        self.assertEqual(set(counts), {2.0, 3.0, 4.0})
+        self.assertAlmostEqual((counts[3.0] + counts[4.0]) / 1000, 0.8, delta=0.05)
 
     def test_the_number_of_examples_is_a_setting(self) -> None:
         """No examples with a count of 0; as many as asked, while there are enough."""
         database = filled_database()
         self.assertEqual(database.sample(0, 0)[1], [])
-        self.assertEqual(len(database.sample(0, 4)[1]), 4)
-        self.assertEqual(len(database.sample(0, 20)[1]), 9)
+        self.assertEqual(len(database.sample(0, 3)[1]), 3)
+        # Five elites: the parent and four examples at most.
+        self.assertEqual(len(database.sample(0, 20)[1]), 4)
 
     def test_sampling_an_empty_database_is_refused(self) -> None:
         """Without a working program, there is nothing to build on."""
@@ -287,10 +292,11 @@ class IslandTest(unittest.TestCase):
 
 
 class GridPopulationTest(unittest.TestCase):
-    def test_parents_are_elites_and_displaced_elites_stay_examples(self) -> None:
-        """A better program in the same cell takes it. The one displaced is no longer a
-        parent, but stays in the database and can still be an example."""
-        database = one_island()
+    def test_displaced_elites_are_neither_parents_nor_examples(self) -> None:
+        """A better program in the same cell takes it. The one displaced stays in the
+        database, but is no longer a parent or an example. (A gentle lambda lets the
+        weaker elite be drawn too.)"""
+        database = one_island(parents=ParentSettings(lam=1.0))
         weaker, stronger, other = working(1.0, cell=3), working(2.0, cell=3), working(0.5, cell=7)
         for program in (weaker, stronger, other):
             database.add(program)
@@ -302,7 +308,7 @@ class GridPopulationTest(unittest.TestCase):
         examples = {
             example.id for _ in range(200) for example in database.sample_examples(0, other, 2)
         }
-        self.assertIn(weaker.id, examples)
+        self.assertEqual(examples, {stronger.id})
 
     def test_a_cell_changes_hands_only_for_a_strictly_higher_score(self) -> None:
         database = one_island()

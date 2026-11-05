@@ -14,8 +14,10 @@ the sum of the radii itself, of legal geometry only (a violation is subtracted f
 radius rather than tolerated), with no reference dividing it; neither its evaluation nor
 its prompt refers to any earlier result. Its initial program is OpenEvolve's, without the
 comment naming AlphaEvolve's score, and its problem file gives each program one stage of
-5 minutes and 4 CPUs, Claude's models, and a 3D grid; `problem_qwen.yaml` is the same with
-the local qwen3-coder:30b alone and a 2D grid. Its scores are sums of radii, not
+60 seconds and 3 CPUs, Claude's models, and a 3D grid; `problem_qwen.yaml` is the same with
+the local qwen models, qwen3-coder:30b writing most children, and a 2D grid;
+`problem_mixed.yaml` is `problem.yaml` with three models from three makers: qwen3-coder:30b
+and gemma4:12b on Ollama, and Claude Sonnet 4.5. Its scores are sums of radii, not
 `circle_packing/`'s ratios.
 
 The other problems are OpenEvolve's, so that runs start from the same baseline as

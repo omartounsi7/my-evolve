@@ -2,13 +2,18 @@
 
 They run on the host, without running the program. A child that fails one is stored
 with the status rejected and the reason, and never evaluated, so the mistake costs no
-evaluation and can be shown to the LLM later.
+evaluation. Rejected programs are never shown to the LLM (D26).
+
+Before the checks, the child's evolve blocks are put back into the initial program's
+code outside them (with_fixed_code, D12): whatever the LLM wrote outside the blocks is
+dropped, so leaving that code out of its reply, or changing it, costs nothing.
 
 The checks, in this order (check_child):
 1. the child compiles (a reply without code fails here);
 2. it keeps the evolve blocks where the initial program has them (D12): the LLM may
    change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`; the
-   code outside them, and the markers, must stay as they are;
+   code outside them, and the markers, must stay as they are. After with_fixed_code,
+   only broken markers, or a different number of blocks, fail here;
 3. it defines, at the top level, every entry function the problem file names;
 4. it is not a duplicate of an earlier program: no earlier program has the same syntax
    tree (D13, D24). Each program's tree is kept as a hash, its fingerprint, so the check
@@ -108,6 +113,29 @@ def same_outside_code(child_code: str, initial_code: str) -> str | None:
             removed = initial_lines[len(child_lines)].strip()
             return f"the code outside the evolve blocks was changed: {removed!r} was removed"
     return None
+
+
+def with_fixed_code(child_code: str, initial_code: str) -> str:
+    """Return the child's evolve blocks inside the initial program's code outside them (D12).
+
+    What the child has outside its blocks, the markers' own lines included, is replaced
+    by the initial program's: a reply that stops at the last END marker, or rewrites the
+    fixed code, keeps its blocks and loses only that. A child whose markers are broken,
+    or whose blocks are not as many as the initial program's, is returned unchanged, for
+    check_child to reject. Raises MarkerError if the initial program's own markers are
+    broken.
+    """
+    initial_outside, initial_blocks = split_evolve_blocks(initial_code)
+    try:
+        _, child_blocks = split_evolve_blocks(child_code)
+    except MarkerError:
+        return child_code
+    if len(child_blocks) != len(initial_blocks):
+        return child_code
+    lines = list(initial_outside[0])
+    for block, segment in zip(child_blocks, initial_outside[1:], strict=True):
+        lines += block + segment
+    return "\n".join(lines) + "\n"
 
 
 @dataclass(frozen=True)

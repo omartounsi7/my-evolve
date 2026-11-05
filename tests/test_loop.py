@@ -142,6 +142,23 @@ class LoopTest(unittest.TestCase):
             console,
         )
 
+    def test_the_fixed_code_is_put_back_into_every_child(self) -> None:
+        """A reply that stops at the end marker, or rewrites the code after it, gives a child
+        with the initial program's fixed code, which is evaluated (they were once rejected)."""
+        initial = (
+            "# EVOLVE-BLOCK-START\ndef solve():\n    return 1.0\n# EVOLVE-BLOCK-END\n\n\n"
+            "def double():\n    return 2 * solve()\n"
+        )
+        rewritten = reply_returning("6").replace(
+            "# EVOLVE-BLOCK-END\n", "# EVOLVE-BLOCK-END\ndef double():\n    return 0\n"
+        )
+        replies = [reply_returning("5"), rewritten]
+        database, _, _ = run_toy(replies, self.output, initial_code=initial)
+        children = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        self.assertEqual([child.result.score for child in children], [5.0, 6.0])
+        for child, value in zip(children, ["5", "6"], strict=True):
+            self.assertEqual(child.code, initial.replace("return 1.0", f"return {value}"))
+
     def test_the_run_folder(self) -> None:
         """programs.jsonl has one line per program; best_program.py holds the best one."""
         database, _, _ = run_toy([reply_returning("4"), reply_returning("2")], self.output)
@@ -220,7 +237,8 @@ class LoopTest(unittest.TestCase):
                 evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=9,
                 output=self.output,
-                seed=1,
+                # A seed that draws the failing model 3 times in the 9 iterations
+                seed=2,
             )
         self.assertEqual(len(bad.prompts), 3)
         self.assertEqual(len(database.programs), 2 + 6)
@@ -586,11 +604,12 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(children[1].result.error, f"same program as {first.id}")
         self.assertEqual(children[2].result.error, f"same program as {children[0].id}")
         self.assertEqual(children[1].result.duration, 0.0)
-        # Each child records the example programs its prompt showed: programs of its island.
+        # Each child records the example programs its prompt showed: the island's other
+        # elites. The first child took the initial copy's cell, so it is the only elite.
         self.assertEqual(children[0].example_ids, ())
-        self.assertEqual(
-            set(children[1].example_ids), {copy.id, children[0].id} - {children[1].parent_id}
-        )
+        self.assertEqual(database.islands[0].elites(), [children[0]])
+        self.assertEqual(children[1].parent_id, children[0].id)
+        self.assertEqual(children[1].example_ids, ())
 
     def test_the_log_and_the_summary(self) -> None:
         """log.txt gets the details the console leaves out; the run ends with a summary."""

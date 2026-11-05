@@ -8,9 +8,9 @@ its cell as it is added. The parent is chosen among the island's elites by Shink
 weighted rule (D19): programs score above or below the median, and programs already
 tried often are tried less. openevolve's rule is the other choice: it mixes uniform and
 score-proportional draws among the elites with draws from an archive of the run's best
-programs (D21). The examples are other programs made on the island, drawn
-at random, failed ones and displaced elites included (D26): the LLM sees them as previous
-attempts, unlabelled.
+programs (D21). The examples are other elites of the island, drawn at random (D26): working
+programs, each the best of its cell, which the LLM sees as previous attempts. Failed,
+rejected and displaced programs stay in the database, but are never shown.
 
 Every so often, islands exchange some of their elites (migration, D23): copies, or
 moves, that take a cell of their new island's grid only if it is empty or holds a
@@ -161,7 +161,7 @@ class Database:
         """Create an empty database.
 
         rng makes every random draw, so that a run with the same seed draws the same;
-        parents says how parents are chosen (the weighted rule with lambda 1 by default);
+        parents says how parents are chosen (the weighted rule with lambda 10 by default);
         islands how many islands there are (3 by default). Each island's grid has the
         dimensions grid_features (code complexity alone by default), measured against
         reference_nodes, the initial program's code complexity.
@@ -359,17 +359,11 @@ class Database:
     def sample_examples(self, island: int, parent: Program, count: int) -> list[Program]:
         """Draw up to count example programs to show beside the parent (D26).
 
-        They are drawn uniformly, without replacement, among every program made on the
-        island, failed ones included, except the parent, error programs (not the program's
-        fault) and children without code; they come in the order drawn.
+        They are drawn uniformly, without replacement, among the island's elites other
+        than the parent: working programs, each the best of its grid cell, so that the
+        LLM sees approaches that work, and differ. They come in the order drawn.
         """
-        candidates = [
-            program
-            for program in self.island_programs(island)
-            if program.id != parent.id
-            and program.result.status is not Status.ERROR
-            and program.code.strip()
-        ]
+        candidates = [elite for elite in self.islands[island].elites() if elite.id != parent.id]
         return self.rng.sample(candidates, min(count, len(candidates)))
 
     def sample(self, island: int, example_count: int) -> tuple[Program, list[Program]]:
