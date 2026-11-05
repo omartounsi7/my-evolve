@@ -1,0 +1,116 @@
+# Circle packing at full precision: 26 circles in the unit square, maximizing the sum of
+# their radii.
+#
+# What differs from ../circle_packing/problem_claude_3d.yaml:
+# - the evaluation (evaluation.py here) scores the legal sum of the radii itself:
+#   violations are shrunk away instead of tolerated, and no reference divides the sum;
+# - the description says how the score is measured and what can improve a packing, and
+#   refers to no earlier result;
+# - each program gets one stage of 5 minutes and 3 CPUs.
+# The initial program is OpenEvolve's, as in ../circle_packing.
+#
+# problem.yaml with four models in one ensemble: the two local qwen models of
+# problem_qwen.yaml and the oldest Claude models the Claude API still serves. Everything
+# but the llm section is the same.
+
+name: circle_packing_precise
+description: |
+  You are an expert mathematician specializing in circle packing problems, computational geometry and high-precision numerical optimization. Your task is to improve a program that produces an arrangement of 26 circles in a unit square, maximizing the sum of their radii.
+
+  How the score is measured:
+  - The score is the sum of the radii, measured exactly in 64-bit floats. Higher is better, and every gain counts, however small.
+  - Only legal geometry counts. The packing's worst violation (the most two circles overlap, or one sticks out of the square) is subtracted from every radius before summing, so a packing that relies on tolerance loses up to 26 times what it gains. Aim for packings that are exactly legal, with contacts that touch within about 1e-12.
+
+  What can improve a packing:
+  - Its contact graph: which circles touch which, and which touch the walls. Good packings are rigid: every circle is held by its contacts.
+  - Polishing a candidate to full precision: solve the contact equations with Newton's method or a high-precision solver, rather than stopping a general optimizer at its default tolerance.
+  - Searching widely from many starting layouts (perturbed copies of good layouts, different row structures, random starts), then polishing only the best.
+  - The program has 3 CPUs and 5 minutes; stop the search well before that limit.
+
+  The evolve block must define construct_packing(), which takes no arguments and returns
+  (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
+  (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
+  sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
+  and no two circles may overlap; violations up to 1e-6 are subtracted from the radii as
+  described above, and larger ones make the packing invalid. No radius may be negative.
+  The fixed code after the evolve block defines run_packing(), which the evaluation
+  calls: it calls construct_packing() and returns its result. Do not define
+  run_packing() in the evolve block: the fixed code's definition would replace it.
+
+# The function every program must define, which the evaluation calls.
+entry_functions: [run_packing]
+
+# The packages programs may import, as in OpenEvolve, at my-alphaevolve's versions.
+packages:
+  - matplotlib==3.11.2
+  - numpy==2.5.4
+  - scipy==1.18.1
+
+# The LLMs: four models, each with its own server.
+# - qwen3-coder:30b and qwen3:8b on a local Ollama server, with a context of 32,768
+#   tokens (with 32 GB of GPU memory, recent versions use 32,768 by default).
+# - Claude Haiku 4.5 and Claude Sonnet 4.5, the oldest Haiku and Sonnet the Claude API
+#   serves (Sonnet 3.7, which OpenEvolve's circle-packing configs once used, and Haiku 3.5
+#   were retired on February 19, 2026), through Anthropic's OpenAI-compatible endpoint.
+#   The key is read from the variable ANTHROPIC_API_KEY. Sonnet 4.5 is deprecated and
+#   retires on November 30, 2026: after that its calls fail, and the run drops it after
+#   max_failures_in_a_row failures, then goes on with the other three.
+# Within each pair, the weights are those of the two-model files (0.8 and 0.2); the pairs
+# share the calls evenly.
+llm:
+  models:
+    - name: qwen3-coder:30b
+      weight: 0.4
+      api_base: http://localhost:11434/v1
+      # Ollama's context: the prompt's budget (max_chars below) plus max_tokens must fit.
+      context_length: 32768
+    - name: qwen3:8b
+      weight: 0.1
+      api_base: http://localhost:11434/v1
+      context_length: 32768
+      # It thinks at length: up to 14,600 tokens in the v1 branch's runs.
+      max_tokens: 20480
+    # Prices in dollars per million input and output tokens, for the summary's cost.
+    - name: claude-haiku-4-5-20251001
+      weight: 0.4
+      api_base: https://api.anthropic.com/v1/
+      api_key: ${ANTHROPIC_API_KEY}
+      price_input: 1.00
+      price_output: 5.00
+    - name: claude-sonnet-4-5-20250929
+      weight: 0.1
+      api_base: https://api.anthropic.com/v1/
+      api_key: ${ANTHROPIC_API_KEY}
+      price_input: 3.00
+      price_output: 15.00
+
+# The prompt's budget, in characters: about 11,400 tokens, which with qwen3:8b's 20,480
+# fit in the 32,768 of Ollama's context.
+prompt:
+  max_chars: 40000
+
+# One grid per island (islands.count, 3 by default), 3 x 3 x 3 = 27 cells, 81 over the
+# 3 islands, a fair size for a few hundred iterations:
+# - code_complexity, log2 of the nodes inside the evolve block against the initial
+#   program's (1: twice as many, 2: four times): [0, 1), [1, 2), [2, +inf), since values
+#   past the range go to the end bin;
+# - radii_spread: [0, 1/3), [1/3, 2/3), [2/3, +inf);
+# - radius_centre_correlation, whether the big circles are in the middle (-1) or at the
+#   edges (+1): [-1, -1/3), [-1/3, 1/3), [1/3, 1].
+grid:
+  features:
+    - {name: code_complexity, low: 0, high: 3, bins: 3}
+    - {name: radii_spread, low: 0, high: 1, bins: 3}
+    - {name: radius_centre_correlation, low: -1, high: 1, bins: 3}
+
+# One stage, which may last 5 minutes: at this precision, programs need long, careful
+# optimization (the original allows 60 s).
+evaluation:
+  stage_time_limit: 300
+
+# 3 CPUs per program (the default is 1): with 2 workers, 6 of the machine's 8, leaving 2
+# for Docker, the loop, Ollama and the desktop (with 4 each, programs that stop on a
+# wall-clock budget competed for every CPU). Numeric libraries get as many threads.
+sandbox:
+  memory: 2g
+  cpus: 3
