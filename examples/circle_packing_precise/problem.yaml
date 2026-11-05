@@ -6,7 +6,7 @@
 #   violations are shrunk away instead of tolerated, and no reference divides the sum;
 # - the description says how the score is measured and what can improve a packing, and
 #   refers to no earlier result;
-# - each program gets one stage of 5 minutes and 4 CPUs.
+# - each program gets one stage of 5 minutes and 3 CPUs.
 # The initial program is OpenEvolve's, as in ../circle_packing.
 
 name: circle_packing_precise
@@ -21,7 +21,7 @@ description: |
   - Its contact graph: which circles touch which, and which touch the walls. Good packings are rigid: every circle is held by its contacts.
   - Polishing a candidate to full precision: solve the contact equations with Newton's method or a high-precision solver, rather than stopping a general optimizer at its default tolerance.
   - Searching widely from many starting layouts (perturbed copies of good layouts, different row structures, random starts), then polishing only the best.
-  - The program has 4 CPUs and 5 minutes; stop the search well before that limit.
+  - The program has 3 CPUs and 5 minutes; stop the search well before that limit.
 
   The evolve block must define construct_packing(), which takes no arguments and returns
   (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
@@ -83,8 +83,9 @@ grid:
 evaluation:
   stage_time_limit: 300
 
-# 4 CPUs per program (the default is 1): with 2 workers, 8 CPUs in all. Numeric libraries
-# get as many threads.
+# 3 CPUs per program (the default is 1): with 2 workers, 6 of the machine's 8, leaving 2
+# for Docker, the loop, Ollama and the desktop (with 4 each, programs that stop on a
+# wall-clock budget competed for every CPU). Numeric libraries get as many threads.
 sandbox:
   memory: 2g
-  cpus: 4
+  cpus: 3
