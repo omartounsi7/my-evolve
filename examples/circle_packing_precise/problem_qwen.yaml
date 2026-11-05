@@ -27,12 +27,15 @@ description: |
   - Searching widely from many starting layouts (perturbed copies of good layouts, different row structures, random starts), then polishing only the best.
   - The program has 4 CPUs and 5 minutes; stop the search well before that limit.
 
-  The program must keep run_packing(), which takes no arguments and returns
+  The evolve block must define construct_packing(), which takes no arguments and returns
   (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
   (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
   sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
   and no two circles may overlap; violations up to 1e-6 are subtracted from the radii as
   described above, and larger ones make the packing invalid. No radius may be negative.
+  The fixed code after the evolve block defines run_packing(), which the evaluation
+  calls: it calls construct_packing() and returns its result. Do not define
+  run_packing() in the evolve block: the fixed code's definition would replace it.
 
 # The function every program must define, which the evaluation calls.
 entry_functions: [run_packing]
