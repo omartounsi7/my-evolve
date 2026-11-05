@@ -11,27 +11,25 @@
 
 name: circle_packing_precise
 description: |
-  You are an expert mathematician specializing in circle packing problems, computational geometry and high-precision numerical optimization. Your task is to improve a program that produces an arrangement of 26 circles in a unit square, maximizing the sum of their radii.
+  You are an expert in circle packing and numerical optimization. Improve the program
+  so that it places 26 circles in the unit square [0, 1] x [0, 1] with the largest
+  possible sum of radii.
 
-  How the score is measured:
-  - The score is the sum of the radii, measured exactly in 64-bit floats. Higher is better, and every gain counts, however small.
-  - Only legal geometry counts. The packing's worst violation (the most two circles overlap, or one sticks out of the square) is subtracted from every radius before summing, so a packing that relies on tolerance loses up to 26 times what it gains. Aim for packings that are exactly legal, with contacts that touch within about 1e-12.
+  Scoring: the score is the sum of the radii. The packing's worst overlap (between two
+  circles, or past a wall) is first subtracted from every radius, so make contacts exact
+  to about 1e-12. An overlap above 1e-6 makes the packing invalid.
 
-  What can improve a packing:
-  - Its contact graph: which circles touch which, and which touch the walls. Good packings are rigid: every circle is held by its contacts.
-  - Polishing a candidate to full precision: solve the contact equations with Newton's method or a high-precision solver, rather than stopping a general optimizer at its default tolerance.
-  - Searching widely from many starting layouts (perturbed copies of good layouts, different row structures, random starts), then polishing only the best.
-  - The program has 3 CPUs and 5 minutes; stop the search well before that limit.
+  Hints:
+  - Good packings are rigid: every circle is held by its contacts with other circles
+    and the walls.
+  - Search many starting layouts, then polish the best by solving its contact equations
+    with Newton's method.
+  - The program has 3 CPUs and 5 minutes; stop well before the limit.
 
-  The evolve block must define construct_packing(), which takes no arguments and returns
-  (centers, radii, sum_of_radii): centers, a numpy array of shape (26, 2) holding the
-  (x, y) of each circle's centre; radii, a numpy array of shape (26,); and
-  sum_of_radii, their sum. Every circle must lie inside the unit square [0, 1] x [0, 1]
-  and no two circles may overlap; violations up to 1e-6 are subtracted from the radii as
-  described above, and larger ones make the packing invalid. No radius may be negative.
-  The fixed code after the evolve block defines run_packing(), which the evaluation
-  calls: it calls construct_packing() and returns its result. Do not define
-  run_packing() in the evolve block: the fixed code's definition would replace it.
+  The evolve block must define construct_packing(), which takes no arguments and
+  returns (centers, radii, sum_of_radii): a (26, 2) numpy array of centres, a (26,)
+  numpy array of non-negative radii, and their sum. Do not define run_packing() there:
+  the fixed code defines it, and it calls construct_packing().
 
 # The function every program must define, which the evaluation calls.
 entry_functions: [run_packing]
