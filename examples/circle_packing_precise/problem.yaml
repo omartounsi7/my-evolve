@@ -4,8 +4,8 @@
 # What differs from ../circle_packing/problem_claude_3d.yaml:
 # - the evaluation (evaluation.py here) scores the legal sum of the radii itself:
 #   violations are shrunk away instead of tolerated, and no reference divides the sum;
-# - the description says how the score is measured and what can improve a packing, and
-#   refers to no earlier result;
+# - the description says how the score is measured, gives no hints on how to solve the
+#   problem, and refers to no earlier result;
 # - each program gets one stage of 5 minutes and 3 CPUs.
 # The initial program is OpenEvolve's, as in ../circle_packing.
 
@@ -19,12 +19,7 @@ description: |
   circles, or past a wall) is first subtracted from every radius, so make contacts exact
   to about 1e-12. An overlap above 1e-6 makes the packing invalid.
 
-  Hints:
-  - Good packings are rigid: every circle is held by its contacts with other circles
-    and the walls.
-  - Search many starting layouts, then polish the best by solving its contact equations
-    with Newton's method.
-  - The program has 3 CPUs and 5 minutes; stop well before the limit.
+  The program has 3 CPUs and 5 minutes; it fails if it runs past that limit.
 
   The evolve block must define construct_packing(), which takes no arguments and
   returns (centers, radii, sum_of_radii): a (26, 2) numpy array of centres, a (26,)
