@@ -94,7 +94,7 @@ score. The other five, by when the program stopped and whose fault it was:
 
 A program that passes stage 1 and fails or times out in a later stage keeps its earlier result: status `ok`,
 with the later stage's error recorded (D9). A failed program has no score (`null` in JSON, never
-`-Infinity`) and an error message. Failed programs are stored and saved, shown as example programs (D26),
+`-Infinity`) and an error message. Failed programs are stored and saved, never shown as example programs (D26),
 counted as children (D19), used for duplicate detection (D13), and never chosen as parents.
 
 ### D8. Where the program and the evaluator run
@@ -131,9 +131,9 @@ the k-th threshold.
 **Decision.** Evaluators write feedback text as they check a program, like openevolve's artifacts ("Circles 3
 and 7 overlap (distance 0.112, radii sum 0.130)", "run_search timed out on trial 4 of 10"); both problems'
 evaluators do so for every check. When a program crashes or times out, the framework records the error and
-the end of its error output. The prompt shows the feedback of the parent and of every example program, and
-the error of every failed example program and of a parent's failed later stage, each cut to a size limit
-(D30). No LLM writes feedback.
+the end of its error output. The prompt shows the feedback of the parent and of every example program (all
+of them work, D26), and the error of a parent's failed later stage, each cut to a size limit (D30). No LLM
+writes feedback.
 
 ---
 

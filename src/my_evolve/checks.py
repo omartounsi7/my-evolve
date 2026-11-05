@@ -2,7 +2,7 @@
 
 They run on the host, without running the program. A child that fails one is stored
 with the status rejected and the reason, and never evaluated, so the mistake costs no
-evaluation and can be shown to the LLM later.
+evaluation. Rejected programs are never shown to the LLM (D26).
 
 Before the checks, the child's evolve blocks are put back into the initial program's
 code outside them (with_fixed_code, D12): whatever the LLM wrote outside the blocks is
