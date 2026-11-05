@@ -289,15 +289,21 @@ holds what changes: the example programs, then the parent, then the request.
 ### D26. Example programs
 **Decision.** Besides the parent, the prompt shows example programs ("inspirations" in openevolve and
 ShinkaEvolve), 2 by default (set in the problem file).
-- They are drawn at random among every program made on the iteration's island (not only its elites: also its
-  failed programs and the working ones that lost their cell), except the parent, `error` programs, and
-  children without code. They are shown in the order drawn.
-- They are not labelled good or bad: the prompt calls them previous attempts, and shows for each its score
-  (or its status if it failed), description, feedback and, if it failed, its error (D10, D27).
+- They are drawn at random, without replacement, among the iteration's island's elites other than the parent:
+  working programs, each the best of its grid cell, so they differ in kind. They are shown in the order drawn.
+- Programs that do not work (`rejected`, `failed`, `timeout`, `invalid`, `error`), and working ones that lost
+  their cell, stay in the database (for the record, continuing a run, the duplicate check and the children
+  counts) but are never shown. ShinkaEvolve, too, draws its inspirations among correct programs only.
+- The prompt calls them previous attempts, and shows for each its score, description and feedback (D10, D27).
+
+*Why only elites:* the examples were once drawn among every program made on the island, failed ones
+included, so that the LLM could learn from mistakes. In `runs/qwen_2d_2`, 253 of the 417 examples shown were
+rejected programs (192 for the code outside the block, 61 duplicates), only 22 had failed when run, and only
+126 of the 300 prompts showed a working example.
 
 ### D27. Scores in the prompt
-**Decision.** The prompt says higher scores are better, and shows the score of the parent and of every working
-example program, the status of every failed one, and the best score reached so far in the run. It shows no
+**Decision.** The prompt says higher scores are better, and shows the score of the parent and of every example
+program (all of them work, D26), and the best score reached so far in the run. It shows no
 metrics, no hints such as "fitness improved", and no limits of the sandbox.
 
 ### D28. Advice drawn from the whole run

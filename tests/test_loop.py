@@ -237,7 +237,8 @@ class LoopTest(unittest.TestCase):
                 evaluator=Evaluator(TOY_FOLDER / "evaluation.py", LocalSandbox(), STAGE_TIME_LIMIT),
                 iterations=9,
                 output=self.output,
-                seed=1,
+                # A seed that draws the failing model 3 times in the 9 iterations
+                seed=2,
             )
         self.assertEqual(len(bad.prompts), 3)
         self.assertEqual(len(database.programs), 2 + 6)
@@ -603,11 +604,12 @@ class LoopTest(unittest.TestCase):
         self.assertEqual(children[1].result.error, f"same program as {first.id}")
         self.assertEqual(children[2].result.error, f"same program as {children[0].id}")
         self.assertEqual(children[1].result.duration, 0.0)
-        # Each child records the example programs its prompt showed: programs of its island.
+        # Each child records the example programs its prompt showed: the island's other
+        # elites. The first child took the initial copy's cell, so it is the only elite.
         self.assertEqual(children[0].example_ids, ())
-        self.assertEqual(
-            set(children[1].example_ids), {copy.id, children[0].id} - {children[1].parent_id}
-        )
+        self.assertEqual(database.islands[0].elites(), [children[0]])
+        self.assertEqual(children[1].parent_id, children[0].id)
+        self.assertEqual(children[1].example_ids, ())
 
     def test_the_log_and_the_summary(self) -> None:
         """log.txt gets the details the console leaves out; the run ends with a summary."""
