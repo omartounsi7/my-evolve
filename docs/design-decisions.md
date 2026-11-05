@@ -227,10 +227,11 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   (the highest 1.27): all of them shared the top bin.
 - Default bins per feature: 10 for a 1D grid, 5 for 2D, 3 for 3D, so grids stay small for runs of hundreds
   of iterations.
-- `circle_packing_precise` sets its own ranges, from the working children of its first runs: code complexity
-  2.0 to 3.5 in 5 bins, `radii_spread` 0 to 0.5 in 5, `radius_centre_correlation` −0.6 to 0.6 in 4. With the
-  ranges above, `claude_3d_2`'s 94 working children shared 3 of 27 cells (all in the top code-complexity
-  bin and the first spread bin), and `qwen_2d_2`'s 96 shared 7 of 25.
+- `circle_packing_precise` uses 3 bins per feature, 27 cells per island, 81 over 3 islands, for runs of a
+  few hundred iterations: code complexity 0 to 3 (bins [0, 1), [1, 2), [2, +∞)), `radii_spread` 0 to 1,
+  `radius_centre_correlation` −1 to 1. Its first runs filled few cells whatever the ranges: with the ranges
+  above, `claude_3d_2`'s 94 working children shared 3 of 27 cells, and replayed into this grid they share
+  6 (92 of them in the top code-complexity bin).
 
 **Future work: binning that adapts.** A fixed range is right only if it was guessed right; a wrong one
 wastes cells for the whole run, as above. Two ways to fix this, not implemented yet:

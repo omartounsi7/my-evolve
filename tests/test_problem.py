@@ -187,7 +187,7 @@ class ProblemTest(unittest.TestCase):
         )
         self.assertEqual(
             [(feature.name, feature.bins) for feature in qwen.grid_features],
-            [("code_complexity", 5), ("radii_spread", 5)],
+            [("code_complexity", 3), ("radii_spread", 3)],
         )
         self.assertEqual(replace(claude, llm=qwen.llm, grid_features=qwen.grid_features), qwen)
 
