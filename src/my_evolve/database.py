@@ -161,7 +161,7 @@ class Database:
         """Create an empty database.
 
         rng makes every random draw, so that a run with the same seed draws the same;
-        parents says how parents are chosen (the weighted rule with lambda 1 by default);
+        parents says how parents are chosen (the weighted rule with lambda 10 by default);
         islands how many islands there are (3 by default). Each island's grid has the
         dimensions grid_features (code complexity alone by default), measured against
         reference_nodes, the initial program's code complexity.

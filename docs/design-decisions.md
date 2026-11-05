@@ -234,8 +234,10 @@ a range (`low`, `high`) and a number of bins; a value outside the range goes to 
   elites with probability proportional to sigmoid(λ × (score − median) / spread) × 1 / (1 + children).
   - The median and the spread are those of the island's elites' scores. The spread is their median absolute
     deviation, or their standard deviation if that is 0; if both are 0, every elite's sigmoid term is 0.5.
-  - λ is set in the problem file, default 1 (ShinkaEvolve's 10 makes almost every draw go to the elites above
-    the median, defeating the grid's diversity).
+  - λ is set in the problem file, default 10, ShinkaEvolve's value: almost every draw goes to an elite above
+    the median, and the children term spreads the draws among those. The default was 1, so as not to undo
+    the grid's diversity; but in `runs/qwen_2d_2` the most drawn parents were then two copies of a 1.30
+    packing (20 and 19 children) and the initial program (15), while the island's best stood at 2.49.
   - "Children" counts every child the program has had, whatever its status (each cost an LLM call), except
     `error` ones. A copied migrant starts at 0 on its new island; a moved one keeps its count (D23).
 - **openevolve's rule**, adapted to grids: 20% of the time a uniform draw among the island's elites, 70% a
@@ -608,7 +610,7 @@ The entries are numbered D60 to D70 and D72 to D79, in the order of the modules,
 | `sandbox` | `memory` (`1g`), `cpus` (1), `max_processes` (64), D41 |
 | `grid` | `features`: a list of `name`, `low`, `high`, `bins`; default one feature, `code_complexity` from 0 to 2.5; default bins 10, 5 or 3 for one, two or three features (D17, D18) |
 | `islands` | `count` (3), `migration_interval` (25), `migration_share` (0.1), `migrants` (`random_non_best`, or `best`, `random`), `destinations` (`all_others`, or `ring`), `mode` (`copy`, or `move`), D23 |
-| `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (1.0), `archive_size` (10), D19, D21 |
+| `parents` | `strategy` (`weighted`, or `openevolve`), `lambda` (10.0), `archive_size` (10), D19, D21 |
 | `prompt` | `example_programs` (2, D26), `max_chars` (60,000, D30), `max_feedback_chars` (2,000, D10) |
 | `llm` | values shared by every model (`api_base`, `max_tokens` 16,384, `temperature`, `reasoning_effort`, `timeout` 300 s, `retries` 2, prices, `context_length`, D30), `max_failures_in_a_row` (3), and `models`: a list of `name`, `weight` and any of the shared keys, which override them for that model (D31–D35, D46) |
 

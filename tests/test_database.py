@@ -38,9 +38,9 @@ def one_island(seed: int = 0, parents: ParentSettings | None = None) -> Database
     return Database(random.Random(seed), parents, ONE_ISLAND, TEST_GRID)
 
 
-def filled_database(seed: int = 0) -> Database:
+def filled_database(seed: int = 0, parents: ParentSettings | None = None) -> Database:
     """Return a one-island database holding five working programs and five failed ones."""
-    database = one_island(seed)
+    database = one_island(seed, parents)
     for score in range(5):
         database.add(working(float(score)))
         database.add(failed())
@@ -110,10 +110,19 @@ class DatabaseTest(unittest.TestCase):
             )
 
     def test_every_working_program_can_be_drawn(self) -> None:
-        """The draw is not stuck on the best: every working program is drawn sometimes."""
-        database = filled_database()
+        """With a gentle lambda, the draw is not stuck on the best: every working program is
+        drawn sometimes."""
+        database = filled_database(parents=ParentSettings(lam=1.0))
         parents = {database.sample(0, 2)[0].result.score for _ in range(200)}
         self.assertEqual(parents, {0.0, 1.0, 2.0, 3.0, 4.0})
+
+    def test_the_default_lambda_draws_from_the_median_up(self) -> None:
+        """With lambda 10, ShinkaEvolve's and the default, the programs below the median are
+        all but never drawn; those above it are drawn about 4 times in 5, the median 1 in 5."""
+        database = filled_database()
+        counts = Counter(database.sample(0, 2)[0].result.score for _ in range(1000))
+        self.assertEqual(set(counts), {2.0, 3.0, 4.0})
+        self.assertAlmostEqual((counts[3.0] + counts[4.0]) / 1000, 0.8, delta=0.05)
 
     def test_the_number_of_examples_is_a_setting(self) -> None:
         """No examples with a count of 0; as many as asked, while there are enough."""
@@ -289,8 +298,9 @@ class IslandTest(unittest.TestCase):
 class GridPopulationTest(unittest.TestCase):
     def test_parents_are_elites_and_displaced_elites_stay_examples(self) -> None:
         """A better program in the same cell takes it. The one displaced is no longer a
-        parent, but stays in the database and can still be an example."""
-        database = one_island()
+        parent, but stays in the database and can still be an example. (A gentle lambda
+        lets the weaker elite be drawn too.)"""
+        database = one_island(parents=ParentSettings(lam=1.0))
         weaker, stronger, other = working(1.0, cell=3), working(2.0, cell=3), working(0.5, cell=7)
         for program in (weaker, stronger, other):
             database.add(program)

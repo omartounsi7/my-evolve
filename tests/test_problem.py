@@ -333,12 +333,12 @@ class ProblemTest(unittest.TestCase):
             Problem.from_dict(data)
 
     def test_the_parents_section(self) -> None:
-        """The weighted rule with lambda 1 by default; unknown strategies are refused."""
+        """The weighted rule with lambda 10 by default; unknown strategies are refused."""
         parents = Problem.from_dict(valid_data()).parents
-        self.assertEqual((parents.strategy, parents.lam), ("weighted", 1.0))
+        self.assertEqual((parents.strategy, parents.lam), ("weighted", 10.0))
         data = valid_data()
-        data["parents"] = {"lambda": 10}
-        self.assertEqual(Problem.from_dict(data).parents.lam, 10.0)
+        data["parents"] = {"lambda": 1}
+        self.assertEqual(Problem.from_dict(data).parents.lam, 1.0)
         self.assertEqual(parents.archive_size, 10)
         data["parents"] = {"strategy": "openevolve", "archive_size": 5}
         parents = Problem.from_dict(data).parents
