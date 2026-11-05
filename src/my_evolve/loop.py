@@ -15,7 +15,8 @@ thread, which does all the bookkeeping, and a worker thread, which does the wait
 
 1. main: draw the island, the parent, the examples and the model; build the prompt;
 2. worker: ask the model, and parse its reply;
-3. main: run the checks, so that the duplicate check sees every stored program;
+3. main: put the child's evolve blocks into the initial program's fixed code, then run
+   the checks, so that the duplicate check sees every stored program;
 4. worker: evaluate the child;
 5. main: store the child; snapshot the best program, or migrate, when due.
 
@@ -55,12 +56,19 @@ import threading
 import uuid
 from collections import Counter
 from collections.abc import Callable, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from my_evolve.checks import ChildChecks, MarkerError, check_child, split_evolve_blocks
+from my_evolve.checks import (
+    ChildChecks,
+    MarkerError,
+    check_child,
+    same_outside_code,
+    split_evolve_blocks,
+    with_fixed_code,
+)
 from my_evolve.database import Database
 from my_evolve.evaluator import Evaluator
 from my_evolve.llm import LLM, Ensemble, LLMError, LLMReply, NoModelLeft
@@ -531,9 +539,10 @@ class Loop:
         """Handle the model's reply (main thread); return True if the child must be evaluated.
 
         A failed call skips the iteration; any other exception in the worker records the
-        iteration as an error. A child that fails the checks is stored as rejected, and
-        one the checks themselves fail on gets the status error; otherwise its fingerprint
-        joins those in flight, and it is evaluated.
+        iteration as an error. The child is the reply's evolve blocks inside the initial
+        program's fixed code (D12). A child that fails the checks is stored as rejected,
+        and one the checks themselves fail on gets the status error; otherwise its
+        fingerprint joins those in flight, and it is evaluated.
         """
         if isinstance(task.error, LLMError):
             self.ensemble.record_failure(state.llm.name)
@@ -546,6 +555,15 @@ class Loop:
         self.ensemble.record_success(state.llm.name)
         known = {**self.db.fingerprints, **self.pending}
         try:
+            reply_code = state.parsed.code
+            child_code = with_fixed_code(reply_code, self.initial_code)
+            state.parsed = replace(state.parsed, code=child_code)
+            if child_code != reply_code and same_outside_code(reply_code, self.initial_code):
+                logger.debug(
+                    "Iteration %d: the reply's code outside the evolve blocks was replaced "
+                    "by the initial program's",
+                    state.number,
+                )
             state.checks = check_child(
                 state.parsed.code, self.initial_code, self.problem.entry_functions, known
             )
@@ -897,9 +915,10 @@ def run(
     evaluation file, the problem (its llm section aside) and the image must be those the
     run started with (D50).
 
-    A child that fails a check (it does not compile, changes code outside the evolve
-    blocks, lacks an entry function, or repeats an earlier program or one in flight) is
-    rejected, and costs no evaluation.
+    A child is the reply's evolve blocks inside the initial program's fixed code: what
+    the reply has outside them is dropped. A child that fails a check (it does not
+    compile, breaks the evolve-block markers, lacks an entry function, or repeats an
+    earlier program or one in flight) is rejected, and costs no evaluation.
 
     Only one process may run a folder at a time: a second one is refused.
 

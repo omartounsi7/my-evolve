@@ -145,10 +145,15 @@ little as it wants (D12). No SEARCH/REPLACE diffs.
 
 ### D12. Which code may change
 **Decision.** Only the code inside the evolve blocks (`# EVOLVE-BLOCK-START` … `# EVOLVE-BLOCK-END`), which the
-initial programs keep (D3). The prompt says so, and that the markers must stay as they are (Appendix A). A
-child that changes code outside the blocks, or moves, removes, adds or alters a marker, is rejected before
-evaluation (D13), so the mistake is recorded and can be shown to the LLM (D26); openevolve's
-`enforce_evolve_blocks` reverts such edits silently instead.
+initial programs keep (D3). The prompt says so, that the markers must stay, and that the code outside them is
+kept whatever the reply has there (Appendix A). The child is the reply's blocks put back into the initial
+program's code outside them (`with_fixed_code`): what the reply wrote outside the blocks is dropped, as
+openevolve's `enforce_evolve_blocks` does. A reply whose markers are broken (moved, removed, added or altered),
+or whose blocks are not as many as the initial program's, is rejected before evaluation (D13).
+
+*Why the fixed code is put back rather than checked:* in `runs/qwen_2d_2`, 91 of 300 qwen3-coder:30b children
+were rejected for the code outside the block: 67 replies stopped at `# EVOLVE-BLOCK-END`, and 24 made
+`run_packing()` call itself. Their blocks were never evaluated, and their parents were drawn again.
 
 ### D13. Checks before a child is evaluated
 **Decision.** Four checks, on the host, without running the program, in this order. They apply to children
@@ -157,7 +162,9 @@ that fails one is stored with status `rejected` and the reason, and is not evalu
 1. It compiles (`ast.parse`); a reply without code fails here.
 2. It keeps the evolve blocks exactly where the initial program has them: the same markers in the same order,
    and the same code outside them, compared line by line ignoring blank lines and spaces at the ends of lines
-   (spaces at the start of lines count, since indentation has meaning in Python).
+   (spaces at the start of lines count, since indentation has meaning in Python). The child's code outside
+   the blocks has already been replaced by the initial program's (D12), so only broken markers, or a
+   different number of blocks, fail here.
 3. It defines, at the top level, every entry function the problem file lists (`run_packing`, `run_search`).
 4. It is not a duplicate of any program already in the database: no earlier program has the same syntax tree
    (comments and spacing do not count). Each program's tree is stored as a hash (its fingerprint), so the check
@@ -1449,8 +1456,9 @@ than it does, using what the previous attempts show.
 {description from the problem file, including the contract of the entry functions}
 
 # Rules
-- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`.
-  Leave everything else, the markers included, exactly as it is. Return the whole file.
+- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`, and
+  keep the markers. The code outside them is fixed: it is kept as it is, whatever your
+  reply has there. Return the whole file.
 - You may import Python's standard library and: {allowed packages}. Nothing else is installed.
 - Higher scores are better.
 - In the description, say what the program does, for a reader who has never seen any

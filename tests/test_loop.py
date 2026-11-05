@@ -142,6 +142,23 @@ class LoopTest(unittest.TestCase):
             console,
         )
 
+    def test_the_fixed_code_is_put_back_into_every_child(self) -> None:
+        """A reply that stops at the end marker, or rewrites the code after it, gives a child
+        with the initial program's fixed code, which is evaluated (they were once rejected)."""
+        initial = (
+            "# EVOLVE-BLOCK-START\ndef solve():\n    return 1.0\n# EVOLVE-BLOCK-END\n\n\n"
+            "def double():\n    return 2 * solve()\n"
+        )
+        rewritten = reply_returning("6").replace(
+            "# EVOLVE-BLOCK-END\n", "# EVOLVE-BLOCK-END\ndef double():\n    return 0\n"
+        )
+        replies = [reply_returning("5"), rewritten]
+        database, _, _ = run_toy(replies, self.output, initial_code=initial)
+        children = [p for p in database.programs.values() if p.origin is Origin.LLM]
+        self.assertEqual([child.result.score for child in children], [5.0, 6.0])
+        for child, value in zip(children, ["5", "6"], strict=True):
+            self.assertEqual(child.code, initial.replace("return 1.0", f"return {value}"))
+
     def test_the_run_folder(self) -> None:
         """programs.jsonl has one line per program; best_program.py holds the best one."""
         database, _, _ = run_toy([reply_returning("4"), reply_returning("2")], self.output)

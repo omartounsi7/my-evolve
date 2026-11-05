@@ -11,6 +11,7 @@ from my_evolve.checks import (
     fingerprint,
     same_outside_code,
     split_evolve_blocks,
+    with_fixed_code,
 )
 
 REPOSITORY_FOLDER = Path(__file__).parent.parent
@@ -113,6 +114,47 @@ class SameOutsideCodeTest(unittest.TestCase):
         for name, code in INITIAL_PROGRAMS.items():
             with self.subTest(name=name):
                 self.assertIsNone(same_outside_code(code, code))
+
+
+class WithFixedCodeTest(unittest.TestCase):
+    def test_the_blocks_go_into_the_initial_programs_fixed_code(self) -> None:
+        """The child's blocks are kept, and everything outside them is the initial program's."""
+        child = (
+            TWO_BLOCKS.replace("    return 1", "    return 10")
+            .replace("    return 3", "    return 30")
+            .replace("    return 2", "    return 20")
+            .replace("import math", "import os")
+        )
+        expected = TWO_BLOCKS.replace("    return 1", "    return 10").replace(
+            "    return 3", "    return 30"
+        )
+        self.assertEqual(with_fixed_code(child, TWO_BLOCKS), expected)
+
+    def test_a_reply_that_stops_at_the_last_marker(self) -> None:
+        """What the initial program has after its last block comes back."""
+        code = INITIAL_PROGRAMS["circle_packing"]
+        cut = code[: code.index(END) + len(END)] + "\n"
+        child = cut.replace("n = 26", "n = 26  # still 26")
+        restored = with_fixed_code(child, code)
+        self.assertEqual(restored, code.replace("n = 26", "n = 26  # still 26"))
+        self.assertIsNone(same_outside_code(restored, code))
+
+    def test_unchanged_programs_stay_the_same(self) -> None:
+        for name, code in {**INITIAL_PROGRAMS, "two blocks": TWO_BLOCKS}.items():
+            with self.subTest(name=name):
+                self.assertEqual(with_fixed_code(code, code), code)
+
+    def test_broken_markers_are_left_for_the_checks(self) -> None:
+        """A child with broken markers, or another number of blocks, comes back unchanged."""
+        for child in [
+            "",
+            "def a():\n    return 1\n",
+            f"{START}\ndef a():\n    return 1\n",
+            f"{START}\ndef a():\n    return 1\n{END}\n",
+            TWO_BLOCKS + f"{START}\nx = 1\n{END}\n",
+        ]:
+            with self.subTest(child=child[:40]):
+                self.assertEqual(with_fixed_code(child, TWO_BLOCKS), child)
 
 
 class CheckChildTest(unittest.TestCase):

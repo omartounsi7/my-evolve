@@ -29,8 +29,9 @@ than it does, using what the previous attempts show.
 {description}
 
 # Rules
-- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`.
-  Leave everything else, the markers included, exactly as it is. Return the whole file.
+- Change only the code between `# EVOLVE-BLOCK-START` and `# EVOLVE-BLOCK-END`, and
+  keep the markers. The code outside them is fixed: it is kept as it is, whatever your
+  reply has there. Return the whole file.
 - {packages_rule}
 - Higher scores are better.
 - In the description, say what the program does, for a reader who has never seen any

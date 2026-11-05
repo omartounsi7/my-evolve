@@ -12,7 +12,7 @@ class Status(enum.Enum):
 
     # Evaluated, and its answer is legal: the only status with a score
     OK = "ok"
-    # Refused before evaluation by a check (D13), such as a change outside the evolve blocks
+    # Refused before evaluation by a check (D13), such as a broken evolve-block marker
     REJECTED = "rejected"
     # Raised an exception while loading or while one of its functions ran
     FAILED = "failed"
