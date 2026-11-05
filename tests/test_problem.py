@@ -191,19 +191,18 @@ class ProblemTest(unittest.TestCase):
         )
         self.assertEqual(replace(claude, llm=qwen.llm, grid_features=qwen.grid_features), qwen)
 
-    def test_the_precise_problem_file_with_four_models(self) -> None:
+    def test_the_precise_problem_file_with_three_makers(self) -> None:
         """circle_packing_precise's problem_mixed.yaml differs from its problem.yaml only in
-        its llm section: the two qwen models on Ollama, and Claude Haiku 4.5 and Sonnet 4.5."""
+        its llm section: qwen3-coder and gemma4 on Ollama, and Claude Sonnet 4.5."""
         folder = REPOSITORY_FOLDER / "examples" / "circle_packing_precise"
         claude = Problem.load(folder / "problem.yaml")
         mixed = Problem.load(folder / "problem_mixed.yaml")
         self.assertEqual(
             [(model.name, model.weight, model.api_key_env) for model in mixed.llm.models],
             [
-                ("qwen3-coder:30b", 0.4, None),
-                ("qwen3:8b", 0.1, None),
-                ("claude-haiku-4-5-20251001", 0.4, "ANTHROPIC_API_KEY"),
-                ("claude-sonnet-4-5-20250929", 0.1, "ANTHROPIC_API_KEY"),
+                ("qwen3-coder:30b", 0.33, None),
+                ("gemma4:12b", 0.33, None),
+                ("claude-sonnet-4-5-20250929", 0.34, "ANTHROPIC_API_KEY"),
             ],
         )
         self.assertEqual(replace(claude, llm=mixed.llm), mixed)
